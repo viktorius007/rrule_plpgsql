@@ -2,7 +2,7 @@
 #
 # Automated Test Runner for rrule_plpgsql
 #
-# Runs all 10 test suites (187 tests total) and reports results.
+# Runs all 12 test suites and reports results.
 # Tests both standard and sub-day installations to ensure complete coverage.
 #
 # Usage:
@@ -55,6 +55,8 @@ TEST_FILES=(
   "tests/test_optimizations.sql"
   "tests/test_tz_api.sql"
   "tests/test_table_operations.sql"
+  "tests/test_coverage_gaps.sql"
+  "tests/test_internal_functions.sql"
 )
 
 # Counters
