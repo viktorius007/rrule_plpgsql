@@ -14,7 +14,8 @@
     "CHECKSUMS.txt"
   ],
   "scripts": {
-    "test": "./test.sh"
+    "test": "./test.sh",
+    "lint": "./lint.sh"
   },
   "repository": {
     "type": "git",
