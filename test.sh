@@ -11,10 +11,17 @@
 #   ./test.sh --both             # Run tests with both installations (recommended for CI)
 #   DATABASE_URL=mydb ./test.sh  # Use custom database
 #
+# Environment variables (with defaults):
+#   PGHOST=localhost     # PostgreSQL host
+#   PGPORT=54322         # PostgreSQL port (default: Supabase local)
+#   PGUSER=postgres      # PostgreSQL user
+#   PGPASSWORD=postgres  # PostgreSQL password
+#   DATABASE_URL=rrule_test  # Test database name
+#
 # Requirements:
 #   - PostgreSQL 12+ installed and running
 #   - psql command available in PATH
-#   - Database must exist (will be dropped and recreated)
+#   - Database will be created/dropped automatically
 #
 
 set -e  # Exit on error
@@ -27,6 +34,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
+# PostgreSQL connection settings (can be overridden via environment variables)
+export PGHOST="${PGHOST:-localhost}"
+export PGPORT="${PGPORT:-54322}"
+export PGUSER="${PGUSER:-postgres}"
+export PGPASSWORD="${PGPASSWORD:-postgres}"
+
 DB="${DATABASE_URL:-rrule_test}"
 MODE="${1:---standard}"
 

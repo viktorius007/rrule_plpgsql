@@ -47,6 +47,39 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Helper function to format TIMESTAMPTZ in a specific timezone with correct abbreviation
+-- This is needed because to_char(ts, 'TZ') uses the session timezone, not the target timezone
+CREATE OR REPLACE FUNCTION format_ts_in_tz(ts TIMESTAMPTZ, tz_name TEXT)
+RETURNS TEXT AS $$
+DECLARE
+    local_ts TIMESTAMP;
+    utc_offset_hours INTEGER;
+    tz_abbrev TEXT;
+BEGIN
+    -- Convert to local time in target timezone
+    local_ts := ts AT TIME ZONE tz_name;
+
+    -- Calculate UTC offset for this timestamp in this timezone
+    -- offset = (UTC epoch - local epoch) / 3600
+    utc_offset_hours := EXTRACT(EPOCH FROM ts)::BIGINT / 3600 -
+                        EXTRACT(EPOCH FROM local_ts)::BIGINT / 3600;
+
+    -- Determine abbreviation based on timezone and offset
+    tz_abbrev := CASE tz_name
+        WHEN 'America/New_York' THEN
+            CASE utc_offset_hours WHEN 5 THEN 'EST' ELSE 'EDT' END
+        WHEN 'America/Los_Angeles' THEN
+            CASE utc_offset_hours WHEN 8 THEN 'PST' ELSE 'PDT' END
+        WHEN 'Europe/London' THEN
+            CASE utc_offset_hours WHEN 0 THEN 'GMT' ELSE 'BST' END
+        WHEN 'UTC' THEN 'UTC'
+        ELSE tz_name
+    END;
+
+    RETURN to_char(local_ts, 'YYYY-MM-DD HH24:MI:SS') || ' ' || tz_abbrev;
+END;
+$$ LANGUAGE plpgsql;
+
 
 -- ================================================================================================================
 -- TEST SUITE 1: DST Spring Forward (March 9, 2025 - America/New_York)
@@ -80,8 +113,8 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    -- Format for comparison
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    -- Format for comparison (using helper to get correct timezone abbreviation)
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
 
     matches := (actual = expected);
 
@@ -120,7 +153,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -153,7 +186,7 @@ BEGIN
         NULL  -- No explicit timezone, should use TZID from RRULE
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -198,7 +231,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -386,7 +419,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -430,7 +463,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -463,7 +496,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -506,7 +539,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
@@ -538,7 +571,7 @@ BEGIN
         'America/New_York'
     ) ts;
 
-    SELECT array_agg(to_char(ts, 'YYYY-MM-DD HH24:MI:SS TZ')) INTO actual FROM unnest(results) ts;
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York')) INTO actual FROM unnest(results) ts;
     matches := (actual = expected);
 
     INSERT INTO tz_api_test_results VALUES (
