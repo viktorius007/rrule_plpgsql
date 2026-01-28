@@ -91,8 +91,8 @@ BEGIN
   END IF;
 
   result.freq       := substring(repeatrule from 'FREQ=([A-Z]+)(;|$)');
-  result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)');
-  result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::int, 1);
+  result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+  result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
   result.wkst       := substring(repeatrule from 'WKST=(MO|TU|WE|TH|FR|SA|SU)(;|$)');
   result.tzid       := substring(repeatrule from 'TZID=([^;]+)(;|$)');
 
@@ -314,7 +314,6 @@ CREATE OR REPLACE FUNCTION rrule_month_byday_set(
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
   dayrule TEXT;
-  i INT;  -- Still needed for final results array iteration
   dow INT;
   index INT;
   first_dow INT;
@@ -884,7 +883,6 @@ CREATE OR REPLACE FUNCTION rrule_bysetpos_filter(
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
   valid_date TIMESTAMP WITH TIME ZONE;
-  i INT;
 BEGIN
 
   IF bysetpos IS NULL THEN
@@ -1074,10 +1072,8 @@ CREATE OR REPLACE FUNCTION weekly_set(
   max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  valid_date TIMESTAMP WITH TIME ZONE;
   curse REFCURSOR;
   weekno INT;
-  i INT;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -1117,10 +1113,7 @@ CREATE OR REPLACE FUNCTION monthly_set(
   max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  valid_date TIMESTAMP WITH TIME ZONE;
   curse REFCURSOR;
-  setpos INT;
-  i INT;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -1187,7 +1180,6 @@ CREATE OR REPLACE FUNCTION rrule_yearly_bymonth_set(
 DECLARE
   current_base TIMESTAMP WITH TIME ZONE;
   rr rrule.rrule_parts;
-  i INT;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -1228,7 +1220,6 @@ DECLARE
   occurrence TIMESTAMP WITH TIME ZONE;
   days_in_year INT;
   yearday INT;
-  i INT;
   result_count INT := 0;
 BEGIN
   -- Maintain STRICT semantics for required parameters
@@ -1854,7 +1845,6 @@ CREATE OR REPLACE FUNCTION "overlaps"(
 RETURNS BOOLEAN AS $$
 DECLARE
     base_date TIMESTAMP WITH TIME ZONE;
-    found_date TIMESTAMP WITH TIME ZONE;
 BEGIN
     IF dtstart IS NULL THEN
         RETURN NULL;
@@ -1882,7 +1872,7 @@ BEGIN
     END IF;
 
     -- Check if there's at least one occurrence in the range
-    SELECT d INTO found_date
+    PERFORM d
     FROM rrule.rrule_event_instances_range(base_date, rrule_string, mindate, maxdate, 60) d
     LIMIT 1;
 
@@ -2224,8 +2214,6 @@ DECLARE
     wall_clock_before TIMESTAMP;
     naive_occurrence TIMESTAMP;
     results TIMESTAMPTZ[];
-    result TIMESTAMPTZ;
-    i INT;
 BEGIN
     -- Determine timezone
     tz_name := COALESCE(
@@ -2257,8 +2245,8 @@ BEGIN
 
     -- Return the last N occurrences (handle NULL array_length when results is empty)
     IF array_length(results, 1) IS NOT NULL THEN
-        FOR i IN GREATEST(1, array_length(results, 1) - count + 1) .. array_length(results, 1) LOOP
-            RETURN NEXT results[i];
+        FOR idx IN GREATEST(1, array_length(results, 1) - count + 1) .. array_length(results, 1) LOOP
+            RETURN NEXT results[idx];
         END LOOP;
     END IF;
 END;
@@ -2365,7 +2353,6 @@ CREATE OR REPLACE FUNCTION rrule.overlaps(
 DECLARE
     tz_name TEXT;
     base_date TIMESTAMPTZ;
-    found_occurrence TIMESTAMPTZ;
     adjusted_maxdate TIMESTAMPTZ;
     adjusted_mindate TIMESTAMPTZ;
 BEGIN
@@ -2405,7 +2392,7 @@ BEGIN
     END IF;
 
     -- Check if there's at least one occurrence in the range
-    SELECT * INTO found_occurrence
+    PERFORM *
     FROM rrule."between"(rrule_string, base_date, adjusted_mindate, adjusted_maxdate, tz_name)
     LIMIT 1;
 
