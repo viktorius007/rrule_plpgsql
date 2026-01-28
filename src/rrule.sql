@@ -1805,7 +1805,7 @@ CREATE OR REPLACE FUNCTION "next"(
 )
 RETURNS TIMESTAMP AS $$
 BEGIN
-    RETURN "after"(rrule_string, dtstart, NOW()::TIMESTAMP);
+    RETURN rrule."after"(rrule_string, dtstart, NOW()::TIMESTAMP);
 END;
 $$ LANGUAGE plpgsql STABLE;
 
@@ -1822,7 +1822,7 @@ CREATE OR REPLACE FUNCTION "most_recent"(
 )
 RETURNS TIMESTAMP AS $$
 BEGIN
-    RETURN "before"(rrule_string, dtstart, NOW()::TIMESTAMP);
+    RETURN rrule."before"(rrule_string, dtstart, NOW()::TIMESTAMP);
 END;
 $$ LANGUAGE plpgsql STABLE;
 
