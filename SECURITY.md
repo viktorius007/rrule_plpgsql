@@ -104,26 +104,28 @@ While the RRULE functions themselves are safe (they use parameterized queries in
 ```typescript
 // ✅ node-postgres (pg)
 await client.query(
-  'SELECT * FROM rrule.all($1, $2)',
+  'SELECT * FROM rrule."all"($1, $2)',
   [userRRule, dtstart]
 );
 
 // ✅ TypeORM
 await connection.query(
-  'SELECT * FROM rrule.all($1, $2)',
+  'SELECT * FROM rrule."all"($1, $2)',
   [userRRule, dtstart]
 );
 
-// ✅ Prisma
+// ✅ Prisma — safe because $1/$2 are parameterized placeholders, not string interpolation.
+// Note: $queryRawUnsafe WITH string interpolation (template literals) would be UNSAFE.
+// See: https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries#parameterized-queries
 await prisma.$queryRawUnsafe(
-  'SELECT * FROM rrule.all($1, $2)',
+  'SELECT * FROM rrule."all"($1, $2)',
   userRRule,
   dtstart
 );
 
 // ✅ Knex
 await knex.raw(
-  'SELECT * FROM rrule.all(?, ?)',
+  'SELECT * FROM rrule."all"(?, ?)',
   [userRRule, dtstart]
 );
 ```
@@ -133,17 +135,17 @@ await knex.raw(
 ```typescript
 // ❌ DANGEROUS - DO NOT DO THIS
 await client.query(
-  `SELECT * FROM rrule.all('${userRRule}', '${dtstart}')`
+  `SELECT * FROM rrule."all"('${userRRule}', '${dtstart}')`
 );
 
 // ❌ DANGEROUS - Template literals are NOT safe
 await client.query(`
-  SELECT * FROM rrule.all('${req.body.rrule}', '${req.body.date}')
+  SELECT * FROM rrule."all"('${req.body.rrule}', '${req.body.date}')
 `);
 
 // ❌ DANGEROUS - String concatenation
 await client.query(
-  "SELECT * FROM rrule.all('" + userRRule + "', '" + dtstart + "')"
+  "SELECT * FROM rrule."all"('" + userRRule + "', '" + dtstart + "')"
 );
 ```
 
@@ -156,14 +158,14 @@ const userRRule = "FREQ=DAILY'); DROP TABLE users; --";
 
 // With string interpolation (UNSAFE):
 await client.query(
-  `SELECT * FROM rrule.all('${userRRule}', '2025-01-01')`
+  `SELECT * FROM rrule."all"('${userRRule}', '2025-01-01')`
 );
-// Becomes: SELECT * FROM rrule.all('FREQ=DAILY'); DROP TABLE users; --', '2025-01-01')
+// Becomes: SELECT * FROM rrule."all"('FREQ=DAILY'); DROP TABLE users; --', '2025-01-01')
 // ^ This executes DROP TABLE!
 
 // With parameterized query (SAFE):
 await client.query(
-  'SELECT * FROM rrule.all($1, $2)',
+  'SELECT * FROM rrule."all"($1, $2)',
   [userRRule, '2025-01-01']
 );
 // The RRULE string is properly escaped - attack prevented!
