@@ -10,7 +10,7 @@ All RRULE strings are validated against RFC 5545 Section 3.3.10 requirements **b
 
 ---
 
-## 16 Validation Rules Enforced
+## 18 Validation Rules Enforced
 
 ### Core Requirements
 
@@ -22,78 +22,87 @@ All RRULE strings are validated against RFC 5545 Section 3.3.10 requirements **b
    - Cannot use both in same RRULE
    - Specify either COUNT (number of occurrences) OR UNTIL (end date), not both
 
+3. **UNTIL must be UTC DATE-TIME**
+   - When DTSTART is DATE-TIME (this API), UNTIL must be UTC and end with `Z`
+   - Date-only UNTIL values are rejected
+
+4. **INTERVAL must be positive**
+   - INTERVAL must be an integer >= 1
+
 ### Frequency-Specific Constraints
 
-3. **BYWEEKNO only with YEARLY**
+5. **BYWEEKNO only with YEARLY**
    - Week numbers only valid with FREQ=YEARLY
    - RFC 5545: "BYWEEKNO MUST NOT be used when FREQ is not YEARLY"
 
-4. **BYYEARDAY not with DAILY/WEEKLY/MONTHLY**
+6. **BYYEARDAY not with DAILY/WEEKLY/MONTHLY**
    - Year days only for YEARLY frequency
    - Use BYMONTHDAY or BYDAY for other frequencies
 
-5. **BYMONTHDAY not with WEEKLY**
+7. **BYMONTHDAY not with WEEKLY**
    - Month days cannot be used with FREQ=WEEKLY
    - RFC 5545: Day-of-month filters not applicable to weekly patterns
 
 ### BYDAY Ordinal Constraints
 
-6. **BYDAY ordinals only with MONTHLY/YEARLY**
+8. **BYDAY ordinals only with MONTHLY/YEARLY**
    - Positional weekdays (2MO, -1FR) restricted to monthly/yearly
    - Example: `2MO` means "2nd Monday"
    - Cannot use with DAILY or WEEKLY
+   - Ordinals must be between 1-53 or -1 to -53 (0 is invalid)
 
-7. **BYDAY ordinals not with YEARLY+BYWEEKNO**
+9. **BYDAY ordinals not with YEARLY+BYWEEKNO**
    - Cannot use ordinals when BYWEEKNO is specified in YEARLY
    - RFC 5545: This combination is semantically ambiguous
    - Example invalid: `FREQ=YEARLY;BYWEEKNO=10;BYDAY=2MO`
 
 ### Position Selector Constraints
 
-8. **BYSETPOS requires other BYxxx**
+10. **BYSETPOS requires other BYxxx**
    - Position selector needs a set to select from
    - Must be used with BYDAY, BYMONTHDAY, or other filters
    - Example: `BYSETPOS=1` with `BYDAY=MO,WE,FR`
 
 ### Parameter Range Validations
 
-9. **BYSECOND range 0-60**
+11. **BYSECOND range 0-60**
    - Valid values 0-60 (60 for leap seconds)
    - RFC 5545: "Valid values are 0 to 60"
+   - Leap second 60 is normalized to 59 due to PostgreSQL TIMESTAMP limitations
 
-10. **BYMINUTE range 0-59**
+12. **BYMINUTE range 0-59**
     - Valid values 0-59
     - RFC 5545: "Valid values are 0 to 59"
 
-11. **BYHOUR range 0-23**
+13. **BYHOUR range 0-23**
     - Valid values 0-23 (0 = midnight, 23 = 11 PM)
     - RFC 5545: "Valid values are 0 to 23"
 
-12. **BYMONTH range 1-12**
+14. **BYMONTH range 1-12**
     - Valid values 1-12 (January-December)
     - RFC 5545: "Valid values are 1 to 12"
 
 ### Index Validations (Zero Not Allowed)
 
-13. **BYMONTHDAY validation**
+15. **BYMONTHDAY validation**
     - Cannot be 0
     - Range: -31 to 31 (excluding 0)
     - Negative values count from end of month
     - Example: -1 = last day of month
 
-14. **BYYEARDAY validation**
+16. **BYYEARDAY validation**
     - Cannot be 0
     - Range: -366 to 366 (excluding 0)
     - Negative values count from end of year
     - Example: -1 = December 31
 
-15. **BYWEEKNO validation**
+17. **BYWEEKNO validation**
     - Cannot be 0
     - Range: -53 to 53 (excluding 0)
     - Negative values count from end of year
     - Example: -1 = last week of year
 
-16. **BYSETPOS validation**
+18. **BYSETPOS validation**
     - Cannot be 0
     - Range: -366 to 366 (excluding 0)
     - Negative values count from end of set
@@ -116,7 +125,7 @@ All validation errors provide:
 ### Missing FREQ (required)
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule.all('COUNT=10;BYMONTHDAY=15', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT array_agg(occurrence) FROM rrule."all"('COUNT=10;BYMONTHDAY=15', '2025-01-01'::TIMESTAMP) AS occurrence;
 ```
 
 **Error:**
@@ -131,14 +140,14 @@ ERROR: Invalid RRULE: FREQ parameter is required.
 ### COUNT and UNTIL together (mutually exclusive)
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule.all('FREQ=DAILY;COUNT=10;UNTIL=20251231T235959', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT array_agg(occurrence) FROM rrule."all"('FREQ=DAILY;COUNT=10;UNTIL=20251231T235959Z', '2025-01-01'::TIMESTAMP) AS occurrence;
 ```
 
 **Error:**
 ```
 ERROR: Invalid RRULE: COUNT and UNTIL are mutually exclusive.
        Specify either COUNT (number of occurrences) OR UNTIL (end date), not both.
-       Current RRULE has COUNT=10 and UNTIL=20251231T235959.
+       Current RRULE has COUNT=10 and UNTIL=20251231T235959Z.
        RFC 5545 Section 3.3.10: "they MUST NOT occur in the same recur"
 ```
 
@@ -147,7 +156,7 @@ ERROR: Invalid RRULE: COUNT and UNTIL are mutually exclusive.
 ### BYWEEKNO with wrong frequency
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule.all('FREQ=MONTHLY;BYWEEKNO=10;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT array_agg(occurrence) FROM rrule."all"('FREQ=MONTHLY;BYWEEKNO=10;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence;
 ```
 
 **Error:**
@@ -163,7 +172,7 @@ ERROR: Invalid RRULE: BYWEEKNO can only be used with FREQ=YEARLY.
 ### Parameter out of range
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule.all('FREQ=DAILY;BYHOUR=24;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT array_agg(occurrence) FROM rrule."all"('FREQ=DAILY;BYHOUR=24;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence;
 ```
 
 **Error:**
@@ -177,11 +186,13 @@ ERROR: Invalid RRULE: BYHOUR=24 is out of valid range.
 
 ## Validation Test Coverage
 
-The validation implementation includes a comprehensive test suite with 61 test cases covering:
+The validation implementation includes a comprehensive test suite with 60+ test cases covering:
 
 ### Group 1: Critical MUST/MUST NOT Constraints (24 tests)
 - FREQ required validation
 - COUNT+UNTIL mutual exclusion
+- UNTIL UTC DATE-TIME format (Z required, date-only rejected)
+- INTERVAL positive integer enforcement
 - BYWEEKNO only with YEARLY
 - BYYEARDAY not with DAILY/WEEKLY/MONTHLY
 - BYMONTHDAY not with WEEKLY
@@ -197,7 +208,7 @@ The validation implementation includes a comprehensive test suite with 61 test c
 ### Group 3: Zero Values and Extended Ranges (16 tests)
 - BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYSETPOS zero rejection
 - Negative index support and validation
-- Extended range validation (±366, ±53, etc.)
+- Extended range validation (±366, ±53, etc.), including BYDAY ordinal bounds
 
 ### Group 4: Complex Validation Scenarios (5 tests)
 - Multiple constraint violations

@@ -96,7 +96,7 @@ CREATE INDEX idx_events_dtstart_ny
 ```sql
 -- DON'T: Query each event separately
 SELECT id, title FROM events WHERE rrule IS NOT NULL;
--- Then for each row: SELECT * FROM rrule.between(...)
+-- Then for each row: SELECT * FROM rrule."between"(...)
 ```
 
 #### ✅ Efficient (Set-based)
@@ -108,7 +108,7 @@ SELECT
   occurrence
 FROM events e
 CROSS JOIN LATERAL (
-  SELECT * FROM rrule.between(
+  SELECT * FROM rrule."between"(
     e.rrule,
     e.dtstart,
     '2025-01-01'::TIMESTAMP,
@@ -126,7 +126,7 @@ WHERE e.rrule IS NOT NULL
 -- DON'T: Generate all occurrences then filter
 SELECT e.id, e.title, occ.occurrence
 FROM events e,
-LATERAL rrule.all(e.rrule, e.dtstart) AS occ(occurrence)
+LATERAL rrule."all"(e.rrule, e.dtstart) AS occ(occurrence)
 WHERE occ.occurrence > NOW()
 ORDER BY occ.occurrence
 LIMIT 1;
@@ -134,12 +134,12 @@ LIMIT 1;
 
 #### ✅ Efficient
 ```sql
--- DO: Use rrule.after() with index on dtstart
+-- DO: Use rrule."after"() with index on dtstart
 WITH next_occurrences AS (
   SELECT
     e.id,
     e.title,
-    rrule.after(e.rrule, e.dtstart, NOW()::TIMESTAMP) AS next_occ
+    rrule."after"(e.rrule, e.dtstart, NOW()::TIMESTAMP) AS next_occ
   FROM events e
   WHERE e.rrule IS NOT NULL
     AND e.dtstart <= NOW()  -- Index scan
@@ -158,19 +158,19 @@ LIMIT 1;
 -- DON'T: Expand all occurrences for conflict detection
 SELECT DISTINCT e1.id, e2.id
 FROM events e1, events e2,
-LATERAL rrule.all(e1.rrule, e1.dtstart) AS occ1(t),
-LATERAL rrule.all(e2.rrule, e2.dtstart) AS occ2(t)
+LATERAL rrule."all"(e1.rrule, e1.dtstart) AS occ1(t),
+LATERAL rrule."all"(e2.rrule, e2.dtstart) AS occ2(t)
 WHERE e1.id != e2.id
   AND occ1.t = occ2.t;
 ```
 
 #### ✅ Efficient
 ```sql
--- DO: Use rrule.overlaps() function
+-- DO: Use rrule."overlaps"() function
 SELECT e1.id, e2.id
 FROM events e1, events e2
 WHERE e1.id < e2.id
-  AND rrule.overlaps(
+  AND rrule."overlaps"(
     e1.dtstart,
     e1.dtend,
     e1.rrule,
@@ -273,12 +273,12 @@ ORDER BY total_time DESC;
 ```sql
 -- Benchmark 1: Simple daily recurrence (1000 occurrences)
 EXPLAIN ANALYZE
-SELECT * FROM rrule.all('FREQ=DAILY;COUNT=1000', '2025-01-01'::TIMESTAMP);
+SELECT * FROM rrule."all"('FREQ=DAILY;COUNT=1000', '2025-01-01'::TIMESTAMP);
 -- Expected: < 50ms
 
 -- Benchmark 2: Complex BYSETPOS filter
 EXPLAIN ANALYZE
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=12',
   '2025-01-01'::TIMESTAMP
 );
@@ -288,7 +288,7 @@ SELECT * FROM rrule.all(
 EXPLAIN ANALYZE
 SELECT e.id, COUNT(*) AS occurrence_count
 FROM events e
-CROSS JOIN LATERAL rrule.between(
+CROSS JOIN LATERAL rrule."between"(
   e.rrule,
   e.dtstart,
   '2025-01-01'::TIMESTAMP,
@@ -317,22 +317,22 @@ SELECT * FROM events WHERE rrule IS NOT NULL;
 
 ```sql
 -- BAD: Generates all occurrences then filters
-SELECT * FROM rrule.all('FREQ=DAILY', '2020-01-01'::TIMESTAMP)
+SELECT * FROM rrule."all"('FREQ=DAILY', '2020-01-01'::TIMESTAMP)
 WHERE occurrence >= '2025-01-01';
 
--- GOOD: Use rrule.after() or rrule.between()
-SELECT * FROM rrule.after('FREQ=DAILY', '2020-01-01'::TIMESTAMP, '2025-01-01'::TIMESTAMP, 1);
+-- GOOD: Use rrule."after"() or rrule."between"()
+SELECT rrule."after"('FREQ=DAILY', '2020-01-01'::TIMESTAMP, '2025-01-01'::TIMESTAMP) AS next_occ;
 ```
 
 ### ❌ Pitfall 3: Not Using LIMIT
 
 ```sql
 -- BAD: Unbounded result set
-SELECT * FROM rrule.all('FREQ=SECONDLY', '2025-01-01'::TIMESTAMP);
+SELECT * FROM rrule."all"('FREQ=SECONDLY', '2025-01-01'::TIMESTAMP);
 -- ^ Will fail: SECONDLY not available in standard install
 
 -- GOOD: Always use COUNT in RRULE or LIMIT in query
-SELECT * FROM rrule.all('FREQ=DAILY;COUNT=365', '2025-01-01'::TIMESTAMP);
+SELECT * FROM rrule."all"('FREQ=DAILY;COUNT=365', '2025-01-01'::TIMESTAMP);
 ```
 
 ---
@@ -375,7 +375,7 @@ async function getNextOccurrence(eventId: string): Promise<Date | null> {
 
   // Query database
   const result = await db.query(
-    'SELECT rrule.next($1, $2) AS next_occ FROM events WHERE id = $3',
+    'SELECT rrule."next"($1, $2) AS next_occ FROM events WHERE id = $3',
     [rrule, dtstart, eventId]
   );
 
@@ -402,7 +402,7 @@ async function getNextOccurrence(eventId: string): Promise<Date | null> {
 2. ✅ Use partial indexes to filter recurring events
 3. ✅ Use LATERAL JOIN for set-based processing
 4. ✅ Always specify COUNT or UNTIL in RRULEs
-5. ✅ Use rrule.between() instead of rrule.all() with WHERE
+5. ✅ Use rrule."between"() instead of rrule."all"() with WHERE
 6. ✅ Monitor query performance with pg_stat_statements
 7. ✅ Set statement_timeout to prevent runaway queries
 8. ✅ Cache hot queries at application level

@@ -19,11 +19,11 @@ This guide demonstrates practical table-based operations with rrule_plpgsql - th
 
 ### Basic Syntax
 
-The core function is `rrule.all()` which generates occurrences from an RRULE string:
+The core function is `rrule."all"()` which generates occurrences from an RRULE string:
 
 ```sql
 -- Every day for 5 days
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 );
@@ -45,13 +45,13 @@ SELECT * FROM rrule.all(
 **Daily:**
 ```sql
 -- Weekdays only (Mon-Fri)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=10',
     '2025-01-01 09:00:00'::TIMESTAMP
 );
 
 -- Every 3 days
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;INTERVAL=3;COUNT=10',
     '2025-01-01 10:00:00'::TIMESTAMP
 );
@@ -60,13 +60,13 @@ SELECT * FROM rrule.all(
 **Weekly:**
 ```sql
 -- Every Monday
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=WEEKLY;BYDAY=MO;COUNT=12',
     '2025-01-06 10:00:00'::TIMESTAMP
 );
 
 -- Mon/Wed/Fri
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=12',
     '2025-01-06 14:00:00'::TIMESTAMP
 );
@@ -75,19 +75,19 @@ SELECT * FROM rrule.all(
 **Monthly:**
 ```sql
 -- Last day of each month
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=12',
     '2025-01-31 23:59:00'::TIMESTAMP
 );
 
 -- First Monday of each month
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=MONTHLY;BYDAY=1MO;COUNT=12',
     '2025-01-06 10:00:00'::TIMESTAMP
 );
 
 -- 15th of every month
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=12',
     '2025-01-15 12:00:00'::TIMESTAMP
 );
@@ -96,7 +96,7 @@ SELECT * FROM rrule.all(
 **Yearly:**
 ```sql
 -- Annual event (birthday, anniversary)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15;COUNT=10',
     '2025-03-15 00:00:00'::TIMESTAMP
 );
@@ -106,7 +106,7 @@ SELECT * FROM rrule.all(
 
 ```sql
 -- With timezone (DST handled automatically)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5;TZID=America/New_York',
     '2025-03-08 10:00:00'::TIMESTAMP
 );
@@ -142,13 +142,15 @@ CREATE TABLE subscriptions (
 -- Update next billing date for subscription #123
 UPDATE subscriptions
 SET next_billing_date = (
-    SELECT rrule.after(
+    SELECT occurrence
+    FROM rrule."after"(
         rrule,
         subscription_start,
         COALESCE(last_billed_at, subscription_start),
         1,
         'America/New_York'
-    )
+    ) AS occurrence
+    LIMIT 1
 )
 WHERE id = 123;
 ```
@@ -160,12 +162,16 @@ WHERE id = 123;
 ```sql
 -- Update next billing dates for ALL active subscriptions in one query
 UPDATE subscriptions
-SET next_billing_date = rrule.after(
-    rrule,
-    subscription_start,
-    COALESCE(last_billed_at, subscription_start),
-    1,
-    'America/New_York'
+SET next_billing_date = (
+    SELECT occurrence
+    FROM rrule."after"(
+        rrule,
+        subscription_start,
+        COALESCE(last_billed_at, subscription_start),
+        1,
+        'America/New_York'
+    ) AS occurrence
+    LIMIT 1
 )
 WHERE status = 'active';
 ```
@@ -197,14 +203,12 @@ SELECT
     s.plan_name,
     occurrence AS billing_date
 FROM subscriptions s
-CROSS JOIN LATERAL (
-    SELECT * FROM rrule.after(
-        s.rrule,
-        s.subscription_start,
-        COALESCE(s.last_billed_at, s.subscription_start),
-        3,  -- Next 3 occurrences
-        'America/New_York'
-    )
+CROSS JOIN LATERAL rrule."after"(
+    s.rrule,
+    s.subscription_start,
+    COALESCE(s.last_billed_at, s.subscription_start),
+    3,  -- Next 3 occurrences
+    'America/New_York'
 ) AS occurrence
 WHERE s.status = 'active'
 ORDER BY s.id, occurrence;
@@ -231,14 +235,12 @@ SELECT
     COUNT(*) AS billing_count,
     SUM(s.amount) AS expected_revenue
 FROM subscriptions s
-CROSS JOIN LATERAL (
-    SELECT * FROM rrule.between(
-        s.rrule,
-        s.subscription_start,
-        NOW(),
-        NOW() + INTERVAL '6 months',
-        'America/New_York'
-    )
+CROSS JOIN LATERAL rrule."between"(
+    s.rrule,
+    s.subscription_start,
+    NOW(),
+    NOW() + INTERVAL '6 months',
+    'America/New_York'
 ) AS occurrence
 WHERE s.status = 'active'
 GROUP BY billing_month
@@ -266,8 +268,12 @@ CREATE TABLE events (
 -- Populate next occurrence for all events (no loops!)
 UPDATE events
 SET
-    next_occurrence = rrule.after(rrule, event_start, NOW(), 1),
-    occurrence_count = rrule.count(rrule, event_start);
+    next_occurrence = (
+        SELECT occurrence
+        FROM rrule."after"(rrule, event_start, NOW(), 1) AS occurrence
+        LIMIT 1
+    ),
+    occurrence_count = rrule."count"(rrule, event_start);
 ```
 
 ### Pattern: Filtering with Set Operations
@@ -279,13 +285,11 @@ SELECT DISTINCT
     e.title,
     occurrence
 FROM events e
-CROSS JOIN LATERAL (
-    SELECT * FROM rrule.between(
-        e.rrule,
-        e.event_start,
-        NOW(),
-        NOW() + INTERVAL '30 days'
-    )
+CROSS JOIN LATERAL rrule."between"(
+    e.rrule,
+    e.event_start,
+    NOW(),
+    NOW() + INTERVAL '30 days'
 ) AS occurrence
 WHERE EXTRACT(DOW FROM occurrence) IN (0, 6)  -- Sunday = 0, Saturday = 6
 ORDER BY occurrence;
@@ -323,13 +327,11 @@ user_occurrences AS (
         occurrence AS event_start,
         occurrence + (e.duration_minutes || ' minutes')::INTERVAL AS event_end
     FROM calendar_events e
-    CROSS JOIN LATERAL (
-        SELECT * FROM rrule.between(
-            e.rrule,
-            e.event_start,
-            (SELECT start_time FROM proposed_meeting) - INTERVAL '1 day',
-            (SELECT end_time FROM proposed_meeting) + INTERVAL '1 day'
-        )
+    CROSS JOIN LATERAL rrule."between"(
+        e.rrule,
+        e.event_start,
+        (SELECT start_time FROM proposed_meeting) - INTERVAL '1 day',
+        (SELECT end_time FROM proposed_meeting) + INTERVAL '1 day'
     ) AS occurrence
     WHERE e.user_id = 123  -- Target user
 )
@@ -365,13 +367,11 @@ WITH
             occurrence AS event_start,
             occurrence + (e.duration_minutes || ' minutes')::INTERVAL AS event_end
         FROM calendar_events e
-        CROSS JOIN LATERAL (
-            SELECT * FROM rrule.between(
-                e.rrule,
-                e.event_start,
-                '2025-02-15 00:00:00-05'::TIMESTAMPTZ,
-                '2025-02-15 23:59:59-05'::TIMESTAMPTZ
-            )
+        CROSS JOIN LATERAL rrule."between"(
+            e.rrule,
+            e.event_start,
+            '2025-02-15 00:00:00-05'::TIMESTAMPTZ,
+            '2025-02-15 23:59:59-05'::TIMESTAMPTZ
         ) AS occurrence
         WHERE e.user_id = 123
     )
@@ -413,13 +413,11 @@ WITH target_time AS (
 booked_rooms AS (
     SELECT DISTINCT rb.room_id
     FROM room_bookings rb
-    CROSS JOIN LATERAL (
-        SELECT * FROM rrule.between(
-            rb.rrule,
-            rb.booking_start,
-            (SELECT start_time FROM target_time) - INTERVAL '1 day',
-            (SELECT end_time FROM target_time) + INTERVAL '1 day'
-        )
+    CROSS JOIN LATERAL rrule."between"(
+        rb.rrule,
+        rb.booking_start,
+        (SELECT start_time FROM target_time) - INTERVAL '1 day',
+        (SELECT end_time FROM target_time) + INTERVAL '1 day'
     ) AS occurrence
     CROSS JOIN target_time tt
     WHERE occurrence < tt.end_time
@@ -450,13 +448,11 @@ SELECT
     -- Days until maintenance
     EXTRACT(DAY FROM occurrence - NOW()) AS days_until_maintenance
 FROM equipment e
-CROSS JOIN LATERAL (
-    SELECT * FROM rrule.between(
-        e.maintenance_rrule,
-        COALESCE(e.last_maintenance, e.install_date),
-        NOW(),
-        NOW() + INTERVAL '90 days'
-    )
+CROSS JOIN LATERAL rrule."between"(
+    e.maintenance_rrule,
+    COALESCE(e.last_maintenance, e.install_date),
+    NOW(),
+    NOW() + INTERVAL '90 days'
 ) AS occurrence
 WHERE occurrence > NOW()
 ORDER BY occurrence;
@@ -467,14 +463,12 @@ SELECT
     e.equipment_name,
     next_maint.occurrence AS maintenance_date
 FROM equipment e
-CROSS JOIN LATERAL (
-    SELECT * FROM rrule.after(
-        e.maintenance_rrule,
-        COALESCE(e.last_maintenance, e.install_date),
-        NOW(),
-        1
-    )
-) AS next_maint
+CROSS JOIN LATERAL rrule."after"(
+    e.maintenance_rrule,
+    COALESCE(e.last_maintenance, e.install_date),
+    NOW(),
+    1
+) AS next_maint(occurrence)
 WHERE next_maint.occurrence <= NOW() + INTERVAL '7 days'
 ORDER BY next_maint.occurrence;
 ```
@@ -489,9 +483,7 @@ ORDER BY next_maint.occurrence;
 ```sql
 SELECT e.id, occurrence
 FROM events e
-CROSS JOIN LATERAL (
-    SELECT * FROM rrule.all(e.rrule, e.event_start)
-) AS occurrence;
+CROSS JOIN LATERAL rrule."all"(e.rrule, e.event_start) AS occurrence;
 ```
 
 **Avoid** - Correlated subquery in SELECT (less efficient):
@@ -499,7 +491,7 @@ CROSS JOIN LATERAL (
 -- Don't do this
 SELECT
     e.id,
-    (SELECT * FROM rrule.all(e.rrule, e.event_start))  -- Wrong!
+    (SELECT * FROM rrule."all"(e.rrule, e.event_start))  -- Wrong!
 FROM events e;
 ```
 
@@ -509,19 +501,19 @@ FROM events e;
 ```sql
 SELECT occurrence
 FROM events e
-CROSS JOIN LATERAL rrule.all(e.rrule, e.event_start) AS occurrence
+CROSS JOIN LATERAL rrule."all"(e.rrule, e.event_start) AS occurrence
 WHERE e.status = 'active'      -- Filter first (indexed)
   AND e.user_id = 123          -- Filter first (indexed)
   AND occurrence > NOW();      -- Filter expanded results
 ```
 
-### Use rrule.between() Instead of rrule.all()
+### Use rrule."between"() Instead of rrule."all"()
 
 When you know the date range, `between()` is more efficient:
 
 ```sql
 -- Good - only generates occurrences in range
-SELECT * FROM rrule.between(
+SELECT * FROM rrule."between"(
     'FREQ=DAILY;COUNT=1000',
     '2025-01-01',
     '2025-02-01',  -- Only need February
@@ -529,7 +521,7 @@ SELECT * FROM rrule.between(
 );
 
 -- Less efficient - generates all 1000, then filters
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=1000',
     '2025-01-01'
 )
@@ -538,15 +530,18 @@ WHERE occurrence BETWEEN '2025-02-01' AND '2025-02-28';
 
 ### Batch Updates vs. Row-by-Row
 
-**Best** - Direct function call in SET clause:
+**Best** - Scalar subquery with LIMIT 1 (safe for SETOF results):
 ```sql
--- Simplest and most efficient
 UPDATE subscriptions
-SET next_billing_date = rrule.after(
-    rrule,
-    subscription_start,
-    COALESCE(last_billed_at, subscription_start),
-    1
+SET next_billing_date = (
+    SELECT occurrence
+    FROM rrule."after"(
+        rrule,
+        subscription_start,
+        COALESCE(last_billed_at, subscription_start),
+        1
+    ) AS occurrence
+    LIMIT 1
 )
 WHERE status = 'active';
 ```
@@ -557,7 +552,8 @@ WHERE status = 'active';
 UPDATE subscriptions s
 SET next_billing_date = computed.next_date
 FROM (
-    SELECT id, rrule.after(...) AS next_date
+    SELECT id,
+        (SELECT occurrence FROM rrule."after"(... ) AS occurrence LIMIT 1) AS next_date
     FROM subscriptions
     WHERE status = 'active'
 ) computed
@@ -639,7 +635,7 @@ CREATE INDEX idx_bookings_resource_daterange
 -- Good: Filter with indexed columns first
 SELECT occurrence
 FROM subscriptions s
-CROSS JOIN LATERAL rrule.all(s.rrule, s.subscription_start) AS occurrence
+CROSS JOIN LATERAL rrule."all"(s.rrule, s.subscription_start) AS occurrence
 WHERE s.status = 'active'           -- Uses idx_subscriptions_status
   AND s.user_id = 123                -- Uses idx_subscriptions_user_id
   AND occurrence > NOW();
@@ -647,7 +643,7 @@ WHERE s.status = 'active'           -- Uses idx_subscriptions_status
 -- Bad: Expand all rows, then filter
 SELECT occurrence
 FROM subscriptions s
-CROSS JOIN LATERAL rrule.all(s.rrule, s.subscription_start) AS occurrence
+CROSS JOIN LATERAL rrule."all"(s.rrule, s.subscription_start) AS occurrence
 WHERE occurrence > NOW()
   AND s.user_id = 123;  -- Filter happens after expensive expansion!
 ```
@@ -657,7 +653,7 @@ WHERE occurrence > NOW()
 -- Best practice: Store computed next occurrence in indexed column
 -- Update this column periodically (e.g., daily batch job or after each event)
 UPDATE subscriptions
-SET next_billing_date = rrule.next(rrule, subscription_start)
+SET next_billing_date = rrule."next"(rrule, subscription_start)
 WHERE status = 'active'
   AND (next_billing_date IS NULL OR next_billing_date <= NOW());
 
@@ -686,7 +682,7 @@ WHERE status = 'active'
 EXPLAIN ANALYZE
 SELECT occurrence
 FROM events e
-CROSS JOIN LATERAL rrule.between(
+CROSS JOIN LATERAL rrule."between"(
     e.rrule,
     e.dtstart,
     '2025-01-01'::TIMESTAMPTZ,

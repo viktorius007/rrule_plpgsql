@@ -33,7 +33,7 @@ Malicious or misconfigured RRULEs can exhaust system resources:
 
 ```sql
 -- This would attempt to generate 31,536,000 occurrences!
-SELECT * FROM rrule.all('FREQ=SECONDLY;COUNT=31536000', '2025-01-01');
+SELECT * FROM rrule."all"('FREQ=SECONDLY;COUNT=31536000', '2025-01-01');
 ```
 
 ### Resource Exhaustion
@@ -144,7 +144,7 @@ function validateRRule(rrule: string): void {
 try {
   validateRRule(userInput);
   const occurrences = await db.query(
-    'SELECT * FROM rrule.all($1, $2)',
+    'SELECT * FROM rrule."all"($1, $2)',
     [userInput, dtstart]
   );
 } catch (error) {
@@ -193,7 +193,7 @@ SET statement_timeout = '30s';
 -- Or per-transaction
 BEGIN;
 SET LOCAL statement_timeout = '30s';
-SELECT * FROM rrule.all(...);
+SELECT * FROM rrule."all"(...);
 COMMIT;
 ```
 
@@ -235,14 +235,14 @@ Once enabled with proper safeguards:
 
 ```sql
 -- Every 3 hours, 8 times
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=HOURLY;INTERVAL=3;COUNT=8',
   '2025-01-01 09:00:00'::TIMESTAMP
 );
 -- Returns: 09:00, 12:00, 15:00, 18:00, 21:00, 00:00, 03:00, 06:00
 
 -- Every hour during business hours
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=HOURLY;BYHOUR=9,10,11,12,13,14,15,16,17;COUNT=45',
   '2025-01-01 09:00:00'::TIMESTAMP
 );
@@ -253,14 +253,14 @@ SELECT * FROM rrule.all(
 
 ```sql
 -- Every 15 minutes for 2 hours
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=MINUTELY;INTERVAL=15;COUNT=8',
   '2025-01-01 09:00:00'::TIMESTAMP
 );
 -- Returns: 09:00, 09:15, 09:30, 09:45, 10:00, 10:15, 10:30, 10:45
 
 -- Every minute during specific hours
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=MINUTELY;BYHOUR=10,11;COUNT=120',
   '2025-01-01 10:00:00'::TIMESTAMP
 );
@@ -271,14 +271,14 @@ SELECT * FROM rrule.all(
 
 ```sql
 -- Every 30 seconds for 5 minutes
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=SECONDLY;INTERVAL=30;COUNT=10',
   '2025-01-01 09:00:00'::TIMESTAMP
 );
 -- Returns: 10 occurrences at 30-second intervals
 
 -- Real-time monitoring every 10 seconds
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
   'FREQ=SECONDLY;INTERVAL=10;COUNT=60',
   '2025-01-01 09:00:00'::TIMESTAMP
 );
@@ -293,21 +293,21 @@ Verify sub-day frequencies are working:
 
 ```sql
 -- Test HOURLY
-SELECT COUNT(*) FROM rrule.all(
+SELECT COUNT(*) FROM rrule."all"(
   'FREQ=HOURLY;COUNT=5',
   '2025-01-01 10:00:00'::TIMESTAMP
 );
 -- Expected: 5
 
 -- Test MINUTELY
-SELECT COUNT(*) FROM rrule.all(
+SELECT COUNT(*) FROM rrule."all"(
   'FREQ=MINUTELY;COUNT=5',
   '2025-01-01 10:00:00'::TIMESTAMP
 );
 -- Expected: 5
 
 -- Test SECONDLY
-SELECT COUNT(*) FROM rrule.all(
+SELECT COUNT(*) FROM rrule."all"(
   'FREQ=SECONDLY;COUNT=5',
   '2025-01-01 10:00:00'::TIMESTAMP
 );
@@ -375,7 +375,7 @@ psql -d your_database -f src/install_with_subday.sql
 # 5. Test
 psql -d your_database -c "
   SELECT 'HOURLY: ' || COUNT(*) || ' results'
-  FROM rrule.all('FREQ=HOURLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+  FROM rrule."all"('FREQ=HOURLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
 "
 ```
 

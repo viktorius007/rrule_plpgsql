@@ -140,7 +140,7 @@ See **[Sub-Day Operations Guide](INCLUDING_SUBDAY_OPERATIONS.md)** for enabling 
 
 ```sql
 -- Meeting stays at 10 AM wall-clock time across DST boundary
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=3;TZID=America/New_York',
     '2025-03-08 10:00:00'::TIMESTAMP
 );
@@ -209,31 +209,31 @@ All functions support both `TIMESTAMP` and `TIMESTAMPTZ` with automatic timezone
 
 ```sql
 -- Generate occurrences
-rrule.all(rrule, dtstart) → SETOF TIMESTAMP
-rrule.between(rrule, dtstart, start, end) → SETOF TIMESTAMP
+rrule."all"(rrule, dtstart) → SETOF TIMESTAMP
+rrule."between"(rrule, dtstart, start, end, inc DEFAULT false) → SETOF TIMESTAMP
 
 -- Query occurrences
-rrule.after(rrule, dtstart, after_date) → TIMESTAMP
-rrule.before(rrule, dtstart, before_date) → TIMESTAMP
-rrule.next(rrule, dtstart) → TIMESTAMP
-rrule.most_recent(rrule, dtstart) → TIMESTAMP
+rrule."after"(rrule, dtstart, after_date, inc DEFAULT false) → TIMESTAMP
+rrule."before"(rrule, dtstart, before_date, inc DEFAULT false) → TIMESTAMP
+rrule."next"(rrule, dtstart) → TIMESTAMP
+rrule."most_recent"(rrule, dtstart) → TIMESTAMP
 
 -- Utilities
-rrule.count(rrule, dtstart) → INTEGER
-rrule.overlaps(dtstart, dtend, rrule, mindate, maxdate) → BOOLEAN
+rrule."count"(rrule, dtstart) → INTEGER
+rrule."overlaps"(dtstart, dtend, rrule, mindate, maxdate) → BOOLEAN
 ```
 
 ### Quick Example
 
 ```sql
 -- Every Monday for 4 weeks
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=WEEKLY;BYDAY=MO;COUNT=4',
     '2025-01-06 10:00:00'::TIMESTAMP
 );
 
 -- With timezone support
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5;TZID=America/New_York',
     '2025-03-08 10:00:00'::TIMESTAMP  -- DST handled automatically
 );
@@ -247,7 +247,7 @@ SELECT * FROM rrule.all(
 
 Contributions welcome! Please:
 
-1. Run all tests (all 10 test suites must pass)
+1. Run all tests (all 12 test suites must pass)
 2. Add test coverage for new features
 3. Update documentation
 4. Follow RFC 5545/7529 specifications

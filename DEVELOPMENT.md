@@ -105,6 +105,8 @@ psql -d test_database -f tests/test_table_operations.sql   # 17 tests - Real-wor
 
 **Expected output:** All tests pass with ✓ markers.
 
+See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for prescriptive testing rules (assertion quality, transaction handling, deterministic assertions).
+
 ---
 
 ## Architecture
@@ -119,7 +121,7 @@ psql -d test_database -f tests/test_table_operations.sql   # 17 tests - Real-wor
    - Convenience methods: `next()`, `most_recent()`
    - Advanced: `overlaps()`
    - TZID validation and timezone handling
-   - Enforces 16 RFC 5545 constraint validations
+   - Enforces 18 RFC 5545 constraint validations
    - All functions created in `rrule` schema
 
 2. **install.sql**
@@ -156,7 +158,7 @@ psql -d test_database -f tests/test_table_operations.sql   # 17 tests - Real-wor
 **Usage:**
 ```sql
 -- Schema-qualified (recommended)
-SELECT * FROM rrule.all('FREQ=DAILY;COUNT=5', '2025-01-01'::TIMESTAMP);
+SELECT * FROM rrule."all"('FREQ=DAILY;COUNT=5', '2025-01-01'::TIMESTAMP);
 
 -- With search_path
 SET search_path = rrule, public;
@@ -186,7 +188,7 @@ SELECT * FROM "all"('FREQ=DAILY;COUNT=5', '2025-01-01'::TIMESTAMP);
 **DST Handling Example:**
 ```sql
 -- Meeting stays at 10 AM wall-clock time even across DST spring-forward
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=3',
     '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
     'America/New_York'
@@ -209,7 +211,7 @@ SELECT * FROM rrule.all(
 **Converting to Arrays:**
 ```sql
 -- Use array_agg() when you need materialized arrays
-SELECT array_agg(occurrence) FROM rrule.all(
+SELECT array_agg(occurrence) FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01'::TIMESTAMP
 ) AS occurrence;
@@ -245,7 +247,7 @@ SELECT array_agg(occurrence) FROM rrule.all(
 ### Validation First
 
 All RRULEs are validated **before** processing:
-- 16 RFC 5545 constraint validations
+- 18 RFC 5545 constraint validations
 - Descriptive error messages with RFC citations
 - Suggested fixes for common mistakes
 

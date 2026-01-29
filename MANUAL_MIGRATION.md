@@ -9,7 +9,7 @@ You need manual migration if:
 1. You get this error when running `install.sql`:
    ```
    ERROR: cannot drop schema rrule because other objects depend on it
-   DETAIL: view public.my_schedule depends on function rrule.all(...)
+   DETAIL: view public.my_schedule depends on function rrule."all"(...)
    ```
 
 2. You have created any of these:

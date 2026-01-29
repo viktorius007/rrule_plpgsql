@@ -8,7 +8,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 
 ### Comprehensive Feature Support Grid
 
-| Feature | DAILY | WEEKLY | MONTHLY | YEARLY | ⚠️ HOURLY<sup>5</sup> | ⚠️ MINUTELY<sup>5</sup> | ⚠️ SECONDLY<sup>5</sup> |
+| Feature | DAILY | WEEKLY | MONTHLY | YEARLY | ⚠️ HOURLY<sup>3</sup> | ⚠️ MINUTELY<sup>3</sup> | ⚠️ SECONDLY<sup>3</sup> |
 |---------|-------|--------|---------|--------|----------|------------|------------|
 | **Core Modifiers** | | | | | | | |
 | `COUNT` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -19,20 +19,20 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 | `BYDAY` with position | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYMONTHDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYMONTHDAY=-1` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYMONTH` | ✅ | ✅ | ✅ | ✅<sup>1</sup> | ✅ | ✅ | ✅ |
-| `BYYEARDAY` | ✅ | ✅ | ✅ | ✅<sup>1</sup> | ✅ | ✅ | ✅ |
-| `BYYEARDAY` negative | ✅ | ✅ | ✅ | ✅<sup>1</sup> | ✅ | ✅ | ✅ |
+| `BYMONTH` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYYEARDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYYEARDAY` negative | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYWEEKNO` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Week Configuration** | | | | | | | |
 | `WKST` (week start day) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Time Filters** | | | | | | | |
-| `BYHOUR` | ✅ | ❌<sup>2</sup> | ❌<sup>2</sup> | ❌<sup>2</sup> | ✅ | ✅ | ✅ |
-| `BYMINUTE` | ✅ | ❌<sup>2</sup> | ❌<sup>2</sup> | ❌<sup>2</sup> | ✅ | ✅ | ✅ |
-| `BYSECOND` | ✅ | ❌<sup>2</sup> | ❌<sup>2</sup> | ❌<sup>2</sup> | ✅ | ✅ | ✅ |
+| `BYHOUR` | ✅ | 🚫<sup>1</sup> | 🚫<sup>1</sup> | 🚫<sup>1</sup> | ✅ | ✅ | ✅ |
+| `BYMINUTE` | ✅ | 🚫<sup>1</sup> | 🚫<sup>1</sup> | 🚫<sup>1</sup> | ✅ | ✅ | ✅ |
+| `BYSECOND` | ✅ | 🚫<sup>1</sup> | 🚫<sup>1</sup> | 🚫<sup>1</sup> | ✅ | ✅ | ✅ |
 | **Position Selectors** | | | | | | | |
-| `BYSETPOS` | ✅ | ✅ | ✅ | ✅ | ❌<sup>3</sup> | ❌<sup>3</sup> | ❌<sup>3</sup> |
+| `BYSETPOS` | ✅ | ✅ | ✅ | ✅ | 🚫<sup>2</sup> | 🚫<sup>2</sup> | 🚫<sup>2</sup> |
 | **Special Combinations** | | | | | | | |
-| `BYMONTH` + `BYYEARDAY` | ✅ | ✅ | ✅ | 🚫<sup>4</sup> | ✅ | ✅ | ✅ |
+| `BYMONTH` + `BYYEARDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYWEEKNO` + `BYMONTH` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYWEEKNO` + `BYYEARDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -46,25 +46,16 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 
 ## Footnotes
 
-<sup>1</sup> **YEARLY + BYMONTH/BYYEARDAY Limitation:**
-   - Can use **either** BYMONTH **or** BYYEARDAY with YEARLY frequency
-   - **Cannot combine both** (🚫 raises exception with clear error message)
-   - Valid: `FREQ=YEARLY;BYMONTH=2` or `FREQ=YEARLY;BYYEARDAY=100`
-   - Invalid: `FREQ=YEARLY;BYMONTH=2;BYYEARDAY=100` → Exception
-   - **Why?** Semantically contradictory - "February on day 100" is impossible
-   - **Note:** BYWEEKNO can combine with either: `FREQ=YEARLY;BYWEEKNO=10;BYMONTH=3` ✅
-
-<sup>2</sup> **Time Filters (BYHOUR/BYMINUTE/BYSECOND) with WEEKLY/MONTHLY/YEARLY:**
-   - **Why not supported?** These combinations are semantically ambiguous in RFC 5545
-   - Example problem: `FREQ=WEEKLY;BYHOUR=10` - does this mean "every hour at :10 within the week"? No clear interpretation
-   - **What to use instead:**
+<sup>1</sup> **Time Filters (BYHOUR/BYMINUTE/BYSECOND) with WEEKLY/MONTHLY/YEARLY:**
+   - **Status:** Raises exception with workaround guidance
+   - **RFC 5545:** The RFC Section 3.3.10 expand/limit table defines these as "Expand" operations — the behavior is specified, not ambiguous. Both python-dateutil and rrule.js implement expansion for these combinations.
+   - **Current limitation:** This implementation does not yet support time-level expansion for WEEKLY/MONTHLY/YEARLY frequencies. Rules using these combinations are rejected with descriptive error messages.
+   - **Workarounds:**
      - For hourly on specific days: `FREQ=HOURLY;BYDAY=MO,WE,FR` ✅
      - For daily with specific hours: `FREQ=DAILY;BYHOUR=9,10,11` ✅
-   - **Technical reason:** Time filters only make sense with:
-     - DAILY frequency (sub-day scheduling within each day)
-     - Sub-day frequencies (HOURLY, MINUTELY, SECONDLY)
 
-<sup>3</sup> **BYSETPOS with HOURLY/MINUTELY/SECONDLY:**
+<sup>2</sup> **BYSETPOS with HOURLY/MINUTELY/SECONDLY:**
+   - **Status:** Raises exception with guidance
    - **Why not supported?** These frequencies are already position-based
    - **What BYSETPOS does:** Selects positions within a generated set (e.g., "2nd Monday of month")
    - **Why not needed:** With `FREQ=HOURLY`, each hour is atomic - there's no "set" to select from
@@ -73,16 +64,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
      - Want every 15 minutes? Use `FREQ=MINUTELY;INTERVAL=15` ✅
    - **Technical note:** Sub-day frequencies generate single occurrences, not sets
 
-<sup>4</sup> **YEARLY + BYMONTH + BYYEARDAY (🚫 Raises Exception):**
-   - **What happens?** Immediate exception: `Invalid RRULE: FREQ=YEARLY with both BYMONTH and BYYEARDAY is not supported`
-   - **Why?** Contradictory constraints - BYMONTH="February" + BYYEARDAY=100 (April 9/10) can never both be true
-   - **Valid alternatives:**
-     - ✅ `FREQ=YEARLY;BYMONTH=2` - February every year
-     - ✅ `FREQ=YEARLY;BYYEARDAY=100` - Day 100 every year
-     - ✅ `FREQ=YEARLY;BYWEEKNO=10;BYMONTH=3` - Week 10 in March (valid combo!)
-   - **Full error message includes:** Why it's invalid, what to use instead, and example valid patterns
-
-<sup>5</sup> **⚠️ Sub-Day Frequencies (HOURLY/MINUTELY/SECONDLY) - Disabled by Default:**
+<sup>3</sup> **⚠️ Sub-Day Frequencies (HOURLY/MINUTELY/SECONDLY) - Disabled by Default:**
    - **Status:** ✅ Fully implemented and tested, ⚠️ but disabled by default for security
    - **Why?** Can generate millions of occurrences (SECONDLY: 31M/year), posing DoS risk in multi-tenant environments
    - **When safe to enable:** Single-tenant deployments with application-level validation and query timeouts
@@ -117,7 +99,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Max occurrences/year:** 1
 - **Performance:** Excellent
 - **Supports:** All date filters including BYYEARDAY (positive & negative), BYWEEKNO, BYSETPOS
-- **Note:** Cannot combine BYMONTH + BYYEARDAY (semantically contradictory)
+- **Note:** BYMONTH and BYYEARDAY can be combined; results are the intersection (may be empty)
 
 ### ⚠️ Sub-Day Frequencies (Implemented, Disabled by Default)
 
@@ -163,6 +145,16 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - `BYYEARDAY=366` only generates in leap years (2024, 2028, etc.)
 - `BYYEARDAY=-1` always generates (Dec 31)
 - Negative BYYEARDAY indices work correctly in both leap and non-leap years
+
+### BYMONTH + BYYEARDAY Intersections
+
+- Supported for YEARLY rules; both filters are applied as an intersection
+- If the intersection is empty (e.g., BYMONTH=2 with BYYEARDAY=100), that year yields no occurrences
+
+### ISO Week Numbering (BYWEEKNO)
+
+- Week 1 is the week containing January 4th (ISO 8601)
+- `WKST` defines the week start day used for week boundaries
 
 ### Sub-Day Scheduling
 
@@ -213,7 +205,7 @@ FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17;BYSETPOS=1,-1
 
 ## RFC 5545 & RFC 7529 Compliance Summary
 
-**Coverage:** ~99% of RFC 5545 RRULE specification + RFC 7529 SKIP/RSCALE support
+**Coverage:** ~97% of RFC 5545 RRULE specification + RFC 7529 SKIP/RSCALE support
 
 ### RFC 5545 Supported Features
 
@@ -236,18 +228,6 @@ FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17;BYSETPOS=1,-1
 ---
 
 ## Not Supported (Will Raise Exception)
-
-### ❌ YEARLY + BYMONTH + BYYEARDAY Combined
-
-- Can only use one at a time: either BYMONTH or BYYEARDAY, not both
-- *Why:* This combination is semantically contradictory (e.g., "February on day 100" is impossible)
-- *Error:* Attempting this will raise: `Invalid RRULE: FREQ=YEARLY with both BYMONTH and BYYEARDAY is not supported`
-- *Valid alternatives:*
-  - ✅ `FREQ=YEARLY;BYMONTH=2` (February every year)
-  - ✅ `FREQ=YEARLY;BYYEARDAY=100` (Day 100 every year)
-  - ✅ `FREQ=YEARLY;BYWEEKNO=10;BYMONTH=3` (Week 10 in March - valid!)
-  - ✅ `FREQ=YEARLY;BYWEEKNO=10;BYYEARDAY=64` (Day 64 in week 10 - valid!)
-- *Note:* All other YEARLY combinations work! (YEARLY + BYWEEKNO, YEARLY + BYWEEKNO + BYMONTH, etc.)
 
 ### ❌ BYMONTHDAY with WEEKLY Frequency
 
@@ -292,12 +272,12 @@ FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17;BYSETPOS=1,-1
 
 ## Why Not 100%?
 
-Some RFC 5545 combinations are:
-- Mathematically ambiguous (contradictory constraints)
-- Have no practical use in calendar applications
-- Add significant complexity for near-zero benefit
+The remaining gaps are:
+- **Time-level expansion** for WEEKLY/MONTHLY/YEARLY (RFC-specified but not yet implemented; rejected with workaround guidance)
+- **Non-Gregorian calendars** (HEBREW, ISLAMIC, CHINESE — requires ICU integration)
+- **Leap seconds** (BYSECOND=60 — PostgreSQL TIMESTAMP limitation)
 
-This implementation covers **all real-world scheduling needs** while maintaining simplicity and security.
+This implementation covers all standard scheduling needs. Unsupported combinations are rejected with descriptive errors rather than silently ignored.
 
 ---
 

@@ -275,12 +275,12 @@ const rruleString = 'FREQ=DAILY;COUNT=5';
 const dtstart = new Date('2025-01-01');
 
 await prisma.$executeRaw`
-  SELECT * FROM rrule.all(${rruleString}, ${dtstart}::TIMESTAMP)
+  SELECT * FROM rrule."all"(${rruleString}, ${dtstart}::TIMESTAMP)
 `;
 
 // ❌ UNSAFE: String interpolation (SQL injection risk)
 await prisma.$executeRawUnsafe(
-  `SELECT * FROM rrule.all('${rruleString}', '${dtstart}')`
+  `SELECT * FROM rrule."all"('${rruleString}', '${dtstart}')`
 );
 ```
 
@@ -542,13 +542,13 @@ import { sql } from 'drizzle-orm';
 
 // Query with RRULE functions
 const occurrences = await db.execute(
-  sql`SELECT * FROM rrule.all(${rruleString}, ${dtstart}::TIMESTAMP)`
+  sql`SELECT * FROM rrule."all"(${rruleString}, ${dtstart}::TIMESTAMP)`
 );
 
 // Using prepared statements for better performance
 const getOccurrences = db
   .execute(
-    sql`SELECT * FROM rrule.all(
+    sql`SELECT * FROM rrule."all"(
       ${sql.placeholder('rrule')},
       ${sql.placeholder('dtstart')}::TIMESTAMP
     )`
@@ -614,7 +614,7 @@ Always test migrations in development before applying to production:
 npm run migrate:up
 
 # Verify it worked
-psql -d your_database -c "SELECT rrule.all('FREQ=DAILY;COUNT=1', NOW())"
+psql -d your_database -c "SELECT rrule."all"('FREQ=DAILY;COUNT=1', NOW())"
 
 # Test down migration
 npm run migrate:down
@@ -636,30 +636,30 @@ psql -d your_database -c "\dn rrule"  # Should show "No matching schemas found"
 ```typescript
 // node-postgres
 await client.query(
-  'SELECT * FROM rrule.all($1, $2)',
+  'SELECT * FROM rrule."all"($1, $2)',
   [userRRule, dtstart]
 );
 
 // TypeORM
 await dataSource.query(
-  'SELECT * FROM rrule.all($1, $2)',
+  'SELECT * FROM rrule."all"($1, $2)',
   [userRRule, dtstart]
 );
 
 // Prisma (tagged template)
 await prisma.$executeRaw`
-  SELECT * FROM rrule.all(${userRRule}, ${dtstart}::TIMESTAMP)
+  SELECT * FROM rrule."all"(${userRRule}, ${dtstart}::TIMESTAMP)
 `;
 
 // Knex
 await knex.raw(
-  'SELECT * FROM rrule.all(?, ?)',
+  'SELECT * FROM rrule."all"(?, ?)',
   [userRRule, dtstart]
 );
 
 // Drizzle
 await db.execute(
-  sql`SELECT * FROM rrule.all(${userRRule}, ${dtstart}::TIMESTAMP)`
+  sql`SELECT * FROM rrule."all"(${userRRule}, ${dtstart}::TIMESTAMP)`
 );
 ```
 
@@ -668,12 +668,12 @@ await db.execute(
 ```typescript
 // ❌ DANGEROUS - SQL INJECTION RISK
 await client.query(
-  `SELECT * FROM rrule.all('${userRRule}', '${dtstart}')`
+  `SELECT * FROM rrule."all"('${userRRule}', '${dtstart}')`
 );
 
 // ❌ DANGEROUS - Template literals are NOT safe
 await client.query(`
-  SELECT * FROM rrule.all('${req.body.rrule}', '${req.body.date}')
+  SELECT * FROM rrule."all"('${req.body.rrule}', '${req.body.date}')
 `);
 ```
 
@@ -742,7 +742,7 @@ const client = new Client({ user: 'postgres', ... });
 // Solution: Ensure schema is in search_path
 await client.query('SET search_path = rrule, public');
 // Or use fully qualified names:
-await client.query('SELECT * FROM rrule.all($1, $2)', [rrule, date]);
+await client.query('SELECT * FROM rrule."all"($1, $2)', [rrule, date]);
 ```
 
 **Error:** `column "occurrence" does not exist`
@@ -750,10 +750,10 @@ await client.query('SELECT * FROM rrule.all($1, $2)', [rrule, date]);
 ```typescript
 // Solution: Add column alias
 // ❌ Wrong:
-SELECT * FROM rrule.all(rrule, dtstart)
+SELECT * FROM rrule."all"(rrule, dtstart)
 
 // ✅ Correct:
-SELECT * FROM rrule.all(rrule, dtstart) AS occurrence
+SELECT * FROM rrule."all"(rrule, dtstart) AS occurrence
 ```
 
 ### Performance Issues
@@ -762,9 +762,9 @@ SELECT * FROM rrule.all(rrule, dtstart) AS occurrence
 
 ```typescript
 // Solution: Use COUNT limits and date ranges
-SELECT * FROM rrule.all('FREQ=DAILY;COUNT=365', dtstart)  -- Limit results
+SELECT * FROM rrule."all"('FREQ=DAILY;COUNT=365', dtstart)  -- Limit results
 
-SELECT * FROM rrule.between(
+SELECT * FROM rrule."between"(
   rrule,
   dtstart,
   '2025-01-01'::TIMESTAMPTZ,

@@ -12,7 +12,7 @@ All functions live in the `rrule` PostgreSQL schema for namespace isolation and 
 
 1. **Schema-qualified (recommended for production):**
    ```sql
-   SELECT * FROM rrule.all('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+   SELECT * FROM rrule."all"('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
    ```
 
 2. **With search_path (convenient for development):**
@@ -31,7 +31,7 @@ All functions live in the `rrule` PostgreSQL schema for namespace isolation and 
 
 ## Standard API (rrule.js/python-dateutil compatible)
 
-### `rrule.all(rrule, dtstart) -> SETOF TIMESTAMP`
+### `rrule."all"(rrule, dtstart) -> SETOF TIMESTAMP`
 
 Returns all occurrences matching the RRULE (streaming via SETOF for memory efficiency).
 
@@ -50,7 +50,7 @@ Returns all occurrences matching the RRULE (streaming via SETOF for memory effic
 **Examples:**
 ```sql
 -- Schema-qualified (recommended)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 );
@@ -63,7 +63,7 @@ SELECT * FROM "all"(
 );
 
 -- With TZID (timezone support)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5;TZID=America/New_York',
     '2025-03-08 10:00:00'::TIMESTAMP
 );
@@ -72,7 +72,7 @@ SELECT * FROM rrule.all(
 
 ---
 
-### `rrule.between(rrule, dtstart, start_date, end_date) -> SETOF TIMESTAMP`
+### `rrule."between"(rrule, dtstart, start_date, end_date, inc DEFAULT false) -> SETOF TIMESTAMP`
 
 Returns occurrences between two dates (streaming via SETOF).
 
@@ -83,12 +83,13 @@ Returns occurrences between two dates (streaming via SETOF).
 - `dtstart`: `TIMESTAMP` - Start date/time
 - `start_date`: `TIMESTAMP` - Range start
 - `end_date`: `TIMESTAMP` - Range end
+- `inc`: `BOOLEAN` - Include boundaries when true (default: false)
 
 **Returns:** `SETOF TIMESTAMP` - Occurrences in range
 
 **Example:**
 ```sql
-SELECT * FROM rrule.between(
+SELECT * FROM rrule."between"(
     'FREQ=DAILY;INTERVAL=1',
     '2025-01-01 10:00:00'::TIMESTAMP,
     '2025-01-01'::TIMESTAMP,
@@ -98,7 +99,7 @@ SELECT * FROM rrule.between(
 
 ---
 
-### `rrule.after(rrule, dtstart, after_date) -> TIMESTAMP`
+### `rrule."after"(rrule, dtstart, after_date, inc DEFAULT false) -> TIMESTAMP`
 
 Returns the first occurrence after a specific date.
 
@@ -108,12 +109,13 @@ Returns the first occurrence after a specific date.
 - `rrule`: `VARCHAR` - RRULE string
 - `dtstart`: `TIMESTAMP` - Start date/time
 - `after_date`: `TIMESTAMP` - Find occurrence after this date
+- `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
 **Returns:** `TIMESTAMP` - Next occurrence, or `NULL` if none
 
 **Example:**
 ```sql
-SELECT rrule.after(
+SELECT rrule."after"(
     'FREQ=WEEKLY;BYDAY=MO,WE,FR',
     '2025-01-01 10:00:00'::TIMESTAMP,
     '2025-06-01'::TIMESTAMP
@@ -123,7 +125,7 @@ SELECT rrule.after(
 
 ---
 
-### `rrule.before(rrule, dtstart, before_date) -> TIMESTAMP`
+### `rrule."before"(rrule, dtstart, before_date, inc DEFAULT false) -> TIMESTAMP`
 
 Returns the last occurrence before a specific date.
 
@@ -133,12 +135,13 @@ Returns the last occurrence before a specific date.
 - `rrule`: `VARCHAR` - RRULE string
 - `dtstart`: `TIMESTAMP` - Start date/time
 - `before_date`: `TIMESTAMP` - Find occurrence before this date
+- `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
 **Returns:** `TIMESTAMP` - Previous occurrence, or `NULL` if none
 
 **Example:**
 ```sql
-SELECT rrule.before(
+SELECT rrule."before"(
     'FREQ=MONTHLY;BYMONTHDAY=15',
     '2025-01-15 10:00:00'::TIMESTAMP,
     '2025-07-01'::TIMESTAMP
@@ -148,7 +151,7 @@ SELECT rrule.before(
 
 ---
 
-### `rrule.count(rrule, dtstart) -> INTEGER`
+### `rrule."count"(rrule, dtstart) -> INTEGER`
 
 Returns the total number of occurrences.
 
@@ -162,7 +165,7 @@ Returns the total number of occurrences.
 
 **Example:**
 ```sql
-SELECT rrule.count(
+SELECT rrule."count"(
     'FREQ=DAILY;COUNT=10',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS total;
@@ -183,7 +186,7 @@ These functions accept `TIMESTAMPTZ` (timestamp with timezone) and properly hand
 **DST Handling Example:**
 ```sql
 -- Daily meeting at 10 AM across DST spring-forward (March 9, 2025)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=3',
     '2025-03-08 10:00:00-05'::TIMESTAMPTZ,  -- 10 AM EST
     'America/New_York'
@@ -195,7 +198,7 @@ SELECT * FROM rrule.all(
 --   2025-03-10 10:00:00-04  (Monday, EDT)
 ```
 
-### `rrule.all(rrule, dtstart, timezone) -> SETOF TIMESTAMPTZ`
+### `rrule."all"(rrule, dtstart, timezone) -> SETOF TIMESTAMPTZ`
 
 Returns all occurrences matching the RRULE with proper DST handling.
 
@@ -214,21 +217,21 @@ Returns all occurrences matching the RRULE with proper DST handling.
 **Examples:**
 ```sql
 -- Explicit timezone parameter (highest priority)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
     'America/New_York'
 );
 
 -- TZID in RRULE string
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'TZID=America/Los_Angeles;FREQ=DAILY;COUNT=5',
     '2025-03-08 10:00:00-08'::TIMESTAMPTZ,
     NULL  -- Will use TZID from RRULE
 );
 
 -- UTC fallback
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-03-08 10:00:00+00'::TIMESTAMPTZ,
     NULL  -- No timezone specified, uses UTC
@@ -237,7 +240,7 @@ SELECT * FROM rrule.all(
 
 ---
 
-### `rrule.between(rrule, dtstart, start_date, end_date, timezone) -> SETOF TIMESTAMPTZ`
+### `rrule."between"(rrule, dtstart, start_date, end_date, timezone, inc DEFAULT false) -> SETOF TIMESTAMPTZ`
 
 Returns occurrences between two dates with DST handling.
 
@@ -247,10 +250,11 @@ Returns occurrences between two dates with DST handling.
 - `start_date`: `TIMESTAMPTZ` - Range start
 - `end_date`: `TIMESTAMPTZ` - Range end
 - `timezone`: `TEXT` (optional) - Timezone name
+- `inc`: `BOOLEAN` - Include boundaries when true (default: false)
 
 **Example:**
 ```sql
-SELECT * FROM rrule.between(
+SELECT * FROM rrule."between"(
     'FREQ=DAILY',
     '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
     '2025-03-09 00:00:00-04'::TIMESTAMPTZ,
@@ -262,7 +266,7 @@ SELECT * FROM rrule.between(
 
 ---
 
-### `rrule.after(rrule, dtstart, after_date, count, timezone) -> SETOF TIMESTAMPTZ`
+### `rrule."after"(rrule, dtstart, after_date, count, timezone, inc DEFAULT false) -> SETOF TIMESTAMPTZ`
 
 Returns N occurrences after a specific date with DST handling.
 
@@ -272,10 +276,11 @@ Returns N occurrences after a specific date with DST handling.
 - `after_date`: `TIMESTAMPTZ` - Find occurrences after this date
 - `count`: `INT` - Number of occurrences to return
 - `timezone`: `TEXT` (optional) - Timezone name
+- `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
 **Example:**
 ```sql
-SELECT * FROM rrule.after(
+SELECT * FROM rrule."after"(
     'FREQ=DAILY;COUNT=100',
     '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
     '2025-03-09 00:00:00-04'::TIMESTAMPTZ,
@@ -287,7 +292,7 @@ SELECT * FROM rrule.after(
 
 ---
 
-### `rrule.before(rrule, dtstart, before_date, count, timezone) -> SETOF TIMESTAMPTZ`
+### `rrule."before"(rrule, dtstart, before_date, count, timezone, inc DEFAULT false) -> SETOF TIMESTAMPTZ`
 
 Returns N occurrences before a specific date with DST handling.
 
@@ -297,10 +302,11 @@ Returns N occurrences before a specific date with DST handling.
 - `before_date`: `TIMESTAMPTZ` - Find occurrences before this date
 - `count`: `INT` - Number of occurrences to return
 - `timezone`: `TEXT` (optional) - Timezone name
+- `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
 **Example:**
 ```sql
-SELECT * FROM rrule.before(
+SELECT * FROM rrule."before"(
     'FREQ=DAILY;COUNT=100',
     '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
     '2025-03-10 00:00:00-04'::TIMESTAMPTZ,
@@ -314,7 +320,7 @@ SELECT * FROM rrule.before(
 
 ## Convenience Methods
 
-### `rrule.next(rrule, dtstart) -> TIMESTAMP`
+### `rrule."next"(rrule, dtstart) -> TIMESTAMP`
 
 Get the next occurrence from NOW (current timestamp).
 
@@ -328,17 +334,17 @@ Get the next occurrence from NOW (current timestamp).
 
 **Example:**
 ```sql
-SELECT rrule.next(
+SELECT rrule."next"(
     'FREQ=WEEKLY;BYDAY=MO',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS next_monday;
 ```
 
-**Note:** Equivalent to `rrule.after(rrule, dtstart, NOW()::TIMESTAMP)`
+**Note:** Equivalent to `rrule."after"(rrule, dtstart, NOW()::TIMESTAMP, inc DEFAULT false)`
 
 ---
 
-### `rrule.most_recent(rrule, dtstart) -> TIMESTAMP`
+### `rrule."most_recent"(rrule, dtstart) -> TIMESTAMP`
 
 Get the most recent occurrence before NOW.
 
@@ -352,13 +358,13 @@ Get the most recent occurrence before NOW.
 
 **Example:**
 ```sql
-SELECT rrule.most_recent(
+SELECT rrule."most_recent"(
     'FREQ=DAILY;COUNT=100',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS last_occurrence;
 ```
 
-**Note:** Equivalent to `rrule.before(rrule, dtstart, NOW()::TIMESTAMP)`
+**Note:** Equivalent to `rrule."before"(rrule, dtstart, NOW()::TIMESTAMP, inc DEFAULT false)`
 
 ---
 
@@ -373,14 +379,14 @@ The SETOF functions are memory-efficient (streaming), but sometimes you need mat
 **Examples:**
 ```sql
 -- Get array of all occurrences
-SELECT array_agg(occurrence) FROM rrule.all(
+SELECT array_agg(occurrence) FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS occurrence;
 -- Returns: {"2025-01-01 10:00:00", "2025-01-02 10:00:00", ...}
 
 -- Get array of occurrences in range
-SELECT array_agg(occurrence) FROM rrule.between(
+SELECT array_agg(occurrence) FROM rrule."between"(
     'FREQ=DAILY;INTERVAL=1',
     '2025-01-01 10:00:00'::TIMESTAMP,
     '2025-01-01'::TIMESTAMP,
@@ -388,7 +394,7 @@ SELECT array_agg(occurrence) FROM rrule.between(
 ) AS occurrence;
 
 -- Use with unnest for iteration
-SELECT unnest(array_agg(occurrence)) AS occurrence FROM rrule.all(
+SELECT unnest(array_agg(occurrence)) AS occurrence FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS occurrence;
@@ -397,7 +403,7 @@ SELECT unnest(array_agg(occurrence)) AS occurrence FROM rrule.all(
 **Note:** For simple iteration, you can use the SETOF functions directly without `array_agg()`:
 ```sql
 -- Direct iteration (more efficient)
-SELECT * FROM rrule.all(
+SELECT * FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 );
@@ -407,7 +413,7 @@ SELECT * FROM rrule.all(
 
 ## Advanced Functions
 
-### `rrule.overlaps(dtstart, dtend, rrule, mindate, maxdate) -> BOOLEAN`
+### `rrule."overlaps"(dtstart, dtend, rrule, mindate, maxdate) -> BOOLEAN`
 
 Check if a recurring event has ANY occurrences overlapping a date range. Optimized to stop at first match.
 
@@ -425,7 +431,7 @@ Check if a recurring event has ANY occurrences overlapping a date range. Optimiz
 **Example:**
 ```sql
 -- Does this meeting conflict with vacation dates?
-SELECT rrule.overlaps(
+SELECT rrule."overlaps"(
     '2025-01-01 09:00:00+00'::TIMESTAMPTZ,
     '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
     'FREQ=WEEKLY;BYDAY=MO,WE,FR',
@@ -442,15 +448,15 @@ Our API aligns with de facto standards from popular RRULE libraries:
 
 | Function | rrule.js | python-dateutil | Our Implementation |
 |----------|----------|-----------------|-------------------|
-| Get all occurrences | `.all()` | `list(rule)` | `rrule.all(rrule, dtstart)` returns SETOF |
-| Get all as array | `.all()` | `list(rule)` | `array_agg(occurrence) FROM rrule.all(...) AS occurrence` |
-| Get in range | `.between(s,e)` | `.between(s,e)` | `rrule.between(rrule, dtstart, start, end)` returns SETOF |
-| Get range as array | `.between(s,e)` | `.between(s,e)` | `array_agg(occurrence) FROM rrule.between(...) AS occurrence` |
-| After specific date | `.after(date)` | `.after(date)` | `rrule.after(rrule, dtstart, date)` |
-| Before specific date | `.before(date)` | `.before(date)` | `rrule.before(rrule, dtstart, date)` |
-| **Next from now** | `.after(new Date())` | `.after(now())` | `rrule.next(rrule, dtstart)` ⭐ |
-| **Most recent** | `.before(new Date())` | `.before(now())` | `rrule.most_recent(rrule, dtstart)` ⭐ |
-| Count | - | - | `rrule.count(rrule, dtstart)` |
+| Get all occurrences | `.all()` | `list(rule)` | `rrule."all"(rrule, dtstart)` returns SETOF |
+| Get all as array | `.all()` | `list(rule)` | `array_agg(occurrence) FROM rrule."all"(...) AS occurrence` |
+| Get in range | `.between(s,e)` | `.between(s,e)` | `rrule."between"(rrule, dtstart, start, end, inc DEFAULT false)` returns SETOF |
+| Get range as array | `.between(s,e)` | `.between(s,e)` | `array_agg(occurrence) FROM rrule."between"(...) AS occurrence` |
+| After specific date | `.after(date)` | `.after(date)` | `rrule."after"(rrule, dtstart, date, inc DEFAULT false)` |
+| Before specific date | `.before(date)` | `.before(date)` | `rrule."before"(rrule, dtstart, date, inc DEFAULT false)` |
+| **Next from now** | `.after(new Date())` | `.after(now())` | `rrule."next"(rrule, dtstart)` ⭐ |
+| **Most recent** | `.before(new Date())` | `.before(now())` | `rrule."most_recent"(rrule, dtstart)` ⭐ |
+| Count | - | - | `rrule."count"(rrule, dtstart)` |
 
 ⭐ = Convenience functions that simplify common use cases (not in standard libraries)
 
@@ -469,19 +475,19 @@ All rrule_plpgsql functions use PostgreSQL's `STRICT` mode, which provides consi
 
 ```sql
 -- NULL rrule parameter returns NULL
-SELECT rrule.all(NULL, '2025-01-01 10:00:00'::TIMESTAMP);
+SELECT rrule."all"(NULL, '2025-01-01 10:00:00'::TIMESTAMP);
 -- Result: NULL (no rows returned)
 
 -- NULL dtstart parameter returns NULL
-SELECT rrule.all('FREQ=DAILY;COUNT=5', NULL);
+SELECT rrule."all"('FREQ=DAILY;COUNT=5', NULL);
 -- Result: NULL (no rows returned)
 
 -- Both NULL parameters return NULL
-SELECT rrule.all(NULL, NULL);
+SELECT rrule."all"(NULL, NULL);
 -- Result: NULL (no rows returned)
 
 -- Valid parameters return results as expected
-SELECT rrule.all('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+SELECT rrule."all"('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
 -- Result: SETOF TIMESTAMP with 5 dates
 ```
 
@@ -498,13 +504,13 @@ SELECT rrule.all('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
 SELECT
   CASE
     WHEN user_rrule IS NOT NULL AND dtstart IS NOT NULL
-    THEN rrule.all(user_rrule, dtstart)
+    THEN rrule."all"(user_rrule, dtstart)
     ELSE NULL
   END AS occurrences
 FROM events;
 
 -- Use COALESCE to provide defaults
-SELECT rrule.all(
+SELECT rrule."all"(
   COALESCE(user_rrule, 'FREQ=DAILY;COUNT=1'),  -- Default RRULE if NULL
   COALESCE(dtstart, CURRENT_TIMESTAMP)          -- Default to now if NULL
 );
@@ -512,7 +518,7 @@ SELECT rrule.all(
 -- Filter out NULL results in aggregations
 SELECT array_agg(occurrence) FILTER (WHERE occurrence IS NOT NULL)
 FROM events
-CROSS JOIN LATERAL rrule.all(rrule_string, start_date) AS occurrence;
+CROSS JOIN LATERAL rrule."all"(rrule_string, start_date) AS occurrence;
 ```
 
 **Exception handling:**
@@ -521,10 +527,10 @@ STRICT mode applies to NULL inputs. Invalid RRULE strings will still raise excep
 
 ```sql
 -- NULL input: Returns NULL (no error)
-SELECT rrule.all(NULL, '2025-01-01'::TIMESTAMP);
+SELECT rrule."all"(NULL, '2025-01-01'::TIMESTAMP);
 
 -- Invalid RRULE: Raises exception with helpful message
-SELECT rrule.all('FREQ=INVALID', '2025-01-01'::TIMESTAMP);
+SELECT rrule."all"('FREQ=INVALID', '2025-01-01'::TIMESTAMP);
 -- ERROR: Invalid RRULE: FREQ parameter is required.
 -- Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY
 ```
