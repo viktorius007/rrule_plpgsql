@@ -20,19 +20,22 @@
 \set ECHO all
 
 -- Test database setup
-BEGIN;
-
--- Ensure timezone consistency
+-- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create rrule schema and load functions
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
-\i src/rrule_subday.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
 
 -- Test results table
 CREATE TEMP TABLE test_results (
@@ -79,7 +82,7 @@ INSERT INTO test_results VALUES (1, 'Create and populate subscriptions table',
 -- Test 2: Batch update next billing dates for all active subscriptions
 UPDATE subscriptions
 SET next_billing_date = (
-    SELECT * FROM rrule.after(
+    SELECT * FROM rrule."after"(
         subscriptions.rrule,
         subscriptions.subscription_start,
         COALESCE(subscriptions.last_billed_at, subscriptions.subscription_start),
@@ -96,27 +99,36 @@ INSERT INTO test_results VALUES (2, 'Batch UPDATE: compute next billing dates',
     END FROM subscriptions WHERE status = 'active')
 );
 
--- Test 3: Find subscriptions due in next 7 days
+-- Test 2a: Verify specific computed billing date (Premium Monthly, last billed Jan 1 → next Feb 1)
+INSERT INTO test_results VALUES (20, 'Specific date: Premium Monthly next_billing = Feb 1',
+    (SELECT CASE
+        WHEN next_billing_date = '2025-02-01 00:00:00+00'::TIMESTAMPTZ
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(next_billing_date::TEXT, 'NULL')
+    END FROM subscriptions WHERE plan_name = 'Premium Monthly')
+);
+
+-- Test 3: Find subscriptions due in next 7 days (reference: 2025-02-05)
 INSERT INTO test_results VALUES (3, 'Query: subscriptions due in next 7 days',
     (SELECT CASE
-        WHEN COUNT(*) >= 1  -- At least one should be due soon
+        WHEN COUNT(*) = 2  -- Premium Monthly (Feb 1) and Basic Weekly (Jan 27) are within 7 days
         THEN 'PASS'
         ELSE 'FAIL'
     END FROM subscriptions
     WHERE status = 'active'
-      AND next_billing_date <= NOW() + INTERVAL '7 days')
+      AND next_billing_date <= '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '7 days')
 );
 
 -- Test 4: Generate billing schedule (next 3 occurrences) using LATERAL JOIN
 INSERT INTO test_results VALUES (4, 'LATERAL JOIN: generate billing schedules',
     (SELECT CASE
-        WHEN COUNT(*) >= 6  -- At least 2 active subs × 3 occurrences = 6
+        WHEN COUNT(*) = 9  -- 3 active subscriptions × 3 occurrences each = 9
         THEN 'PASS'
         ELSE 'FAIL'
     END
     FROM subscriptions s
     CROSS JOIN LATERAL (
-        SELECT * FROM rrule.after(
+        SELECT * FROM rrule."after"(
             s.rrule,
             s.subscription_start,
             COALESCE(s.last_billed_at, s.subscription_start),
@@ -126,10 +138,10 @@ INSERT INTO test_results VALUES (4, 'LATERAL JOIN: generate billing schedules',
     WHERE s.status = 'active')
 );
 
--- Test 5: Revenue forecast by month (aggregation)
+-- Test 5: Revenue forecast by month (aggregation, reference: 2025-02-05)
 INSERT INTO test_results VALUES (5, 'Aggregation: revenue forecast by month',
     (SELECT CASE
-        WHEN COUNT(*) > 0 AND SUM(expected_revenue) > 0
+        WHEN COUNT(*) = 4  -- 4 billing months: Feb, Mar, Apr, May
         THEN 'PASS'
         ELSE 'FAIL'
     END
@@ -139,11 +151,11 @@ INSERT INTO test_results VALUES (5, 'Aggregation: revenue forecast by month',
             SUM(s.amount) AS expected_revenue
         FROM subscriptions s
         CROSS JOIN LATERAL (
-            SELECT occurrence FROM rrule.between(
+            SELECT occurrence FROM rrule."between"(
                 s.rrule,
                 s.subscription_start,
-                NOW(),
-                NOW() + INTERVAL '3 months'
+                '2025-02-05 12:00:00+00'::TIMESTAMPTZ,
+                '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '3 months'
             ) AS occurrence
         ) AS occ
         WHERE s.status = 'active'
@@ -178,16 +190,16 @@ INSERT INTO test_results VALUES (6, 'Create events table',
     (SELECT CASE WHEN COUNT(*) = 4 THEN 'PASS' ELSE 'FAIL' END FROM events)
 );
 
--- Test 7: Batch update computed columns
+-- Test 7: Batch update computed columns (reference: 2025-02-05)
 UPDATE events
 SET
-    next_occurrence = (SELECT after_result FROM rrule.after(events.rrule, events.event_start, NOW(), 1) AS after_result LIMIT 1),
-    occurrence_count = rrule.count(events.rrule, events.event_start);
+    next_occurrence = (SELECT after_result FROM rrule."after"(events.rrule, events.event_start, '2025-02-05 12:00:00+00'::TIMESTAMPTZ, 1) AS after_result LIMIT 1),
+    occurrence_count = rrule."count"(events.rrule, events.event_start);
 
 INSERT INTO test_results VALUES (7, 'Batch UPDATE: multiple computed columns',
     (SELECT CASE
         WHEN COUNT(*) = 4
-         AND MIN(occurrence_count) > 0
+         AND MIN(occurrence_count) = 10
          AND COUNT(*) FILTER (WHERE status = 'active' AND next_occurrence IS NOT NULL) = 3
         THEN 'PASS'
         ELSE 'FAIL'
@@ -195,19 +207,20 @@ INSERT INTO test_results VALUES (7, 'Batch UPDATE: multiple computed columns',
 );
 
 -- Test 8: Filtering with set operations - events on weekends
+-- Uses fixed date range for deterministic assertion (none of the test events produce weekend occurrences)
 INSERT INTO test_results VALUES (8, 'Set filtering: weekend occurrences',
     (SELECT CASE
-        WHEN COUNT(DISTINCT e.id) >= 0  -- May be 0 if no weekend events
+        WHEN COUNT(DISTINCT e.id) = 0  -- No weekend events expected (all rrules target weekdays)
         THEN 'PASS'
         ELSE 'FAIL'
     END
     FROM events e
     CROSS JOIN LATERAL (
-        SELECT occurrence FROM rrule.between(
+        SELECT occurrence FROM rrule."between"(
             e.rrule,
             e.event_start,
-            NOW(),
-            NOW() + INTERVAL '30 days' ) AS occurrence ) AS occ
+            '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+            '2025-07-01 00:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
     WHERE EXTRACT(DOW FROM occurrence) IN (0, 6))  -- Sunday = 0, Saturday = 6
 );
 
@@ -252,7 +265,7 @@ INSERT INTO test_results VALUES (10, 'Conflict detection: find overlapping event
             occurrence + (e.duration_minutes || ' minutes')::INTERVAL AS event_end
         FROM calendar_events e
         CROSS JOIN LATERAL (
-            SELECT occurrence FROM rrule.between(
+            SELECT occurrence FROM rrule."between"(
                 e.rrule,
                 e.event_start,
                 '2025-01-07 00:00:00+00'::TIMESTAMPTZ,
@@ -304,7 +317,7 @@ INSERT INTO test_results VALUES (12, 'Resource availability: find free rooms',
         SELECT DISTINCT rb.room_id
         FROM room_bookings rb
         CROSS JOIN LATERAL (
-            SELECT occurrence FROM rrule.between(
+            SELECT occurrence FROM rrule."between"(
                 rb.rrule,
                 rb.booking_start,
                 '2025-01-08 09:00:00+00'::TIMESTAMPTZ,
@@ -333,21 +346,21 @@ INSERT INTO test_results VALUES (13, 'Create equipment maintenance table',
     (SELECT CASE WHEN COUNT(*) = 3 THEN 'PASS' ELSE 'FAIL' END FROM equipment)
 );
 
--- Test 14: Generate maintenance schedule for next 90 days
+-- Test 14: Generate maintenance schedule for next 90 days (reference: 2025-02-05)
 INSERT INTO test_results VALUES (14, 'Maintenance schedule: next 90 days',
     (SELECT CASE
-        WHEN COUNT(*) >= 3  -- Should have at least a few maintenance events
+        WHEN COUNT(*) = 4  -- Server A: Mar 1, Apr 1, May 1; HVAC: Mar 15
         THEN 'PASS'
         ELSE 'FAIL'
     END
     FROM equipment e
     CROSS JOIN LATERAL (
-        SELECT occurrence FROM rrule.between(
+        SELECT occurrence FROM rrule."between"(
             e.maintenance_rrule,
             COALESCE(e.last_maintenance, e.install_date),
-            NOW(),
-            NOW() + INTERVAL '90 days' ) AS occurrence ) AS occ
-    WHERE occurrence > NOW())
+            '2025-02-05 12:00:00+00'::TIMESTAMPTZ,
+            '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '90 days' ) AS occurrence ) AS occ
+    WHERE occurrence > '2025-02-05 12:00:00+00'::TIMESTAMPTZ)
 );
 
 ---------------------------------------------------------------------------------------------------
@@ -355,29 +368,29 @@ INSERT INTO test_results VALUES (14, 'Maintenance schedule: next 90 days',
 ---------------------------------------------------------------------------------------------------
 \echo '--- Section 5: Complex Query Patterns ---'
 
--- Test 15: Multiple table JOIN with occurrence expansion
+-- Test 15: Multiple table JOIN with occurrence expansion (reference: 2025-02-05)
 INSERT INTO test_results VALUES (15, 'Complex JOIN: subscriptions + events',
     (SELECT CASE
-        WHEN COUNT(*) > 0  -- Should be able to JOIN and expand
+        WHEN COUNT(*) = 3  -- 3 active subscriptions joined with 3 active events
         THEN 'PASS'
         ELSE 'FAIL'
     END
     FROM subscriptions s
     INNER JOIN events e ON s.customer_id = e.id  -- Artificial join for testing
     CROSS JOIN LATERAL (
-        SELECT after_result AS sub_occurrence FROM rrule.after(s.rrule, s.subscription_start, NOW(), 1) AS after_result
+        SELECT after_result AS sub_occurrence FROM rrule."after"(s.rrule, s.subscription_start, '2025-02-05 12:00:00+00'::TIMESTAMPTZ, 1) AS after_result
     ) sub_next
     CROSS JOIN LATERAL (
-        SELECT after_result AS event_occurrence FROM rrule.after(e.rrule, e.event_start, NOW(), 1) AS after_result
+        SELECT after_result AS event_occurrence FROM rrule."after"(e.rrule, e.event_start, '2025-02-05 12:00:00+00'::TIMESTAMPTZ, 1) AS after_result
     ) event_next
     WHERE s.status = 'active' AND e.status = 'active'
     LIMIT 10)
 );
 
--- Test 16: Window functions with occurrence data
+-- Test 16: Window functions with occurrence data (reference: 2025-02-05)
 INSERT INTO test_results VALUES (16, 'Window functions: occurrence ranking',
     (SELECT CASE
-        WHEN MAX(occurrence_rank) >= 3  -- Should rank at least 3 occurrences
+        WHEN MAX(occurrence_rank) = 5  -- 5 occurrences per event, ranked 1-5
         THEN 'PASS'
         ELSE 'FAIL'
     END
@@ -388,7 +401,7 @@ INSERT INTO test_results VALUES (16, 'Window functions: occurrence ranking',
             ROW_NUMBER() OVER (PARTITION BY e.id ORDER BY occ.occurrence) AS occurrence_rank
         FROM events e
         CROSS JOIN LATERAL (
-            SELECT after_result AS occurrence FROM rrule.after(e.rrule, e.event_start, NOW(), 5) AS after_result
+            SELECT after_result AS occurrence FROM rrule."after"(e.rrule, e.event_start, '2025-02-05 12:00:00+00'::TIMESTAMPTZ, 5) AS after_result
         ) AS occ
         WHERE e.status = 'active'
     ) ranked_occurrences)
@@ -405,7 +418,7 @@ INSERT INTO test_results VALUES (17, 'Subquery: filter by occurrence count',
         SELECT e.id, e.title, COUNT(*) AS occ_count
         FROM events e
         CROSS JOIN LATERAL (
-            SELECT * FROM rrule.all(e.rrule, e.event_start)
+            SELECT * FROM rrule."all"(e.rrule, e.event_start)
         ) AS occurrence
         GROUP BY e.id, e.title
         HAVING COUNT(*) > 10

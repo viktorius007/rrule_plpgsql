@@ -30,17 +30,23 @@
 \set ON_ERROR_STOP on
 \set ECHO all
 
-BEGIN;
-
+-- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create rrule schema and load functions
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
+
 
 -- Test results table
 CREATE TEMP TABLE internal_test_results (
@@ -138,15 +144,28 @@ SELECT 'get_week_start()', 'Saturday start (SA)',
 \echo ''
 \echo '--- Section 3: get_week_number() ---'
 
--- Note: ISO week numbers - Jan 1 2025 is a Wednesday, so it's in week 1
--- but the get_week_number function uses its own algorithm based on WKST
+-- ISO 8601 week numbers with WKST=MO:
+-- Jan 15 2025 (Wednesday) → ISO week 3
+-- Jan 1 2025 (Wednesday) → ISO week 1 (Jan 1 is in week containing Jan 4)
+-- Dec 30 2024 (Monday) → ISO week 1 of 2025 (belongs to next year's week 1)
+-- Dec 29 2014 (Monday) → ISO week 1 of 2015 (2015 starts on Thursday)
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'get_week_number()', 'Returns integer for mid-January',
-    assert_true('Week number', rrule.get_week_number('2025-01-15 10:00:00+00'::TIMESTAMPTZ, 'MO') > 0);
+SELECT 'get_week_number()', 'Jan 15 2025 = ISO week 3',
+    assert_equals('Week 3', '3', rrule.get_week_number('2025-01-15 10:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'get_week_number()', 'Returns integer for start of year',
-    assert_true('Week number', rrule.get_week_number('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'MO') > 0);
+SELECT 'get_week_number()', 'Jan 1 2025 = ISO week 1',
+    assert_equals('Week 1', '1', rrule.get_week_number('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- Cross-year boundary: Dec 30 2024 is Monday, belongs to ISO week 1 of 2025
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'get_week_number()', 'Dec 30 2024 = week 1 (cross-year)',
+    assert_equals('Cross-year week 1', '1', rrule.get_week_number('2024-12-30 10:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- Mid-year check: July 1 2025 (Tuesday) = ISO week 27
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'get_week_number()', 'Jul 1 2025 = ISO week 27',
+    assert_equals('Week 27', '27', rrule.get_week_number('2025-07-01 10:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
 
 -- ============================================================================
 -- SECTION 4: validate_timezone() Tests
@@ -299,21 +318,47 @@ SELECT 'parse_rrule_parts()', 'WKST defaults to MO or NULL',
 \echo ''
 \echo '--- Section 10: calculate_safe_iteration_limit() ---'
 
+-- Exact expected values based on function implementation:
+-- DAILY: effective_max * 40 → 1000 * 40 = 40000
+-- WEEKLY: effective_max * 10 → 1000 * 10 = 10000
+-- MONTHLY: GREATEST(effective_max * 20, 1200) → GREATEST(20000, 1200) = 20000
+-- YEARLY: effective_max * 10 → 1000 * 10 = 10000
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'DAILY with COUNT=10',
-    assert_true('Daily limit', rrule.calculate_safe_iteration_limit('DAILY', 10, 1000) >= 10);
+SELECT 'calculate_safe_iteration_limit()', 'DAILY(10, 1000) = 40000',
+    assert_equals('Daily exact', '40000', rrule.calculate_safe_iteration_limit('DAILY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'WEEKLY with COUNT=10',
-    assert_true('Weekly limit', rrule.calculate_safe_iteration_limit('WEEKLY', 10, 1000) >= 10);
+SELECT 'calculate_safe_iteration_limit()', 'WEEKLY(10, 1000) = 10000',
+    assert_equals('Weekly exact', '10000', rrule.calculate_safe_iteration_limit('WEEKLY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'MONTHLY with COUNT=10',
-    assert_true('Monthly limit', rrule.calculate_safe_iteration_limit('MONTHLY', 10, 1000) >= 10);
+SELECT 'calculate_safe_iteration_limit()', 'MONTHLY(10, 1000) = 20000',
+    assert_equals('Monthly exact', '20000', rrule.calculate_safe_iteration_limit('MONTHLY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'YEARLY with COUNT=10',
-    assert_true('Yearly limit', rrule.calculate_safe_iteration_limit('YEARLY', 10, 1000) >= 10);
+SELECT 'calculate_safe_iteration_limit()', 'YEARLY(10, 1000) = 10000',
+    assert_equals('Yearly exact', '10000', rrule.calculate_safe_iteration_limit('YEARLY', 10, 1000)::TEXT);
+
+-- MONTHLY minimum floor: GREATEST(effective_max * 20, 1200) with small effective_max
+-- effective_max=5 → GREATEST(100, 1200) = 1200
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'MONTHLY min floor(NULL, 5) = 1200',
+    assert_equals('Monthly floor', '1200', rrule.calculate_safe_iteration_limit('MONTHLY', NULL, 5)::TEXT);
+
+-- DoS protection: MINUTELY caps at 1440 regardless of input
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'MINUTELY DoS cap(NULL, 5000) = 1440',
+    assert_equals('Minutely DoS cap', '1440', rrule.calculate_safe_iteration_limit('MINUTELY', NULL, 5000)::TEXT);
+
+-- DoS protection: SECONDLY caps at 3600
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'SECONDLY DoS cap(NULL, 10000) = 3600',
+    assert_equals('Secondly DoS cap', '3600', rrule.calculate_safe_iteration_limit('SECONDLY', NULL, 10000)::TEXT);
+
+-- NULL handling: both NULL → returns NULL
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'NULL count + NULL max = NULL',
+    assert_true('Both NULL', rrule.calculate_safe_iteration_limit('DAILY', NULL, NULL) IS NULL);
 
 -- ============================================================================
 -- SECTION 11: rrule_month_byday_set() Tests
@@ -377,7 +422,7 @@ SELECT 'rrule_week_byday_set()', 'Generate MO,WE,FR in week',
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'daily_set()', 'Generate 1 day with BYDAY filter',
     assert_true('1 day',
-        (SELECT COUNT(*) >= 0 FROM rrule.daily_set(
+        (SELECT COUNT(*) = 1 FROM rrule.daily_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYDAY=WE;COUNT=5'),
             NULL
@@ -391,8 +436,8 @@ SELECT 'daily_set()', 'Generate 1 day with BYDAY filter',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'weekly_set()', 'Generate days in a week',
-    assert_true('Some days',
-        (SELECT COUNT(*) > 0 FROM rrule.weekly_set(
+    assert_true('3 days',
+        (SELECT COUNT(*) = 3 FROM rrule.weekly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10'),
             NULL
@@ -406,8 +451,8 @@ SELECT 'weekly_set()', 'Generate days in a week',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'monthly_set()', 'Generate days in a month with BYDAY',
-    assert_true('Some days',
-        (SELECT COUNT(*) > 0 FROM rrule.monthly_set(
+    assert_true('4 days',
+        (SELECT COUNT(*) = 4 FROM rrule.monthly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=MONTHLY;BYDAY=MO;COUNT=10'),
             NULL
@@ -415,8 +460,8 @@ SELECT 'monthly_set()', 'Generate days in a month with BYDAY',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'monthly_set()', 'Generate days in a month with BYMONTHDAY',
-    assert_true('Some days',
-        (SELECT COUNT(*) > 0 FROM rrule.monthly_set(
+    assert_true('1 day',
+        (SELECT COUNT(*) = 1 FROM rrule.monthly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=10'),
             NULL
@@ -430,8 +475,8 @@ SELECT 'monthly_set()', 'Generate days in a month with BYMONTHDAY',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'yearly_set()', 'Generate days in a year with BYMONTH',
-    assert_true('Some days',
-        (SELECT COUNT(*) > 0 FROM rrule.yearly_set(
+    assert_true('2 days',
+        (SELECT COUNT(*) = 2 FROM rrule.yearly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYMONTH=1,6;COUNT=10'),
             NULL

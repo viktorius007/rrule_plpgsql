@@ -16,18 +16,23 @@
 \set ECHO all
 
 -- Test database setup
-BEGIN;
-
 -- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create fresh rrule schema
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
+
 
 -- Helper function to compare expected vs actual occurrences
 CREATE OR REPLACE FUNCTION assert_occurrences_equal(
@@ -80,7 +85,7 @@ VALUES ('SKIP=OMIT on Feb 31 (explicit)',
             '2025-05-31 10:00:00'::TIMESTAMP,
             '2025-07-31 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=OMIT;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -98,7 +103,7 @@ VALUES ('SKIP=OMIT on Feb 31 (default)',
             '2025-05-31 10:00:00'::TIMESTAMP,
             '2025-07-31 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -116,7 +121,7 @@ VALUES ('SKIP=OMIT on Feb 30',
             '2025-04-30 10:00:00'::TIMESTAMP,
             '2025-05-30 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=30;SKIP=OMIT;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -139,7 +144,7 @@ VALUES ('SKIP=BACKWARD on Feb 31',
             '2025-03-31 10:00:00'::TIMESTAMP,
             '2025-04-30 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=BACKWARD;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -157,7 +162,7 @@ VALUES ('SKIP=BACKWARD on Feb 30',
             '2025-03-30 10:00:00'::TIMESTAMP,
             '2025-04-30 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=30;SKIP=BACKWARD;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -174,7 +179,7 @@ VALUES ('SKIP=BACKWARD with leap year',
             '2025-02-28 10:00:00'::TIMESTAMP,
             '2026-02-28 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30;SKIP=BACKWARD;COUNT=3',
             '2024-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -197,7 +202,7 @@ VALUES ('SKIP=FORWARD on Feb 31',
             '2025-03-31 10:00:00'::TIMESTAMP,
             '2025-05-01 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=FORWARD;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -215,7 +220,7 @@ VALUES ('SKIP=FORWARD on Feb 30',
             '2025-03-30 10:00:00'::TIMESTAMP,
             '2025-04-30 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=30;SKIP=FORWARD;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -239,7 +244,7 @@ VALUES ('Multiple BYMONTHDAY with SKIP=BACKWARD',
             '2025-03-30 10:00:00'::TIMESTAMP,
             '2025-03-31 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=30,31;SKIP=BACKWARD;COUNT=5',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -258,7 +263,7 @@ VALUES ('Multiple BYMONTHDAY with SKIP=OMIT',
             '2025-03-31 10:00:00'::TIMESTAMP,
             '2025-04-30 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=30,31;SKIP=OMIT;COUNT=5',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -281,7 +286,7 @@ VALUES ('Negative BYMONTHDAY ignores SKIP',
             '2025-03-31 10:00:00'::TIMESTAMP,
             '2025-04-30 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=-1;SKIP=FORWARD;COUNT=4',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -303,7 +308,7 @@ VALUES ('YEARLY;BYMONTH=2;BYMONTHDAY=31;SKIP=BACKWARD',
             '2026-02-28 10:00:00'::TIMESTAMP,
             '2027-02-28 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=31;SKIP=BACKWARD;COUNT=3',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -316,7 +321,7 @@ VALUES ('YEARLY;BYMONTH=2;BYMONTHDAY=31;SKIP=OMIT',
     assert_occurrences_equal(
         'YEARLY SKIP=OMIT',
         ARRAY[]::TIMESTAMP[],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=31;SKIP=OMIT;COUNT=3',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -338,7 +343,7 @@ VALUES ('SKIP preserves time component',
             '2025-02-28 14:30:00'::TIMESTAMP,
             '2025-03-31 14:30:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=BACKWARD;COUNT=3',
             '2025-01-01 14:30:00'::TIMESTAMP
         ) AS occurrence)

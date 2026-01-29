@@ -24,18 +24,23 @@
 \set ECHO all
 
 -- Test database setup
-BEGIN;
-
 -- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create fresh rrule schema
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
+
 
 -- Helper function to compare expected vs actual occurrences
 CREATE OR REPLACE FUNCTION assert_occurrences_equal(
@@ -93,7 +98,7 @@ INSERT INTO test_results VALUES (1, 'DAILY with COUNT=3',
             '2025-01-02 10:00:00'::TIMESTAMP,
             '2025-01-03 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 2: WEEKLY frequency with COUNT
@@ -105,7 +110,7 @@ INSERT INTO test_results VALUES (2, 'WEEKLY with COUNT=3',
             '2025-01-13 10:00:00'::TIMESTAMP,
             '2025-01-20 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=WEEKLY;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 3: MONTHLY frequency with COUNT
@@ -117,7 +122,7 @@ INSERT INTO test_results VALUES (3, 'MONTHLY with COUNT=3',
             '2025-02-15 10:00:00'::TIMESTAMP,
             '2025-03-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=MONTHLY;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 4: YEARLY frequency with COUNT
@@ -129,7 +134,7 @@ INSERT INTO test_results VALUES (4, 'YEARLY with COUNT=3',
             '2026-01-01 10:00:00'::TIMESTAMP,
             '2027-01-01 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=YEARLY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -150,7 +155,7 @@ INSERT INTO test_results VALUES (5, 'DAILY with INTERVAL=2',
             '2025-01-03 10:00:00'::TIMESTAMP,
             '2025-01-05 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=DAILY;INTERVAL=2;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=DAILY;INTERVAL=2;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 6: WEEKLY with INTERVAL=2 (biweekly)
@@ -162,7 +167,7 @@ INSERT INTO test_results VALUES (6, 'WEEKLY with INTERVAL=2',
             '2025-01-20 10:00:00'::TIMESTAMP,
             '2025-02-03 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=WEEKLY;INTERVAL=2;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;INTERVAL=2;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -183,7 +188,7 @@ INSERT INTO test_results VALUES (7, 'DAILY with UNTIL',
             '2025-01-02 10:00:00'::TIMESTAMP,
             '2025-01-03 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=DAILY;UNTIL=20250103T100000Z', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=DAILY;UNTIL=20250103T100000Z', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -204,7 +209,7 @@ INSERT INTO test_results VALUES (8, 'WEEKLY with BYDAY=MO,WE,FR',
             '2025-01-08 10:00:00'::TIMESTAMP,  -- Wednesday
             '2025-01-10 10:00:00'::TIMESTAMP   -- Friday
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 9: DAILY with BYDAY=MO,TU,WE,TH,FR (weekdays only)
@@ -218,7 +223,7 @@ INSERT INTO test_results VALUES (9, 'DAILY with BYDAY weekdays',
             '2025-01-09 10:00:00'::TIMESTAMP,  -- Thursday
             '2025-01-10 10:00:00'::TIMESTAMP   -- Friday
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=5', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=5', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -239,7 +244,7 @@ INSERT INTO test_results VALUES (10, 'MONTHLY with BYMONTHDAY=15',
             '2025-02-15 10:00:00'::TIMESTAMP,
             '2025-03-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 11: MONTHLY on last day of month (BYMONTHDAY=-1)
@@ -251,7 +256,7 @@ INSERT INTO test_results VALUES (11, 'MONTHLY with BYMONTHDAY=-1',
             '2025-02-28 10:00:00'::TIMESTAMP,  -- 28 days (not leap year)
             '2025-03-31 10:00:00'::TIMESTAMP   -- 31 days
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -272,7 +277,19 @@ INSERT INTO test_results VALUES (12, 'YEARLY with BYMONTH=1,7',
             '2025-07-15 10:00:00'::TIMESTAMP,
             '2026-01-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=YEARLY;BYMONTH=1,7;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTH=1,7;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 12a: YEARLY with BYMONTHDAY without BYMONTH (all months)
+INSERT INTO test_results VALUES (13, 'YEARLY with BYMONTHDAY=1 (all months)',
+    assert_occurrences_equal(
+        'YEARLY with BYMONTHDAY=1 (all months)',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-02-01 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTHDAY=1;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -284,8 +301,8 @@ INSERT INTO test_results VALUES (12, 'YEARLY with BYMONTH=1,7',
 \echo 'TEST GROUP 7: Complex Combinations'
 \echo '==================================================================='
 
--- Test 13: MONTHLY on 2nd Monday (BYDAY=2MO)
-INSERT INTO test_results VALUES (13, 'MONTHLY on 2nd Monday',
+-- Test 14: MONTHLY on 2nd Monday (BYDAY=2MO)
+INSERT INTO test_results VALUES (14, 'MONTHLY on 2nd Monday',
     assert_occurrences_equal(
         'MONTHLY on 2nd Monday',
         ARRAY[
@@ -293,11 +310,11 @@ INSERT INTO test_results VALUES (13, 'MONTHLY on 2nd Monday',
             '2025-02-10 10:00:00'::TIMESTAMP,  -- 2nd Monday of Feb 2025
             '2025-03-10 10:00:00'::TIMESTAMP   -- 2nd Monday of Mar 2025
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=MONTHLY;BYDAY=2MO;COUNT=3', '2025-01-13 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=2MO;COUNT=3', '2025-01-13 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
--- Test 14: MONTHLY on last Friday (BYDAY=-1FR)
-INSERT INTO test_results VALUES (14, 'MONTHLY on last Friday',
+-- Test 15: MONTHLY on last Friday (BYDAY=-1FR)
+INSERT INTO test_results VALUES (15, 'MONTHLY on last Friday',
     assert_occurrences_equal(
         'MONTHLY on last Friday',
         ARRAY[
@@ -305,7 +322,7 @@ INSERT INTO test_results VALUES (14, 'MONTHLY on last Friday',
             '2025-02-28 10:00:00'::TIMESTAMP,  -- Last Friday of Feb 2025
             '2025-03-28 10:00:00'::TIMESTAMP   -- Last Friday of Mar 2025
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=MONTHLY;BYDAY=-1FR;COUNT=3', '2025-01-31 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=-1FR;COUNT=3', '2025-01-31 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
@@ -317,8 +334,8 @@ INSERT INTO test_results VALUES (14, 'MONTHLY on last Friday',
 \echo 'TEST GROUP 8: Edge Cases'
 \echo '==================================================================='
 
--- Test 15: MONTHLY on 31st - should skip months without 31 days
-INSERT INTO test_results VALUES (15, 'MONTHLY BYMONTHDAY=31 skips short months',
+-- Test 16: MONTHLY on 31st - should skip months without 31 days
+INSERT INTO test_results VALUES (16, 'MONTHLY BYMONTHDAY=31 skips short months',
     assert_occurrences_equal(
         'MONTHLY BYMONTHDAY=31 skips short months',
         ARRAY[
@@ -327,28 +344,28 @@ INSERT INTO test_results VALUES (15, 'MONTHLY BYMONTHDAY=31 skips short months',
             '2025-05-31 10:00:00'::TIMESTAMP,  -- Apr has no 31, May 31 exists
             '2025-07-31 10:00:00'::TIMESTAMP   -- Jun has no 31, Jul 31 exists
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=MONTHLY;BYMONTHDAY=31;COUNT=4', '2025-01-31 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;COUNT=4', '2025-01-31 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
--- Test 16: Leap year February 29th
-INSERT INTO test_results VALUES (16, 'Leap year Feb 29th',
+-- Test 17: Leap year February 29th
+INSERT INTO test_results VALUES (17, 'Leap year Feb 29th',
     assert_occurrences_equal(
         'Leap year Feb 29th',
         ARRAY[
             '2024-02-29 10:00:00'::TIMESTAMP   -- 2024 is leap year
         ],
-        (SELECT array_agg(occurrence) FROM "all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=1', '2024-02-29 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=1', '2024-02-29 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
--- Test 17: after() helper function
-INSERT INTO test_results VALUES (17, 'after() helper',
+-- Test 18: after() helper function
+INSERT INTO test_results VALUES (18, 'after() helper',
     (SELECT CASE
         WHEN result = '2025-01-02 10:00:00'::TIMESTAMP
         THEN 'PASS [after() helper]'
         ELSE 'FAIL [after() helper]: Expected 2025-01-02 10:00:00, got ' || result::TEXT
     END
     FROM (
-        SELECT "after"(
+        SELECT rrule."after"(
             'FREQ=DAILY;COUNT=10',
             '2025-01-01 10:00:00'::TIMESTAMP,
             '2025-01-01 12:00:00'::TIMESTAMP

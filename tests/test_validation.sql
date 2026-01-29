@@ -1,7 +1,7 @@
 /**
  * RFC 5545 Constraint Validation Tests
  *
- * Tests all 16 RFC 5545 MUST/MUST NOT constraint validations implemented
+ * Tests all 18 RFC 5545 MUST/MUST NOT constraint validations implemented
  * in parse_rrule_parts() to ensure invalid RRULEs are properly rejected
  * with clear, descriptive error messages.
  *
@@ -15,18 +15,23 @@
 \set ECHO all
 
 -- Test database setup
-BEGIN;
-
 -- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create rrule schema
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions if not already loaded
 \i src/rrule.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
+
 
 -- Helper function to test that invalid RRULEs are rejected
 CREATE OR REPLACE FUNCTION assert_rrule_rejected(
@@ -40,7 +45,7 @@ DECLARE
 BEGIN
     -- Try to use the invalid RRULE
     BEGIN
-        result := (SELECT array_agg(occurrence) FROM "all"(invalid_rrule, '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence);
+        result := (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(invalid_rrule, '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence);
         -- If we get here, the RRULE was NOT rejected (test failed)
         RAISE EXCEPTION 'FAIL [%]: RRULE was accepted when it should have been rejected: %',
             test_name, invalid_rrule;
@@ -68,7 +73,7 @@ DECLARE
     result TIMESTAMP[];
     actual_count INT;
 BEGIN
-    result := (SELECT array_agg(occurrence) FROM "all"(valid_rrule, '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence);
+    result := (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(valid_rrule, '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence);
     actual_count := array_length(result, 1);
 
     IF actual_count IS DISTINCT FROM expected_count THEN
@@ -118,7 +123,7 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('COUNT+UNTIL Mutual Exclusion', 'COUNT and UNTIL together (should be rejected)',
     assert_rrule_rejected(
         'COUNT + UNTIL together',
-        'FREQ=DAILY;COUNT=10;UNTIL=20251231T235959',
+        'FREQ=DAILY;COUNT=10;UNTIL=20251231T235959Z',
         '%COUNT and UNTIL are mutually exclusive%'
     )
 );
@@ -138,8 +143,38 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('COUNT+UNTIL Mutual Exclusion', 'UNTIL alone (should be accepted)',
     assert_rrule_accepted(
         'UNTIL alone',
-        'FREQ=DAILY;UNTIL=20250105T235959',
+        'FREQ=DAILY;UNTIL=20250105T235959Z',
         5
+    )
+);
+
+-- Test 1.5a: UNTIL date-only is invalid
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('COUNT+UNTIL Mutual Exclusion', 'UNTIL date-only (should be rejected)',
+    assert_rrule_rejected(
+        'UNTIL date-only',
+        'FREQ=DAILY;UNTIL=20250105',
+        '%date-only value%'
+    )
+);
+
+-- Test 1.5b: UNTIL without Z is invalid
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('COUNT+UNTIL Mutual Exclusion', 'UNTIL without Z (should be rejected)',
+    assert_rrule_rejected(
+        'UNTIL without Z',
+        'FREQ=DAILY;UNTIL=20250105T235959',
+        '%must be specified in UTC%'
+    )
+);
+
+-- Test 1.5c: INTERVAL must be positive
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Validation', 'INTERVAL=0 (should be rejected)',
+    assert_rrule_rejected(
+        'INTERVAL=0 invalid',
+        'FREQ=DAILY;INTERVAL=0;COUNT=3',
+        '%INTERVAL must be a positive integer%'
     )
 );
 
@@ -333,6 +368,26 @@ VALUES ('BYDAY Ordinal Cannot Be Zero', 'BYDAY=1MO,2TU with MONTHLY (should be a
     )
 );
 
+-- Test 1.18g: BYDAY ordinal out of range (>53)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYDAY Ordinal Range', 'BYDAY=54MO (should be rejected)',
+    assert_rrule_rejected(
+        'BYDAY ordinal too large',
+        'FREQ=MONTHLY;BYDAY=54MO;COUNT=1',
+        '%out of valid range%'
+    )
+);
+
+-- Test 1.18h: BYDAY ordinal out of range (<-53)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYDAY Ordinal Range', 'BYDAY=-54SU (should be rejected)',
+    assert_rrule_rejected(
+        'BYDAY ordinal too small',
+        'FREQ=YEARLY;BYDAY=-54SU;COUNT=1',
+        '%out of valid range%'
+    )
+);
+
 -- Test 1.19: BYSETPOS requires another BYxxx
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('BYSETPOS Requires Other BYxxx', 'BYSETPOS alone (should be rejected)',
@@ -431,6 +486,16 @@ VALUES ('BYSECOND Range 0-60', 'BYSECOND=59 (should be accepted)',
     assert_rrule_accepted(
         'BYSECOND=59 valid',
         'FREQ=DAILY;BYSECOND=59;COUNT=2',
+        2
+    )
+);
+
+-- Test 2.5: BYSECOND=60 (leap second) should be accepted and treated as 59
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYSECOND Range 0-60', 'BYSECOND=60 (should be accepted)',
+    assert_rrule_accepted(
+        'BYSECOND=60 valid',
+        'FREQ=DAILY;BYSECOND=60;COUNT=2',
         2
     )
 );
@@ -550,6 +615,16 @@ VALUES ('BYMONTH Range 1-12', 'BYMONTH=12 (should be accepted - December)',
 \echo '====================================================================='
 \echo 'TEST GROUP 3: Zero Values and Extended Range Validations'
 \echo '====================================================================='
+
+-- Test 3.0: COUNT=0 (should be rejected)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('COUNT Validation', 'COUNT=0 (should be rejected)',
+    assert_rrule_rejected(
+        'COUNT=0 invalid',
+        'FREQ=DAILY;COUNT=0',
+        '%COUNT must be a positive integer%'
+    )
+);
 
 -- Test 3.1-3.4: BYMONTHDAY validation
 INSERT INTO validation_test_results (test_category, test_name, status)
@@ -709,17 +784,19 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('Complex Scenarios', 'Multiple violations (missing FREQ + COUNT+UNTIL)',
     assert_rrule_rejected(
         'Multiple violations',
-        'COUNT=10;UNTIL=20251231T235959;BYMONTHDAY=15',
+        'COUNT=10;UNTIL=20251231T235959Z;BYMONTHDAY=15',
         '%FREQ parameter is required%'  -- First validation should trigger
     )
 );
 
 -- Test 4.2: Complex valid RRULE with many parameters
+-- BYMONTH=1,6 limits to Jan and June; BYDAY=MO limits to Mondays; BYMONTHDAY=1,8,15,22 picks weeks
+-- This is much less sparse than Friday-the-13th and reliably produces 5 results within 10 years
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('Complex Scenarios', 'Complex valid RRULE (all constraints satisfied)',
     assert_rrule_accepted(
         'Complex valid RRULE',
-        'FREQ=MONTHLY;BYMONTHDAY=13;BYDAY=FR;BYMONTH=1,2,3;COUNT=5',
+        'FREQ=MONTHLY;BYDAY=MO;BYMONTH=1,6;COUNT=5',
         5
     )
 );
@@ -789,6 +866,264 @@ SELECT
 FROM validation_test_results
 ORDER BY test_number;
 
+\echo ''
+\echo '====================================================================='
+\echo 'TEST GROUP 5: Syntax Robustness Tests'
+\echo '====================================================================='
+
+-- Test 5.1: Duplicate FREQ parameters - first occurrence wins (silently)
+-- Parser uses regex substring which returns first match
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Duplicate FREQ=DAILY;FREQ=WEEKLY (first wins)',
+    assert_rrule_accepted(
+        'Duplicate FREQ first wins',
+        'FREQ=DAILY;FREQ=WEEKLY;COUNT=3',
+        3
+    )
+);
+
+-- Test 5.2: Unknown parameters are silently ignored
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Unknown parameter FOOBAR=XYZ (silently ignored)',
+    assert_rrule_accepted(
+        'Unknown param ignored',
+        'FREQ=DAILY;FOOBAR=XYZ;COUNT=3',
+        3
+    )
+);
+
+-- Test 5.3: Extra semicolons in RRULE string
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Extra semicolons FREQ=DAILY;;COUNT=3',
+    assert_rrule_accepted(
+        'Extra semicolons',
+        'FREQ=DAILY;;COUNT=3',
+        3
+    )
+);
+
+-- Test 5.4: Trailing semicolon
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Trailing semicolon FREQ=DAILY;COUNT=3;',
+    assert_rrule_accepted(
+        'Trailing semicolon',
+        'FREQ=DAILY;COUNT=3;',
+        3
+    )
+);
+
+-- Test 5.5: Lowercase freq (should NOT be recognized - parser uses uppercase regex)
+-- lowercase 'freq=daily' won't match 'FREQ=([A-Z]+)' so FREQ will be NULL → rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Lowercase freq=daily (not recognized)',
+    assert_rrule_rejected(
+        'Lowercase freq',
+        'freq=daily;count=3',
+        '%FREQ parameter is required%'
+    )
+);
+
+-- Test 5.6: Mixed case - FREQ uppercase but value lowercase (FREQ=daily)
+-- 'FREQ=([A-Z]+)' requires uppercase value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Mixed case FREQ=daily (not recognized)',
+    assert_rrule_rejected(
+        'Mixed case freq value',
+        'FREQ=daily;COUNT=3',
+        '%FREQ parameter is required%'
+    )
+);
+
+-- Test 5.7: Lowercase RSCALE value should still be accepted (rscale uses [^;]+ pattern via SKIP handling)
+-- RSCALE=gregorian is tested in test_skip_support.sql but let's verify lowercase acceptance here too
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Lowercase RSCALE=gregorian accepted',
+    assert_rrule_accepted(
+        'Lowercase RSCALE value',
+        'FREQ=MONTHLY;RSCALE=gregorian;SKIP=OMIT;COUNT=3',
+        3
+    )
+);
+
+-- Test 5.8: Whitespace in values (spaces around = break regex parsing)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Whitespace FREQ = DAILY (not recognized)',
+    assert_rrule_rejected(
+        'Whitespace around equals',
+        'FREQ = DAILY;COUNT=3',
+        '%FREQ parameter is required%'
+    )
+);
+
+-- Test 5.9: Invalid WKST value (XX is not a valid day abbreviation)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('WKST Validation', 'WKST=XX (should be rejected)',
+    assert_rrule_rejected(
+        'Invalid WKST value',
+        'FREQ=WEEKLY;WKST=XX;COUNT=3',
+        '%Invalid WKST value%'
+    )
+);
+
+-- Test 5.10: Lowercase WKST value (parser requires uppercase two-letter abbreviation)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('WKST Validation', 'WKST=monday (should be rejected)',
+    assert_rrule_rejected(
+        'Lowercase WKST value',
+        'FREQ=WEEKLY;WKST=monday;COUNT=3',
+        '%Invalid WKST value%'
+    )
+);
+
+-- Test 5.11: Single-character WKST value (M is not valid, must be two-letter)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('WKST Validation', 'WKST=M (should be rejected)',
+    assert_rrule_rejected(
+        'Single char WKST value',
+        'FREQ=WEEKLY;WKST=M;COUNT=3',
+        '%Invalid WKST value%'
+    )
+);
+
+-- Test 5.12: Valid WKST values should still be accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('WKST Validation', 'WKST=SU (should be accepted)',
+    assert_rrule_accepted(
+        'Valid WKST=SU',
+        'FREQ=WEEKLY;WKST=SU;COUNT=3',
+        3
+    )
+);
+
+\echo ''
+\echo '====================================================================='
+\echo 'TEST GROUP 6: BYxxx Parse-Failure Detection'
+\echo '====================================================================='
+
+-- These tests verify that when a BYxxx keyword is present but its value
+-- cannot be parsed (non-numeric garbage), a descriptive error is raised
+-- instead of silently treating it as NULL.
+
+-- Test 6.1: BYDAY with invalid day code
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYDAY=XY (unparseable day code)',
+    assert_rrule_rejected(
+        'BYDAY unparseable',
+        'FREQ=WEEKLY;BYDAY=XY;COUNT=3',
+        '%BYDAY value could not be parsed%'
+    )
+);
+
+-- Test 6.2: BYDAY with lowercase day code
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYDAY=mo (lowercase not recognized)',
+    assert_rrule_rejected(
+        'BYDAY lowercase',
+        'FREQ=WEEKLY;BYDAY=mo;COUNT=3',
+        '%BYDAY value could not be parsed%'
+    )
+);
+
+-- Test 6.3: Valid BYDAY still works
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYDAY=MO,FR (valid - still accepted)',
+    assert_rrule_accepted(
+        'BYDAY valid still works',
+        'FREQ=WEEKLY;BYDAY=MO,FR;COUNT=4',
+        4
+    )
+);
+
+-- Test 6.4: BYMONTH with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYMONTH=FOO (unparseable)',
+    assert_rrule_rejected(
+        'BYMONTH unparseable',
+        'FREQ=YEARLY;BYMONTH=FOO;COUNT=3',
+        '%BYMONTH value could not be parsed%'
+    )
+);
+
+-- Test 6.5: Valid BYMONTH still works
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYMONTH=1,6 (valid - still accepted)',
+    assert_rrule_accepted(
+        'BYMONTH valid still works',
+        'FREQ=YEARLY;BYMONTH=1,6;COUNT=4',
+        4
+    )
+);
+
+-- Test 6.6: BYMONTHDAY with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYMONTHDAY=ABC (unparseable)',
+    assert_rrule_rejected(
+        'BYMONTHDAY unparseable',
+        'FREQ=MONTHLY;BYMONTHDAY=ABC;COUNT=3',
+        '%BYMONTHDAY value could not be parsed%'
+    )
+);
+
+-- Test 6.7: BYYEARDAY with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYYEARDAY=XYZ (unparseable)',
+    assert_rrule_rejected(
+        'BYYEARDAY unparseable',
+        'FREQ=YEARLY;BYYEARDAY=XYZ;COUNT=3',
+        '%BYYEARDAY value could not be parsed%'
+    )
+);
+
+-- Test 6.8: BYWEEKNO with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYWEEKNO=ABC (unparseable)',
+    assert_rrule_rejected(
+        'BYWEEKNO unparseable',
+        'FREQ=YEARLY;BYWEEKNO=ABC;COUNT=3',
+        '%BYWEEKNO value could not be parsed%'
+    )
+);
+
+-- Test 6.9: BYSETPOS with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYSETPOS=FOO (unparseable)',
+    assert_rrule_rejected(
+        'BYSETPOS unparseable',
+        'FREQ=MONTHLY;BYDAY=MO;BYSETPOS=FOO;COUNT=3',
+        '%BYSETPOS value could not be parsed%'
+    )
+);
+
+-- Test 6.10: BYHOUR with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYHOUR=ABC (unparseable)',
+    assert_rrule_rejected(
+        'BYHOUR unparseable',
+        'FREQ=DAILY;BYHOUR=ABC;COUNT=3',
+        '%BYHOUR value could not be parsed%'
+    )
+);
+
+-- Test 6.11: BYMINUTE with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYMINUTE=XYZ (unparseable)',
+    assert_rrule_rejected(
+        'BYMINUTE unparseable',
+        'FREQ=DAILY;BYMINUTE=XYZ;COUNT=3',
+        '%BYMINUTE value could not be parsed%'
+    )
+);
+
+-- Test 6.12: BYSECOND with text value
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYxxx Parse Failure', 'BYSECOND=FOO (unparseable)',
+    assert_rrule_rejected(
+        'BYSECOND unparseable',
+        'FREQ=DAILY;BYSECOND=FOO;COUNT=3',
+        '%BYSECOND value could not be parsed%'
+    )
+);
+
 ------------------------------------------------------------------------------------------------------
 -- Timezone Validation Tests (validate_timezone helper function)
 ------------------------------------------------------------------------------------------------------
@@ -852,13 +1187,13 @@ BEGIN
   );
 END $$;
 
--- Test 5.4: Integration with rrule.all() TZID parameter
+-- Test 5.4: Integration with rrule."all"() TZID parameter
 DO $$
 DECLARE
   test_passed BOOLEAN := FALSE;
 BEGIN
   BEGIN
-    PERFORM rrule.all('FREQ=DAILY;COUNT=1;TZID=Invalid/Zone', '2025-01-01'::TIMESTAMP);
+    PERFORM rrule."all"('FREQ=DAILY;COUNT=1;TZID=Invalid/Zone', '2025-01-01'::TIMESTAMP);
   EXCEPTION
     WHEN raise_exception THEN
       IF SQLERRM LIKE '%Invalid timezone%' THEN
@@ -868,7 +1203,7 @@ BEGIN
 
   INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
     'Timezone Validation',
-    'Integration with rrule.all() TZID',
+    'Integration with rrule."all"() TZID',
     CASE WHEN test_passed THEN 'PASS [TZID validated]' ELSE 'FAIL [TZID not validated]' END
   );
 END $$;

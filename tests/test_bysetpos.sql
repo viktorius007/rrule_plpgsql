@@ -22,17 +22,23 @@
 \set ECHO all
 
 -- Test database setup
-BEGIN;
-
+-- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create rrule schema and load functions
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
+
 
 \echo ''
 \echo '==================================================================='
@@ -61,16 +67,23 @@ CREATE TEMP TABLE bysetpos_test_results (
 -- Use case: First Monday of each month
 CREATE OR REPLACE FUNCTION test_bysetpos_first() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    expected := ARRAY[
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-02-03 00:00:00'::TIMESTAMP,
+        '2025-03-03 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 3 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 3 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -85,16 +98,23 @@ VALUES (
 -- Test 1.2: Second position (BYSETPOS=2)
 CREATE OR REPLACE FUNCTION test_bysetpos_second() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=2;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    expected := ARRAY[
+        '2025-01-13 00:00:00'::TIMESTAMP,
+        '2025-02-10 00:00:00'::TIMESTAMP,
+        '2025-03-10 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 3 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=2;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 3 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -110,16 +130,23 @@ VALUES (
 -- Use case: Last Monday of each month
 CREATE OR REPLACE FUNCTION test_bysetpos_last() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    expected := ARRAY[
+        '2025-01-27 00:00:00'::TIMESTAMP,
+        '2025-02-24 00:00:00'::TIMESTAMP,
+        '2025-03-31 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 3 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 3 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -134,16 +161,23 @@ VALUES (
 -- Test 1.4: Second-to-last position (BYSETPOS=-2)
 CREATE OR REPLACE FUNCTION test_bysetpos_second_last() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-2;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    expected := ARRAY[
+        '2025-01-20 00:00:00'::TIMESTAMP,
+        '2025-02-17 00:00:00'::TIMESTAMP,
+        '2025-03-24 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 3 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-2;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 3 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -179,7 +213,7 @@ BEGIN
     ];
 
     SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
 
     IF actual = expected THEN
         RETURN 'PASSED';
@@ -199,17 +233,25 @@ VALUES (
 -- Test 2.2: First and last (BYSETPOS=1,-1)
 CREATE OR REPLACE FUNCTION test_bysetpos_first_last() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,-1;COUNT=4', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
-
     -- Should get 2 per month (first and last Monday), COUNT=4 means 4 total
-    IF result_count = 4 THEN
+    expected := ARRAY[
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-01-27 00:00:00'::TIMESTAMP,
+        '2025-02-03 00:00:00'::TIMESTAMP,
+        '2025-02-24 00:00:00'::TIMESTAMP
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,-1;COUNT=4', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 4 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -224,18 +266,25 @@ VALUES (
 -- Test 2.3: Multiple weekdays with multiple positions
 CREATE OR REPLACE FUNCTION test_bysetpos_multi_weekday() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
     -- Weekly, all weekdays (MO-FR), get only first 2 each week
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,2;COUNT=3', '2025-01-06'::TIMESTAMP) AS occurrence) sub;
-
     -- Should get 2 per week (first 2 weekdays), stop at COUNT=3 means 3 total
-    IF result_count = 3 THEN
+    expected := ARRAY[
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-01-07 00:00:00'::TIMESTAMP,
+        '2025-01-13 00:00:00'::TIMESTAMP
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM (SELECT * FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,2;COUNT=3', '2025-01-06'::TIMESTAMP)) AS t(occurrence);
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 3 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -263,7 +312,7 @@ DECLARE
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=6;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=6;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
     -- Should return 0 because no month has 6 Mondays
     IF result_count = 0 THEN
@@ -288,7 +337,7 @@ DECLARE
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-10;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-10;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
     -- Should return 0 because no month has 10 Mondays
     IF result_count = 0 THEN
@@ -313,7 +362,7 @@ DECLARE
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
     IF result_count = 1 THEN
         RETURN 'PASSED';
@@ -337,7 +386,7 @@ DECLARE
 BEGIN
     PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3,-2,-1;COUNT=8', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3,-2,-1;COUNT=8', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
     -- Should get 4 per month (1st, 3rd, 2nd-to-last, last), COUNT=8 means 8 total
     IF result_count = 8 THEN
@@ -378,7 +427,7 @@ BEGIN
     ];
 
     SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
 
     IF actual = expected THEN
         RETURN 'PASSED';
@@ -410,7 +459,7 @@ BEGIN
     ];
 
     SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
-    FROM (SELECT * FROM rrule.all('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
+    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
 
     IF actual = expected THEN
         RETURN 'PASSED';
@@ -471,4 +520,4 @@ BEGIN
     END IF;
 END $$;
 
-COMMIT;
+ROLLBACK;

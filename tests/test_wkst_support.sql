@@ -22,17 +22,23 @@
 \set ON_ERROR_STOP on
 \set ECHO all
 
-BEGIN;
-
+-- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create rrule schema
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
+
 
 -- Helper function to compare expected vs actual occurrences
 CREATE OR REPLACE FUNCTION assert_occurrences_equal(
@@ -84,7 +90,7 @@ VALUES ('WEEKLY with WKST=MO (default Monday start)',
             '2025-01-20 10:00:00'::TIMESTAMP,
             '2025-01-27 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=4;WKST=MO',
             '2025-01-06 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -102,7 +108,7 @@ VALUES ('WEEKLY with WKST=SU (Sunday start)',
             '2025-01-19 10:00:00'::TIMESTAMP,
             '2025-01-26 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=4;WKST=SU',
             '2025-01-05 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -120,7 +126,7 @@ VALUES ('WEEKLY with WKST=SA (Saturday start)',
             '2025-01-18 10:00:00'::TIMESTAMP,
             '2025-01-25 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=4;WKST=SA',
             '2025-01-04 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -138,7 +144,7 @@ VALUES ('WEEKLY;INTERVAL=2 with WKST=TU (biweekly)',
             '2025-02-04 10:00:00'::TIMESTAMP,
             '2025-02-18 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;INTERVAL=2;COUNT=4;WKST=TU',
             '2025-01-07 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -163,7 +169,7 @@ VALUES ('WEEKLY;BYDAY=MO,WE,FR with WKST=MO',
             '2025-01-15 10:00:00'::TIMESTAMP,
             '2025-01-17 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=6;BYDAY=MO,WE,FR;WKST=MO',
             '2025-01-06 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -183,7 +189,7 @@ VALUES ('WEEKLY;BYDAY=MO,WE,FR with WKST=SU',
             '2025-01-15 10:00:00'::TIMESTAMP,
             '2025-01-17 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=6;BYDAY=MO,WE,FR;WKST=SU',
             '2025-01-06 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -205,7 +211,7 @@ VALUES ('MONTHLY with WKST=MO',
             '2025-03-15 10:00:00'::TIMESTAMP,
             '2025-04-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;COUNT=3;WKST=MO',
             '2025-02-15 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -223,57 +229,57 @@ VALUES ('MONTHLY;BYDAY=MO with WKST=SU',
             '2025-02-17 10:00:00'::TIMESTAMP,
             '2025-02-24 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;COUNT=4;BYDAY=MO;WKST=SU',
             '2025-02-03 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
 );
 
--- Test 9: YEARLY;BYWEEKNO=1;BYDAY=MO with WKST=MO
+-- Test 9: YEARLY;BYWEEKNO=2;BYDAY=MO with WKST=MO (ISO week 2 is fully within year)
 INSERT INTO wkst_test_results (test_name, status)
-VALUES ('YEARLY;BYWEEKNO=1;BYDAY=MO with WKST=MO',
+VALUES ('YEARLY;BYWEEKNO=2;BYDAY=MO with WKST=MO',
     assert_occurrences_equal(
-        'YEARLY;BYWEEKNO=1;BYDAY=MO with WKST=MO',
+        'YEARLY;BYWEEKNO=2;BYDAY=MO with WKST=MO',
         ARRAY[
             '2025-01-06 10:00:00'::TIMESTAMP,
             '2026-01-05 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
-            'FREQ=YEARLY;COUNT=2;BYWEEKNO=1;BYDAY=MO;WKST=MO',
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;COUNT=2;BYWEEKNO=2;BYDAY=MO;WKST=MO',
             '2025-01-06 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
 );
 
--- Test 10: YEARLY;BYWEEKNO=1;BYDAY=SU with WKST=SU
+-- Test 10: YEARLY;BYWEEKNO=2;BYDAY=SU with WKST=SU
 INSERT INTO wkst_test_results (test_name, status)
-VALUES ('YEARLY;BYWEEKNO=1;BYDAY=SU with WKST=SU',
+VALUES ('YEARLY;BYWEEKNO=2;BYDAY=SU with WKST=SU',
     assert_occurrences_equal(
-        'YEARLY;BYWEEKNO=1;BYDAY=SU with WKST=SU',
+        'YEARLY;BYWEEKNO=2;BYDAY=SU with WKST=SU',
         ARRAY[
             '2025-01-05 10:00:00'::TIMESTAMP,
-            '2026-01-04 10:00:00'::TIMESTAMP
+            '2026-01-11 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
-            'FREQ=YEARLY;COUNT=2;BYWEEKNO=1;BYDAY=SU;WKST=SU',
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;COUNT=2;BYWEEKNO=2;BYDAY=SU;WKST=SU',
             '2025-01-05 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
 );
 
--- Test 11: YEARLY;BYWEEKNO with multiple weeks and days
+-- Test 11: YEARLY;BYWEEKNO with multiple weeks and days (ISO week 2 + week 52)
 INSERT INTO wkst_test_results (test_name, status)
-VALUES ('YEARLY;BYWEEKNO=1,52;BYDAY=MO,FR with WKST=MO',
+VALUES ('YEARLY;BYWEEKNO=2,52;BYDAY=MO,FR with WKST=MO',
     assert_occurrences_equal(
-        'YEARLY;BYWEEKNO=1,52;BYDAY=MO,FR',
+        'YEARLY;BYWEEKNO=2,52;BYDAY=MO,FR',
         ARRAY[
-            '2025-01-06 10:00:00'::TIMESTAMP,  -- Mon, week 1
-            '2025-01-10 10:00:00'::TIMESTAMP,  -- Fri, week 1
-            '2025-12-29 10:00:00'::TIMESTAMP   -- Mon, week 52 (Fri is in 2026)
+            '2025-01-06 10:00:00'::TIMESTAMP,  -- Mon, week 2
+            '2025-01-10 10:00:00'::TIMESTAMP,  -- Fri, week 2
+            '2025-12-22 10:00:00'::TIMESTAMP   -- Mon, week 52
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
-            'FREQ=YEARLY;COUNT=3;BYWEEKNO=1,52;BYDAY=MO,FR;WKST=MO',
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;COUNT=3;BYWEEKNO=2,52;BYDAY=MO,FR;WKST=MO',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
@@ -296,7 +302,7 @@ VALUES ('DAILY in first partial week with WKST=MO',
             '2025-01-04 10:00:00'::TIMESTAMP,
             '2025-01-05 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=5;WKST=MO',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -314,7 +320,7 @@ VALUES ('DAILY in last partial week with WKST=SU',
             '2025-12-30 10:00:00'::TIMESTAMP,
             '2025-12-31 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=4;WKST=SU',
             '2025-12-28 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -330,7 +336,7 @@ VALUES ('New Year transition with WKST=TH',
             '2025-12-25 10:00:00'::TIMESTAMP,
             '2026-01-01 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;BYDAY=TH;WKST=TH',
             '2025-12-25 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -351,7 +357,7 @@ VALUES ('WEEKLY with WKST=SU (Sunday)',
             '2025-02-02 10:00:00'::TIMESTAMP,
             '2025-02-09 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=SU',
             '2025-02-02 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -367,7 +373,7 @@ VALUES ('WEEKLY with WKST=MO (Monday)',
             '2025-02-03 10:00:00'::TIMESTAMP,
             '2025-02-10 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=MO',
             '2025-02-03 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -383,7 +389,7 @@ VALUES ('WEEKLY with WKST=TU (Tuesday)',
             '2025-02-04 10:00:00'::TIMESTAMP,
             '2025-02-11 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=TU',
             '2025-02-04 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -399,7 +405,7 @@ VALUES ('WEEKLY with WKST=WE (Wednesday)',
             '2025-02-05 10:00:00'::TIMESTAMP,
             '2025-02-12 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=WE',
             '2025-02-05 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -415,7 +421,7 @@ VALUES ('WEEKLY with WKST=TH (Thursday)',
             '2025-02-06 10:00:00'::TIMESTAMP,
             '2025-02-13 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=TH',
             '2025-02-06 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -431,7 +437,7 @@ VALUES ('WEEKLY with WKST=FR (Friday)',
             '2025-02-07 10:00:00'::TIMESTAMP,
             '2025-02-14 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=FR',
             '2025-02-07 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -447,7 +453,7 @@ VALUES ('WEEKLY with WKST=SA (Saturday)',
             '2025-02-08 10:00:00'::TIMESTAMP,
             '2025-02-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;WKST=SA',
             '2025-02-08 10:00:00'::TIMESTAMP
         ) AS occurrence)
@@ -468,11 +474,71 @@ VALUES ('WEEKLY without WKST (defaults to MO)',
             '2025-01-20 10:00:00'::TIMESTAMP,
             '2025-01-27 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM "all"(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2',
             '2025-01-20 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
+);
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 8: BYWEEKNO Week 53 Functional Tests'
+\echo '==================================================================='
+
+-- ISO 8601 week 53 years (with WKST=MO):
+-- 2015 has 53 ISO weeks (Jan 1 is Thursday → Dec 31 is Thursday → week 53)
+-- 2020 has 53 ISO weeks (Jan 1 is Wednesday → Dec 31 is Thursday → week 53)
+-- 2026 has 53 ISO weeks (Jan 1 is Thursday)
+
+-- Test: BYWEEKNO=53 produces results for years that have 53 ISO weeks
+-- 2015 and 2020 both have 53 ISO weeks. Using COUNT=2 within 10-year default window.
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=53 finds weeks in 53-week years',
+    assert_occurrences_equal(
+        'BYWEEKNO=53 with BYDAY=MO',
+        ARRAY[
+            '2015-12-28 10:00:00'::TIMESTAMP,  -- Monday of ISO week 53 of 2015
+            '2020-12-28 10:00:00'::TIMESTAMP    -- Monday of ISO week 53 of 2020
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYWEEKNO=53;BYDAY=MO;COUNT=2',
+            '2015-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: BYWEEKNO=53 with BYDAY=TH (Thursday of week 53)
+-- 2015 week 53: Thu Dec 31, 2015
+-- 2020 week 53: Thu Dec 31, 2020
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=53 with BYDAY=TH',
+    assert_occurrences_equal(
+        'BYWEEKNO=53 BYDAY=TH',
+        ARRAY[
+            '2015-12-31 10:00:00'::TIMESTAMP,  -- Thursday of ISO week 53 of 2015
+            '2020-12-31 10:00:00'::TIMESTAMP    -- Thursday of ISO week 53 of 2020
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYWEEKNO=53;BYDAY=TH;COUNT=2',
+            '2015-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: Negative BYWEEKNO=-1 should find the last week of each year
+-- For 2025 (52-week year), week -1 = week 52
+-- For 2026 (53-week year), week -1 = week 53
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=-1 finds last week of year',
+    (SELECT CASE
+        WHEN COUNT(*) = 2
+        THEN 'PASS [BYWEEKNO=-1 last week of year]'
+        ELSE 'FAIL [Expected 2, got ' || COUNT(*) || ']'
+    END FROM rrule."all"(
+        'FREQ=YEARLY;BYWEEKNO=-1;BYDAY=MO;COUNT=2',
+        '2025-01-01 10:00:00'::TIMESTAMP
+    ) AS occurrence)
 );
 
 \echo ''

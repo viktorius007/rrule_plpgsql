@@ -22,19 +22,22 @@
 \set ON_ERROR_STOP on
 \set ECHO all
 
-BEGIN;
-
--- Ensure UTC for consistent test behavior
+-- Ensure we're testing in UTC timezone for consistency
 SET timezone = 'UTC';
 
--- Create rrule schema and load functions
+-- Install RRULE functions (allow override via -v rrule_install=...)
+\if :{?rrule_install}
+\i :rrule_install
+\else
 DROP SCHEMA IF EXISTS rrule CASCADE;
 CREATE SCHEMA IF NOT EXISTS rrule;
-SET search_path = rrule, public;
-
--- Load the RRULE functions
 \i src/rrule.sql
-\i src/rrule_subday.sql
+\endif
+
+-- Ensure tests do not rely on search_path
+SET search_path = public;
+
+BEGIN;
 
 -- Helper function to compare expected vs actual occurrences
 CREATE OR REPLACE FUNCTION assert_occurrences_equal(
@@ -85,7 +88,7 @@ VALUES ('TZID America/New_York (no DST)',
             '2025-06-02 10:00:00'::TIMESTAMP,
             '2025-06-03 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=America/New_York',
             '2025-06-01 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -102,7 +105,7 @@ VALUES ('TZID Europe/London (no DST)',
             '2025-12-02 14:00:00'::TIMESTAMP,
             '2025-12-03 14:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Europe/London',
             '2025-12-01 14:00:00'::TIMESTAMP
         ) AS occurrence
@@ -119,7 +122,7 @@ VALUES ('TZID Asia/Tokyo (no DST)',
             '2025-01-02 09:00:00'::TIMESTAMP,
             '2025-01-03 09:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Asia/Tokyo',
             '2025-01-01 09:00:00'::TIMESTAMP
         ) AS occurrence
@@ -142,7 +145,7 @@ VALUES ('DST Spring Forward - America/New_York Daily',
             '2025-03-09 10:00:00'::TIMESTAMP,  -- Sunday, DST starts at 2am (EDT = UTC-4)
             '2025-03-10 10:00:00'::TIMESTAMP   -- Monday, after DST (EDT = UTC-4)
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=America/New_York',
             '2025-03-08 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -159,7 +162,7 @@ VALUES ('DST Spring Forward - Europe/London Daily',
             '2025-03-30 09:00:00'::TIMESTAMP,  -- Sunday, DST starts at 1am (BST = UTC+1)
             '2025-03-31 09:00:00'::TIMESTAMP   -- Monday, after DST (BST = UTC+1)
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Europe/London',
             '2025-03-29 09:00:00'::TIMESTAMP
         ) AS occurrence
@@ -175,7 +178,7 @@ VALUES ('DST Spring Forward - Weekly recurrence',
             '2025-03-03 10:00:00'::TIMESTAMP,  -- Monday before DST
             '2025-03-10 10:00:00'::TIMESTAMP   -- Monday after DST (still 10 AM)
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=2;BYDAY=MO;TZID=America/New_York',
             '2025-03-03 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -198,7 +201,7 @@ VALUES ('DST Fall Back - America/New_York Daily',
             '2025-11-02 10:00:00'::TIMESTAMP,  -- Sunday, DST ends at 2am (EST = UTC-5)
             '2025-11-03 10:00:00'::TIMESTAMP   -- Monday, after DST ends (EST = UTC-5)
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=America/New_York',
             '2025-11-01 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -215,7 +218,7 @@ VALUES ('DST Fall Back - Europe/London Daily',
             '2025-10-26 09:00:00'::TIMESTAMP,  -- Sunday, DST ends at 2am (GMT = UTC+0)
             '2025-10-27 09:00:00'::TIMESTAMP   -- Monday, after DST ends (GMT = UTC+0)
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Europe/London',
             '2025-10-25 09:00:00'::TIMESTAMP
         ) AS occurrence
@@ -237,7 +240,7 @@ VALUES ('TZID Australia/Sydney',
             '2025-01-02 10:00:00'::TIMESTAMP,
             '2025-01-03 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Australia/Sydney',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -254,7 +257,7 @@ VALUES ('TZID America/Los_Angeles',
             '2025-06-16 09:00:00'::TIMESTAMP,
             '2025-06-17 09:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=America/Los_Angeles',
             '2025-06-15 09:00:00'::TIMESTAMP
         ) AS occurrence
@@ -271,7 +274,7 @@ VALUES ('TZID Asia/Kolkata (half-hour offset)',
             '2025-01-02 10:30:00'::TIMESTAMP,
             '2025-01-03 10:30:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Asia/Kolkata',
             '2025-01-01 10:30:00'::TIMESTAMP
         ) AS occurrence
@@ -293,12 +296,31 @@ VALUES ('No TZID (legacy UTC behavior)',
             '2025-01-02 10:00:00'::TIMESTAMP,
             '2025-01-03 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence
     )
 ));
+
+-- Test 12a: Session timezone should not affect TIMESTAMP API results
+SET timezone = 'America/Los_Angeles';
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('Session timezone independence (TIMESTAMP API)',
+    assert_occurrences_equal(
+        'Session timezone independence',
+        ARRAY[
+            '2025-01-01 00:30:00'::TIMESTAMP,
+            '2025-01-08 00:30:00'::TIMESTAMP,
+            '2025-01-15 00:30:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;COUNT=3;BYDAY=WE',
+            '2025-01-01 00:30:00'::TIMESTAMP
+        ) AS occurrence
+    )
+));
+SET timezone = 'UTC';
 
 -- Test 13: Invalid TZID should raise exception
 DO $$
@@ -307,7 +329,7 @@ DECLARE
     error_message TEXT;
 BEGIN
     BEGIN
-        PERFORM (SELECT array_agg(occurrence) FROM rrule.all(
+        PERFORM (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;TZID=Invalid/Timezone',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence);
@@ -349,7 +371,7 @@ VALUES ('WEEKLY with TZID',
             '2025-01-13 10:00:00'::TIMESTAMP,
             '2025-01-20 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;COUNT=3;TZID=America/New_York',
             '2025-01-06 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -366,7 +388,7 @@ VALUES ('MONTHLY with TZID',
             '2025-02-15 10:00:00'::TIMESTAMP,
             '2025-03-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;COUNT=3;TZID=America/New_York',
             '2025-01-15 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -383,7 +405,7 @@ VALUES ('YEARLY with TZID',
             '2026-01-01 10:00:00'::TIMESTAMP,
             '2027-01-01 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=YEARLY;COUNT=3;TZID=America/New_York',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -405,7 +427,7 @@ VALUES ('TZID with BYDAY across DST',
             '2025-03-10 10:00:00'::TIMESTAMP,  -- Monday after DST
             '2025-03-11 10:00:00'::TIMESTAMP   -- Tuesday after DST
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3;BYDAY=MO,TU,WE,TH,FR;TZID=America/New_York',
             '2025-03-07 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -422,7 +444,7 @@ VALUES ('TZID with BYMONTH',
             '2025-07-15 10:00:00'::TIMESTAMP,
             '2026-01-15 10:00:00'::TIMESTAMP
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=YEARLY;BYMONTH=1,7;COUNT=3;TZID=America/New_York',
             '2025-01-15 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -439,7 +461,7 @@ VALUES ('TZID with INTERVAL',
             '2025-03-09 10:00:00'::TIMESTAMP,  -- Sunday (DST transition day!)
             '2025-03-11 10:00:00'::TIMESTAMP   -- Tuesday after DST
         ],
-        (SELECT array_agg(occurrence) FROM rrule.all(
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;INTERVAL=2;COUNT=3;TZID=America/New_York',
             '2025-03-07 10:00:00'::TIMESTAMP
         ) AS occurrence
@@ -455,13 +477,92 @@ VALUES ('after() with TZID',
         ELSE 'FAIL [after() with TZID]: Expected 2025-03-09 10:00:00, got ' || result::TEXT
     END
     FROM (
-        SELECT rrule.after(
+        SELECT rrule."after"(
             'FREQ=DAILY;COUNT=10;TZID=America/New_York',
             '2025-03-08 10:00:00'::TIMESTAMP,
             '2025-03-08 12:00:00'::TIMESTAMP
         ) AS result
     ) sub)
 );
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 8: UNTIL + TZID Combinations'
+\echo '==================================================================='
+
+-- Test 21: UNTIL with TZID (TIMESTAMP API)
+-- RFC 5545: When DTSTART has TZID, UNTIL must be in UTC.
+-- This tests that a UTC UNTIL works correctly with TZID.
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('UNTIL with TZID (UTC boundary)',
+    assert_occurrences_equal(
+        'UNTIL with TZID (UTC boundary)',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;UNTIL=20250103T150000Z;TZID=America/New_York',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence
+    )
+));
+
+-- Test 22: UNTIL with TZID across DST transition
+-- Start before spring-forward, UNTIL after spring-forward
+-- Wall-clock time should remain consistent
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('UNTIL with TZID across DST',
+    assert_occurrences_equal(
+        'UNTIL with TZID across DST',
+        ARRAY[
+            '2025-03-07 10:00:00'::TIMESTAMP,
+            '2025-03-08 10:00:00'::TIMESTAMP,
+            '2025-03-09 10:00:00'::TIMESTAMP,
+            '2025-03-10 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;UNTIL=20250310T140000Z;TZID=America/New_York',
+            '2025-03-07 10:00:00'::TIMESTAMP
+        ) AS occurrence
+    )
+));
+
+-- Test 23: UNTIL without TZID (local time, no timezone reference)
+-- When no TZID is specified, UNTIL should work as a local timestamp boundary
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('UNTIL without TZID (local time)',
+    assert_occurrences_equal(
+        'UNTIL without TZID (local time)',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;UNTIL=20250103T100000Z',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence
+    )
+));
+
+-- Test 24: UNTIL with TZID and WEEKLY frequency
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('UNTIL with TZID WEEKLY',
+    assert_occurrences_equal(
+        'UNTIL with TZID WEEKLY',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-01-13 10:00:00'::TIMESTAMP,
+            '2025-01-20 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;UNTIL=20250121T000000Z;TZID=America/New_York',
+            '2025-01-06 10:00:00'::TIMESTAMP
+        ) AS occurrence
+    )
+));
 
 \echo ''
 \echo '==================================================================='
