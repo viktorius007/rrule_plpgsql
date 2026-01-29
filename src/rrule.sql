@@ -31,10 +31,11 @@
 *  See main event loop (line ~928) for detailed security documentation and instructions
 *  on how to enable them safely with proper validation and limits.
 *
-* COMPLETE RFC 5545 COMPLIANCE:
-*  This implementation now supports ALL major RRULE features from RFC 5545.
-*  The only unsupported combination is YEARLY + BYMONTH + BYYEARDAY (semantically
-*  contradictory - raises a descriptive exception). All other combinations work!
+* RFC 5545 COMPLIANCE (~97%):
+*  This implementation supports all major RRULE features from RFC 5545.
+*  All parameter combinations work, including YEARLY + BYMONTH + BYYEARDAY
+*  (BYMONTH generates candidates, BYYEARDAY filters as intersection).
+*  See SPEC_COMPLIANCE.md for documented limitations.
 *
 */
 
@@ -79,12 +80,23 @@ BEGIN
   until_str         := substring(repeatrule from 'UNTIL=([0-9TZ]+)(;|$)');
 
   -- Validate and assign UNTIL with helpful error message
+  -- Design decision: DECISIONS.md #4 — UNTIL must be UTC DATE-TIME with Z suffix.
+  -- RFC 5545 §3.3.10 requires UNTIL to match DTSTART value type (DATE-TIME here).
   IF until_str IS NOT NULL THEN
+    -- Require UTC DATE-TIME (YYYYMMDDTHHMMSSZ). Date-only UNTIL is not allowed here.
+    -- These checks are OUTSIDE the exception block so they aren't caught by WHEN OTHERS.
+    IF until_str ~ '^[0-9]{8}$' THEN
+      RAISE EXCEPTION 'Invalid RRULE: UNTIL=% is a date-only value. This API uses DATE-TIME DTSTART, so UNTIL must be a UTC DATE-TIME (YYYYMMDDTHHMMSSZ).  RFC 5545 Section 3.3.10: UNTIL MUST be the same value type as DTSTART.', until_str;
+    END IF;
+    IF until_str !~ 'Z$' THEN
+      RAISE EXCEPTION 'Invalid RRULE: UNTIL=% must be specified in UTC and end with "Z" (e.g., UNTIL=20251231T235959Z).  RFC 5545 Section 3.3.10: DATE-TIME UNTIL MUST be UTC when DTSTART is DATE-TIME with timezone.', until_str;
+    END IF;
+    -- Only the cast is inside the exception block
     BEGIN
       result.until := until_str::TIMESTAMPTZ;
     EXCEPTION
       WHEN OTHERS THEN
-        RAISE EXCEPTION 'Invalid RRULE: UNTIL=% is not a valid timestamp. RFC 5545 requires format YYYYMMDDTHHMMSSZ (e.g., UNTIL=20251231T235959Z) or YYYYMMDD (e.g., UNTIL=20251231). Error: %',
+        RAISE EXCEPTION 'Invalid RRULE: UNTIL=% is not a valid timestamp. RFC 5545 requires UTC DATE-TIME format YYYYMMDDTHHMMSSZ (e.g., UNTIL=20251231T235959Z). Error: %',
           until_str,
           SQLERRM;
     END;
@@ -94,6 +106,10 @@ BEGIN
   result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
   result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
   result.wkst       := substring(repeatrule from 'WKST=(MO|TU|WE|TH|FR|SA|SU)(;|$)');
+  -- Validate WKST: if WKST= was specified but didn't match a valid day, reject it
+  IF result.wkst IS NULL AND repeatrule ~ 'WKST=' THEN
+    RAISE EXCEPTION 'Invalid WKST value. WKST must be one of: MO, TU, WE, TH, FR, SA, SU';
+  END IF;
   result.tzid       := substring(repeatrule from 'TZID=([^;]+)(;|$)');
 
   -- RFC 7529: RSCALE parameter (calendar system)
@@ -101,6 +117,11 @@ BEGIN
 
   -- RFC 7529: SKIP parameter
   result.skip       := COALESCE(UPPER(substring(repeatrule from 'SKIP=(OMIT|BACKWARD|FORWARD)(;|$)')), 'OMIT');
+
+  -- Validate SKIP: if SKIP= was specified but didn't match a valid value, reject it
+  IF result.skip = 'OMIT' AND repeatrule ~ 'SKIP=' AND repeatrule !~ 'SKIP=(OMIT|BACKWARD|FORWARD)(;|$)' THEN
+    RAISE EXCEPTION 'Invalid SKIP value. SKIP must be one of: OMIT, BACKWARD, FORWARD';
+  END IF;
 
   -- RFC 7529 Compliance: SKIP requires RSCALE
   -- If SKIP is specified (and not default OMIT) but RSCALE is missing,
@@ -114,7 +135,9 @@ BEGIN
     RAISE EXCEPTION 'Unsupported RSCALE value: "%". Only GREGORIAN calendar is currently supported.  RFC 7529 defines other calendar systems (HEBREW, ISLAMIC, CHINESE, etc.),  but this implementation only supports the Gregorian calendar.', result.rscale;
   END IF;
 
-  result.byday      := string_to_array( substring(repeatrule from 'BYDAY=(([+-]?[0-9]{0,2}(MO|TU|WE|TH|FR|SA|SU),?)+)(;|$)'), ',');
+  result.byday      := array_remove(
+                         string_to_array( substring(repeatrule from 'BYDAY=(([+-]?[0-9]{0,2}(MO|TU|WE|TH|FR|SA|SU),?)+)(;|$)'), ','),
+                         '');
 
   result.byyearday  := string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ',');
   result.byweekno   := string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ',');
@@ -122,9 +145,68 @@ BEGIN
   result.bymonth    := string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ',');
   result.bysetpos   := string_to_array(substring(repeatrule from 'BYSETPOS=(([+-]?[0-9]{1,3},?)+)(;|$)'), ',');
 
+  -- Deduplicate BYYEARDAY and BYWEEKNO arrays to prevent duplicate occurrence generation
+  -- (e.g., BYYEARDAY=100,100 or BYWEEKNO=1,1 would otherwise produce duplicates)
+  IF result.byyearday IS NOT NULL THEN
+    SELECT array_agg(val ORDER BY idx) INTO result.byyearday
+    FROM (SELECT DISTINCT ON (val) val, idx
+          FROM unnest(result.byyearday) WITH ORDINALITY AS t(val, idx)
+          ORDER BY val, idx) sub;
+  END IF;
+  IF result.byweekno IS NOT NULL THEN
+    SELECT array_agg(val ORDER BY idx) INTO result.byweekno
+    FROM (SELECT DISTINCT ON (val) val, idx
+          FROM unnest(result.byweekno) WITH ORDINALITY AS t(val, idx)
+          ORDER BY val, idx) sub;
+  END IF;
+
   result.bysecond   := string_to_array(substring(repeatrule from 'BYSECOND=([0-9,+-]+)(;|$)'), ',');
   result.byminute   := string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ',');
   result.byhour     := string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ',');
+
+  -- ========================================================================
+  -- BYxxx PARSE-FAILURE DETECTION
+  -- ========================================================================
+  -- Detect when a BYxxx keyword is present in the RRULE string but the regex
+  -- failed to extract a value (e.g., BYMONTH=FOO, BYDAY=XY). Without these
+  -- checks, malformed values silently become NULL and skip all validation.
+  -- Pattern matches WKST (line 109) and SKIP (line 121) validation style.
+
+  IF result.byday IS NULL AND repeatrule ~ 'BYDAY=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYDAY value could not be parsed. BYDAY requires comma-separated day codes (MO,TU,WE,TH,FR,SA,SU) with optional ordinals (e.g., BYDAY=MO,WE,FR or BYDAY=2MO,-1FR).';
+  END IF;
+
+  IF result.byyearday IS NULL AND repeatrule ~ 'BYYEARDAY=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYYEARDAY value could not be parsed. BYYEARDAY requires comma-separated integers ±1-366 (e.g., BYYEARDAY=1,100,-1).';
+  END IF;
+
+  IF result.byweekno IS NULL AND repeatrule ~ 'BYWEEKNO=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYWEEKNO value could not be parsed. BYWEEKNO requires comma-separated integers ±1-53 (e.g., BYWEEKNO=1,20).';
+  END IF;
+
+  IF result.bymonthday IS NULL AND repeatrule ~ 'BYMONTHDAY=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYMONTHDAY value could not be parsed. BYMONTHDAY requires comma-separated integers ±1-31 (e.g., BYMONTHDAY=1,15,-1).';
+  END IF;
+
+  IF result.bymonth IS NULL AND repeatrule ~ 'BYMONTH=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYMONTH value could not be parsed. BYMONTH requires comma-separated integers 1-12 (e.g., BYMONTH=1,6,12).';
+  END IF;
+
+  IF result.bysetpos IS NULL AND repeatrule ~ 'BYSETPOS=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYSETPOS value could not be parsed. BYSETPOS requires comma-separated integers ±1-366 (e.g., BYSETPOS=1,-1).';
+  END IF;
+
+  IF result.bysecond IS NULL AND repeatrule ~ 'BYSECOND=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYSECOND value could not be parsed. BYSECOND requires comma-separated integers 0-60 (e.g., BYSECOND=0,30).';
+  END IF;
+
+  IF result.byminute IS NULL AND repeatrule ~ 'BYMINUTE=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYMINUTE value could not be parsed. BYMINUTE requires comma-separated integers 0-59 (e.g., BYMINUTE=0,15,30,45).';
+  END IF;
+
+  IF result.byhour IS NULL AND repeatrule ~ 'BYHOUR=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYHOUR value could not be parsed. BYHOUR requires comma-separated integers 0-23 (e.g., BYHOUR=9,17).';
+  END IF;
 
   -- ========================================================================
   -- RFC 5545 CONSTRAINT VALIDATIONS
@@ -140,6 +222,16 @@ BEGIN
   -- Validation 2: COUNT and UNTIL are mutually exclusive
   IF result.count IS NOT NULL AND result.until IS NOT NULL THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT and UNTIL are mutually exclusive. Specify either COUNT (number of occurrences) OR UNTIL (end date), not both. Current RRULE has COUNT=% and UNTIL=%.  RFC 5545 Section 3.3.10: "they MUST NOT occur in the same recur"', result.count, result.until;
+  END IF;
+
+  -- Validation 2b: INTERVAL must be positive (RFC 5545)
+  IF result.interval IS NULL OR result.interval < 1 THEN
+    RAISE EXCEPTION 'Invalid RRULE: INTERVAL must be a positive integer (>= 1). Current INTERVAL=%.  RFC 5545 Section 3.3.10: "INTERVAL rule part contains a positive integer"', result.interval;
+  END IF;
+
+  -- Validation 2c: COUNT must be a positive integer (RFC 5545)
+  IF result.count IS NOT NULL AND result.count <= 0 THEN
+    RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer, got %', result.count;
   END IF;
 
   -- Validation 3: BYWEEKNO only valid with YEARLY frequency
@@ -191,6 +283,12 @@ BEGIN
           substring(result.byday[i] from '(MO|TU|WE|TH|FR|SA|SU)$'),
           result.byday[i];
       END IF;
+      -- Enforce ordinal bounds (±53)
+      IF result.byday[i] ~ '^[+-]?[0-9]+' THEN
+        IF abs((substring(result.byday[i] from '^[+-]?[0-9]+'))::INT) > 53 THEN
+          RAISE EXCEPTION 'Invalid RRULE: BYDAY ordinal (%) is out of valid range. Valid ordinals are 1-53 or -1 to -53.  RFC 5545 Section 3.3.10: "ordwk = 1*2DIGIT ;1 to 53"', result.byday[i];
+        END IF;
+      END IF;
     END LOOP;
   END IF;
 
@@ -215,6 +313,10 @@ BEGIN
       EXIT WHEN result.bysecond[i] IS NULL;
       IF result.bysecond[i] < 0 OR result.bysecond[i] > 60 THEN
         RAISE EXCEPTION 'Invalid RRULE: BYSECOND=% is out of valid range. Valid values are 0-60 (60 for leap seconds).  RFC 5545 Section 3.3.10: "Valid values are 0 to 60"', result.bysecond[i];
+      END IF;
+      -- PostgreSQL TIMESTAMP does not support leap seconds; normalize 60 -> 59.
+      IF result.bysecond[i] = 60 THEN
+        result.bysecond[i] := 59;
       END IF;
     END LOOP;
   END IF;
@@ -301,9 +403,47 @@ BEGIN
     END LOOP;
   END IF;
 
+  -- Validation: BYHOUR/BYMINUTE/BYSECOND not supported with WEEKLY/MONTHLY/YEARLY
+  -- RFC 5545 defines these as "Expand" operations, but this implementation does not yet
+  -- support time-level expansion for these frequencies. Reject explicitly rather than
+  -- silently ignoring. See SPEC_COMPLIANCE.md for workarounds.
+  IF result.freq IN ('WEEKLY', 'MONTHLY', 'YEARLY') THEN
+    IF result.byhour IS NOT NULL THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYHOUR is not supported with FREQ=%. Use FREQ=DAILY;BYDAY=... with BYHOUR instead, or use sub-day frequencies (FREQ=HOURLY;BYDAY=...).  Note: RFC 5545 defines this as an "Expand" operation but this implementation does not yet support it.', result.freq;
+    END IF;
+    IF result.byminute IS NOT NULL THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYMINUTE is not supported with FREQ=%. Use FREQ=DAILY with BYMINUTE instead, or use sub-day frequencies.  Note: RFC 5545 defines this as an "Expand" operation but this implementation does not yet support it.', result.freq;
+    END IF;
+    IF result.bysecond IS NOT NULL THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYSECOND is not supported with FREQ=%. Use FREQ=DAILY with BYSECOND instead, or use sub-day frequencies.  Note: RFC 5545 defines this as an "Expand" operation but this implementation does not yet support it.', result.freq;
+    END IF;
+  END IF;
+
+  -- Validation: BYSETPOS not supported with HOURLY/MINUTELY/SECONDLY
+  -- Sub-day frequencies generate single occurrences per interval; BYSETPOS is meaningless.
+  IF result.bysetpos IS NOT NULL AND result.freq IN ('HOURLY', 'MINUTELY', 'SECONDLY') THEN
+    RAISE EXCEPTION 'Invalid RRULE: BYSETPOS is not supported with FREQ=%. Sub-day frequencies generate single occurrences per interval — use INTERVAL instead. Example: FREQ=HOURLY;INTERVAL=3', result.freq;
+  END IF;
+
   RETURN result;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE STRICT;
+$$ LANGUAGE plpgsql STABLE STRICT;
+
+
+------------------------------------------------------------------------------------------------------
+-- VOLATILITY RATIONALE (applies to all internal and public functions below)
+--
+-- Functions are classified STABLE or VOLATILE per PostgreSQL rules:
+--   STABLE:   Pure computation, no cursors, no SET — safe to optimize within a statement.
+--   VOLATILE: Uses cursors (BYSETPOS filter), SET timezone, or set_config() — must re-evaluate per call.
+--
+-- SET timezone = 'UTC' on function definitions pins timezone during execution and restores
+-- the caller's timezone on exit (PostgreSQL §38.7). No session leakage.
+-- set_config('TimeZone', ..., true) inside TIMESTAMPTZ API functions is sandboxed by the
+-- function-level SET clause (PostgreSQL §CREATE FUNCTION, SET clause).
+--
+-- See DECISIONS.md #1 for full rationale.
+------------------------------------------------------------------------------------------------------
 
 
 -- Return a SETOF dates within the month of a particular date which match a string of BYDAY rule specifications
@@ -392,7 +532,97 @@ BEGIN
   RETURN;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- No STRICT (was never STRICT)
+$$ LANGUAGE plpgsql STABLE;  -- No STRICT (was never STRICT)
+
+
+------------------------------------------------------------------------------------------------------
+-- Return a SETOF dates within the year of a particular date which match a string of BYDAY rule specifications
+-- Supports YEARLY BYDAY ordinals (e.g., 2MO = second Monday of year, -1FR = last Friday of year)
+------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION rrule_year_byday_set(
+  in_time TIMESTAMP WITH TIME ZONE,
+  byday TEXT[],
+  max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
+) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
+DECLARE
+  dayrule TEXT;
+  dow INT;
+  index INT;
+  first_dow INT;
+  each_day TIMESTAMP WITH TIME ZONE;
+  year_start TIMESTAMP WITH TIME ZONE;
+  year_end TIMESTAMP WITH TIME ZONE;
+  results TIMESTAMP WITH TIME ZONE[];
+  result_count INT := 0;
+BEGIN
+  -- Maintain STRICT semantics for required parameters
+  IF in_time IS NULL THEN
+    RETURN;
+  END IF;
+
+  IF byday IS NULL THEN
+    RETURN NEXT in_time;
+    RETURN;
+  END IF;
+
+  year_start := date_trunc('year', in_time) + (in_time::time)::interval;
+  year_end := year_start + INTERVAL '1 year' - INTERVAL '1 day';
+
+  -- Iterate through each BYDAY rule (e.g., MO, 2TU, -1FR)
+  FOREACH dayrule IN ARRAY byday LOOP
+    dow := rrule.weekday_to_number(substring(dayrule from '..$'));
+    each_day := year_start;
+    first_dow := date_part('dow', each_day);
+
+    -- Coerce each_day to be the first 'dow' of the year
+    each_day := each_day - ( first_dow::text || 'days')::interval
+                        + ( dow::text || 'days')::interval
+                        + CASE WHEN dow < first_dow THEN '1 week'::interval ELSE '0s'::interval END;
+
+    IF length(dayrule) > 2 THEN
+      index := (substring(dayrule from '^[0-9-]+'))::int;
+
+      IF index = 0 THEN
+        RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
+      ELSIF index > 0 THEN
+        -- Nth weekday of year
+        each_day := each_day + ((index - 1)::text || ' weeks')::interval;
+      ELSE
+        -- Negative ordinals: count from end of year
+        -- Find last occurrence of this weekday
+        WHILE (each_day + '1 week'::interval) <= year_end LOOP
+          each_day := each_day + '1 week'::interval;
+        END LOOP;
+        -- Note: index is negative, so (-2 + 1) == -1
+        index := index + 1;
+        IF index < 0 THEN
+          each_day := each_day + (index::text || ' weeks')::interval;
+        END IF;
+      END IF;
+
+      IF each_day >= year_start AND each_day <= year_end THEN
+        results[date_part('doy', each_day)] := each_day;
+      END IF;
+    ELSE
+      -- Return all matching weekdays in the year
+      WHILE each_day <= year_end LOOP
+        results[date_part('doy', each_day)] := each_day;
+        each_day := each_day + '1 week'::interval;
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  FOR i IN 1..366 LOOP
+    IF results[i] IS NOT NULL THEN
+      RETURN NEXT results[i];
+      result_count := result_count + 1;
+      EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
+    END IF;
+  END LOOP;
+
+  RETURN;
+END;
+$$ LANGUAGE plpgsql STABLE;  -- No STRICT (was never STRICT)
 
 
 ------------------------------------------------------------------------------------------------------
@@ -518,7 +748,7 @@ BEGIN
 
   RETURN;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 
 
 -- Return a SETOF dates within the week of a particular date which match a single BYDAY rule specification
@@ -537,6 +767,7 @@ DECLARE
   our_day TIMESTAMP WITH TIME ZONE;
   i INT;
   result_count INT := 0;
+  seen_offsets INT[] := ARRAY[]::INT[];  -- Track emitted day offsets to prevent duplicates
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF in_time IS NULL THEN
@@ -563,11 +794,15 @@ BEGIN
     -- Example: if WKST=SU (0) and we want MO (1), day_offset = (1-0+7)%7 = 1
     -- Example: if WKST=MO (1) and we want SU (0), day_offset = (0-1+7)%7 = 6
     day_offset := (dow - wkst_dow + 7) % 7;
-    RETURN NEXT our_day + (day_offset::text || ' days')::interval;
-    result_count := result_count + 1;
+    -- Guard: skip if this day_offset was already emitted (e.g. BYDAY=MO,MO)
+    IF NOT (day_offset = ANY(seen_offsets)) THEN
+      seen_offsets := array_append(seen_offsets, day_offset);
+      RETURN NEXT our_day + (day_offset::text || ' days')::interval;
+      result_count := result_count + 1;
 
-    -- Early exit: stop once we've generated enough results
-    EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
+      -- Early exit: stop once we've generated enough results
+      EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
+    END IF;
 
     i := i + 1;
     dayrule := byday[i];
@@ -576,7 +811,7 @@ BEGIN
   RETURN;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- No STRICT (was never STRICT)
+$$ LANGUAGE plpgsql STABLE;  -- No STRICT (was never STRICT)
 
 
 ------------------------------------------------------------------------------------------------------
@@ -624,67 +859,70 @@ BEGIN
     -- Return start of day, N days back
     RETURN date_trunc('day', d) - (days_back::TEXT || ' days')::INTERVAL;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 -- Get week number (1-53) for a date, respecting WKST
--- Algorithm: Simple week counting (not ISO 8601 for non-Monday starts)
---   - Week 1 starts on the first WKST day of the year
---   - Subsequent weeks are 7-day increments
---   - Dates before week 1 belong to the last week of the previous year
---
--- Example with WKST=SU:
---   - If Jan 1 is a Wednesday, first Sunday is Jan 4
---   - Jan 1-3 belong to last week of previous year
---   - Jan 4-10 is Week 1, Jan 11-17 is Week 2, etc.
+-- ISO 8601 week numbering (RFC 5545), with WKST defining the week start day.
+-- Week 1 is the week that contains January 4th (equivalently, the first week with >= 4 days in the year).
+CREATE OR REPLACE FUNCTION get_week_info(
+  d TIMESTAMP WITH TIME ZONE,
+  wkst TEXT
+) RETURNS TABLE(week_year INT, week_num INT) AS $$
+DECLARE
+  year_start TIMESTAMP WITH TIME ZONE;
+  week_start TIMESTAMP WITH TIME ZONE;
+  week1_start TIMESTAMP WITH TIME ZONE;
+  next_week1_start TIMESTAMP WITH TIME ZONE;
+  prev_year_start TIMESTAMP WITH TIME ZONE;
+  prev_week1_start TIMESTAMP WITH TIME ZONE;
+BEGIN
+  year_start := date_trunc('year', d);
+  week_start := rrule.get_week_start(d, wkst);
+
+  -- Week 1 start is the week containing Jan 4
+  week1_start := rrule.get_week_start(year_start + INTERVAL '3 days', wkst);
+  next_week1_start := rrule.get_week_start((year_start + INTERVAL '1 year') + INTERVAL '3 days', wkst);
+
+  IF week_start < week1_start THEN
+    prev_year_start := year_start - INTERVAL '1 year';
+    prev_week1_start := rrule.get_week_start(prev_year_start + INTERVAL '3 days', wkst);
+    week_year := date_part('year', prev_year_start)::INT;
+    week_num := ((week_start::DATE - prev_week1_start::DATE) / 7) + 1;
+  ELSIF week_start >= next_week1_start THEN
+    week_year := date_part('year', year_start + INTERVAL '1 year')::INT;
+    week_num := ((week_start::DATE - next_week1_start::DATE) / 7) + 1;
+  ELSE
+    week_year := date_part('year', year_start)::INT;
+    week_num := ((week_start::DATE - week1_start::DATE) / 7) + 1;
+  END IF;
+
+  RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION weeks_in_year(
+  year_start TIMESTAMP WITH TIME ZONE,
+  wkst TEXT
+) RETURNS INT AS $$
+DECLARE
+  week1_start TIMESTAMP WITH TIME ZONE;
+  next_week1_start TIMESTAMP WITH TIME ZONE;
+BEGIN
+  week1_start := rrule.get_week_start(year_start + INTERVAL '3 days', wkst);
+  next_week1_start := rrule.get_week_start((year_start + INTERVAL '1 year') + INTERVAL '3 days', wkst);
+  RETURN ((next_week1_start::DATE - week1_start::DATE) / 7);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
 CREATE OR REPLACE FUNCTION get_week_number(d TIMESTAMP WITH TIME ZONE, wkst TEXT)
 RETURNS INT AS $$
 DECLARE
-    year_start TIMESTAMP WITH TIME ZONE;
-    prev_year_start TIMESTAMP WITH TIME ZONE;
-    wkst_num INT;
-    first_day_dow INT;
-    days_to_first_wkst INT;
-    first_wkst TIMESTAMP WITH TIME ZONE;
-    days_diff NUMERIC;
-    week_num INT;
-
-    -- For previous year calculation
-    prev_first_day_dow INT;
-    prev_days_to_first_wkst INT;
-    prev_first_wkst TIMESTAMP WITH TIME ZONE;
-    prev_days_diff NUMERIC;
+  info RECORD;
 BEGIN
-    wkst_num := rrule.weekday_to_number(wkst);
-    year_start := date_trunc('year', d);
-    first_day_dow := date_part('dow', year_start);
-
-    -- Calculate days from Jan 1 to first WKST of the year
-    -- Example: Jan 1 is Wednesday (3), WKST is Sunday (0): (0 - 3 + 7) % 7 = 4 days
-    days_to_first_wkst := (wkst_num - first_day_dow + 7) % 7;
-    first_wkst := year_start + (days_to_first_wkst::TEXT || ' days')::INTERVAL;
-
-    -- Calculate days from first WKST to target date
-    days_diff := EXTRACT(EPOCH FROM (date_trunc('day', d) - first_wkst)) / 86400;
-
-    IF days_diff < 0 THEN
-        -- Date is before week 1 of this year - belongs to last week of previous year
-        prev_year_start := year_start - INTERVAL '1 year';
-
-        prev_first_day_dow := date_part('dow', prev_year_start);
-        prev_days_to_first_wkst := (wkst_num - prev_first_day_dow + 7) % 7;
-        prev_first_wkst := prev_year_start + (prev_days_to_first_wkst::TEXT || ' days')::INTERVAL;
-
-        prev_days_diff := EXTRACT(EPOCH FROM (date_trunc('day', d) - prev_first_wkst)) / 86400;
-        week_num := (prev_days_diff::INT / 7) + 1;
-        RETURN week_num;
-    ELSE
-        -- Week number = floor(days_diff / 7) + 1
-        -- Example: 0-6 days from first WKST = Week 1, 7-13 days = Week 2, etc.
-        week_num := (days_diff::INT / 7) + 1;
-        RETURN week_num;
-    END IF;
+  SELECT * INTO info FROM rrule.get_week_info(d, wkst);
+  RETURN info.week_num;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -722,7 +960,7 @@ BEGIN
     RAISE EXCEPTION 'Invalid timezone: "%". Must be a valid IANA timezone identifier (e.g., America/New_York, Europe/London, Asia/Tokyo, UTC). Use: SELECT name FROM pg_timezone_names ORDER BY name; to see all valid timezones.', tz;
   END IF;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -732,15 +970,24 @@ CREATE OR REPLACE FUNCTION test_byday_rule(
   testme TIMESTAMP WITH TIME ZONE,
   byday TEXT[]
 ) RETURNS BOOLEAN AS $$
+DECLARE
+  test_dow INT;
+  dayrule TEXT;
 BEGIN
   -- Note that this doesn't work for MONTHLY/YEARLY BYDAY clauses which might have numbers prepended
   -- so don't call it that way...
   IF byday IS NOT NULL THEN
-    RETURN ( substring( to_char( testme, 'DY') for 2 from 1) = ANY (byday) );
+    test_dow := date_part('dow', testme);
+    FOREACH dayrule IN ARRAY byday LOOP
+      IF rrule.weekday_to_number(substring(dayrule from '..$')) = test_dow THEN
+        RETURN TRUE;
+      END IF;
+    END LOOP;
+    RETURN FALSE;
   END IF;
   RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -756,7 +1003,7 @@ BEGIN
   END IF;
   RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -766,13 +1013,24 @@ CREATE OR REPLACE FUNCTION test_bymonthday_rule(
   testme TIMESTAMP WITH TIME ZONE,
   bymonthday INT[]
 ) RETURNS BOOLEAN AS $$
+DECLARE
+  dom INT;
+  days_in_month INT;
+  md INT;
 BEGIN
   IF bymonthday IS NOT NULL THEN
-    RETURN ( date_part( 'day', testme) = ANY (bymonthday) );
+    dom := date_part('day', testme);
+    days_in_month := date_part('day',
+      (date_trunc('month', testme) + INTERVAL '1 month' - INTERVAL '1 day'))::INT;
+    FOREACH md IN ARRAY bymonthday LOOP
+      IF md > 0 AND md = dom THEN RETURN TRUE; END IF;
+      IF md < 0 AND (days_in_month + md + 1) = dom THEN RETURN TRUE; END IF;
+    END LOOP;
+    RETURN FALSE;
   END IF;
   RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -782,13 +1040,77 @@ CREATE OR REPLACE FUNCTION test_byyearday_rule(
   testme TIMESTAMP WITH TIME ZONE,
   byyearday INT[]
 ) RETURNS BOOLEAN AS $$
+DECLARE
+  doy INT;
+  days_in_year INT;
+  yd INT;
 BEGIN
   IF byyearday IS NOT NULL THEN
-    RETURN ( date_part( 'doy', testme) = ANY (byyearday) );
+    doy := date_part('doy', testme);
+    days_in_year := date_part('doy',
+      (date_trunc('year', testme) + INTERVAL '1 year' - INTERVAL '1 day'))::INT;
+    FOREACH yd IN ARRAY byyearday LOOP
+      IF yd > 0 AND yd = doy THEN RETURN TRUE; END IF;
+      IF yd < 0 AND (days_in_year + yd + 1) = doy THEN RETURN TRUE; END IF;
+    END LOOP;
+    RETURN FALSE;
   END IF;
   RETURN TRUE;
 END;
+$$ LANGUAGE plpgsql STABLE;
+
+
+------------------------------------------------------------------------------------------------------
+-- Match BYWEEKNO values (supports negative indices)
+------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION byweekno_matches(
+  week_num INT,
+  weeks_in_year INT,
+  byweekno INT[]
+) RETURNS BOOLEAN AS $$
+DECLARE
+  wn INT;
+  normalized INT;
+BEGIN
+  IF byweekno IS NULL THEN
+    RETURN TRUE;
+  END IF;
+  FOREACH wn IN ARRAY byweekno LOOP
+    normalized := wn;
+    IF wn < 0 THEN
+      normalized := weeks_in_year + wn + 1;
+    END IF;
+    IF normalized = week_num THEN
+      RETURN TRUE;
+    END IF;
+  END LOOP;
+  RETURN FALSE;
+END;
 $$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION byweekno_matches_for_year(
+  d TIMESTAMP WITH TIME ZONE,
+  year_start TIMESTAMP WITH TIME ZONE,
+  wkst TEXT,
+  byweekno INT[]
+) RETURNS BOOLEAN AS $$
+DECLARE
+  weekyear INT;
+  weeknum INT;
+  weeks_in_year INT;
+BEGIN
+  IF byweekno IS NULL THEN
+    RETURN TRUE;
+  END IF;
+  SELECT week_year, week_num INTO weekyear, weeknum
+  FROM rrule.get_week_info(d, wkst);
+  IF weekyear != date_part('year', year_start) THEN
+    RETURN FALSE;
+  END IF;
+  weeks_in_year := rrule.weeks_in_year(year_start, wkst);
+  RETURN rrule.byweekno_matches(weeknum, weeks_in_year, byweekno);
+END;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -821,46 +1143,50 @@ $$ LANGUAGE plpgsql IMMUTABLE;
 -- SECURITY: DO NOT increase these multipliers without thorough security review and testing.
 -- Increasing limits could enable resource exhaustion attacks in multi-tenant environments.
 --
--- PRECEDENCE: If rrule_count is specified (COUNT in RRULE), it takes absolute precedence
--- over all multipliers. The RRULE author's explicit COUNT is always honored.
+-- PRECEDENCE: Iteration limits are derived from the effective output cap
+-- (min of API max and RRULE COUNT when present). COUNT still caps emitted
+-- occurrences separately during generation.
 --
 -- Parameters:
 --   frequency      - FREQ value from RRULE (DAILY, WEEKLY, MONTHLY, YEARLY, HOURLY, MINUTELY, SECONDLY)
---   rrule_count    - COUNT parameter from RRULE, or NULL if not specified
+--   rrule_count    - COUNT parameter from RRULE, or NULL if not specified (used as fallback)
 --   requested_max  - Maximum occurrences requested by API caller
 --
 -- Returns:
 --   Safe iteration limit that balances:
 --     1. Finding enough matches even with sparse filters (multipliers)
 --     2. Preventing resource exhaustion (DoS caps)
---     3. Respecting RRULE author's explicit COUNT (precedence)
 --
 -- Examples:
---   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 2000  (100 × 20)
+--   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 4000  (100 × 40)
 --   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 500   (50 × 10)
 --   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap)
---   calculate_safe_iteration_limit('DAILY', 75, 100)      → 75    (COUNT wins)
+--   calculate_safe_iteration_limit('DAILY', 75, 75)       → 3000  (COUNT caps output_limit; multipliers still apply)
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION calculate_safe_iteration_limit(
   frequency TEXT,
   rrule_count INT,
   requested_max INT
 ) RETURNS INT AS $$
+DECLARE
+  effective_max INT;
 BEGIN
-  -- RRULE COUNT parameter always takes absolute precedence
-  -- (author's explicit intent overrides all safety multipliers)
-  IF rrule_count IS NOT NULL THEN
-    RETURN rrule_count;
+  -- Use requested_max when provided; fall back to COUNT only when no API limit exists.
+  effective_max := COALESCE(requested_max, rrule_count);
+  IF effective_max IS NULL THEN
+    RETURN NULL;
   END IF;
 
   -- Apply frequency-specific safety multipliers for sparse filter protection
   RETURN CASE frequency
-    WHEN 'DAILY'    THEN requested_max * 20   -- Sparse: weekly-pattern filters
-    WHEN 'WEEKLY'   THEN requested_max * 10   -- Sparse: monthly-pattern filters
-    WHEN 'HOURLY'   THEN requested_max * 2    -- Moderate: time-of-day filters
-    WHEN 'MINUTELY' THEN LEAST(requested_max, 1440)  -- DoS protection: max 1 day
-    WHEN 'SECONDLY' THEN LEAST(requested_max, 3600)  -- DoS protection: max 1 hour
-    ELSE requested_max                         -- MONTHLY, YEARLY: no multiplier needed
+    WHEN 'DAILY'    THEN effective_max * 40   -- Sparse: BYMONTHDAY filters (1/31 days match)
+    WHEN 'WEEKLY'   THEN effective_max * 10   -- Sparse: monthly-pattern filters
+    WHEN 'HOURLY'   THEN effective_max * 2    -- Moderate: time-of-day filters
+    WHEN 'MINUTELY' THEN LEAST(effective_max, 1440)  -- DoS protection: max 1 day
+    WHEN 'SECONDLY' THEN LEAST(effective_max, 3600)  -- DoS protection: max 1 hour
+    WHEN 'MONTHLY'  THEN GREATEST(effective_max * 20, 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years
+    WHEN 'YEARLY'   THEN effective_max * 10   -- Sparse: BYYEARDAY/BYWEEKNO/BYDAY filters
+    ELSE effective_max                         -- Fallback: no multiplier
   END;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
@@ -892,22 +1218,32 @@ BEGIN
       RETURN NEXT valid_date;
     END LOOP;
   ELSE
-    FOR i IN 1..366 LOOP
-      EXIT WHEN bysetpos[i] IS NULL;
-      IF bysetpos[i] > 0 THEN
-        FETCH ABSOLUTE bysetpos[i] FROM curse INTO valid_date;
-      ELSE
-        MOVE LAST IN curse;
-        FETCH RELATIVE (bysetpos[i] + 1) FROM curse INTO valid_date;
-      END IF;
-      IF valid_date IS NOT NULL THEN
-        RETURN NEXT valid_date;
-      END IF;
-    END LOOP;
+    DECLARE
+      collected TIMESTAMP WITH TIME ZONE[];
+      sorted_date TIMESTAMP WITH TIME ZONE;
+    BEGIN
+      collected := ARRAY[]::TIMESTAMP WITH TIME ZONE[];
+      FOR i IN 1..366 LOOP
+        EXIT WHEN bysetpos[i] IS NULL;
+        IF bysetpos[i] > 0 THEN
+          FETCH ABSOLUTE bysetpos[i] FROM curse INTO valid_date;
+        ELSE
+          MOVE LAST IN curse;
+          FETCH RELATIVE (bysetpos[i] + 1) FROM curse INTO valid_date;
+        END IF;
+        IF valid_date IS NOT NULL THEN
+          collected := array_append(collected, valid_date);
+        END IF;
+      END LOOP;
+      -- Return sorted, deduplicated results
+      FOR sorted_date IN SELECT DISTINCT unnest(collected) ORDER BY 1 LOOP
+        RETURN NEXT sorted_date;
+      END LOOP;
+    END;
   END IF;
   CLOSE curse;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql VOLATILE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -940,6 +1276,18 @@ BEGIN
   IF rule.byhour IS NULL AND rule.byminute IS NULL AND rule.bysecond IS NULL THEN
     RETURN NEXT base_time;
     RETURN;
+  END IF;
+
+  -- Deduplicate input arrays to prevent duplicate timestamps
+  -- (e.g., BYHOUR=9,9,10 should not emit hour 9 twice)
+  IF rule.byhour IS NOT NULL THEN
+    SELECT array_agg(DISTINCT val ORDER BY val) INTO rule.byhour FROM unnest(rule.byhour) val;
+  END IF;
+  IF rule.byminute IS NOT NULL THEN
+    SELECT array_agg(DISTINCT val ORDER BY val) INTO rule.byminute FROM unnest(rule.byminute) val;
+  END IF;
+  IF rule.bysecond IS NOT NULL THEN
+    SELECT array_agg(DISTINCT val ORDER BY val) INTO rule.bysecond FROM unnest(rule.bysecond) val;
   END IF;
 
   day_start := date_trunc('day', base_time);
@@ -1005,7 +1353,7 @@ BEGIN
   END LOOP;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1029,19 +1377,19 @@ BEGIN
     RETURN;
   END IF;
 
-  IF rule.byweekno IS NOT NULL AND NOT date_part('week',after_ts) = ANY ( rule.byweekno ) THEN
+  IF rule.byweekno IS NOT NULL AND NOT rrule.byweekno_matches_for_year(after_ts, date_trunc('year', after_ts), rule.wkst, rule.byweekno) THEN
     RETURN;
   END IF;
 
-  IF rule.byyearday IS NOT NULL AND NOT date_part('doy',after_ts) = ANY ( rule.byyearday ) THEN
+  IF rule.byyearday IS NOT NULL AND NOT rrule.test_byyearday_rule(after_ts, rule.byyearday) THEN
     RETURN;
   END IF;
 
-  IF rule.bymonthday IS NOT NULL AND NOT date_part('day',after_ts) = ANY ( rule.bymonthday ) THEN
+  IF rule.bymonthday IS NOT NULL AND NOT rrule.test_bymonthday_rule(after_ts, rule.bymonthday) THEN
     RETURN;
   END IF;
 
-  IF rule.byday IS NOT NULL AND NOT substring( to_char( after_ts, 'DY') for 2 from 1) = ANY ( rule.byday ) THEN
+  IF rule.byday IS NOT NULL AND NOT rrule.test_byday_rule(after_ts, rule.byday) THEN
     RETURN;
   END IF;
 
@@ -1057,7 +1405,7 @@ BEGIN
   END IF;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1074,6 +1422,8 @@ CREATE OR REPLACE FUNCTION weekly_set(
 DECLARE
   curse REFCURSOR;
   weekno INT;
+  weekyear INT;
+  weeks_in_year INT;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -1081,9 +1431,17 @@ BEGIN
   END IF;
 
   IF rule.byweekno IS NOT NULL THEN
-    -- Use WKST-aware week numbering instead of PostgreSQL's ISO 8601 default
-    weekno := rrule.get_week_number(after_ts, rule.wkst);
-    IF NOT weekno = ANY ( rule.byweekno ) THEN
+    -- ISO 8601 week numbering with WKST; only match weeks within the calendar year
+    SELECT week_year, week_num INTO weekyear, weekno
+    FROM rrule.get_week_info(after_ts, rule.wkst);
+    IF weekyear IS NULL OR weekno IS NULL THEN
+      RETURN;
+    END IF;
+    IF weekyear != date_part('year', after_ts) THEN
+      RETURN;
+    END IF;
+    weeks_in_year := rrule.weeks_in_year(date_trunc('year', after_ts), rule.wkst);
+    IF NOT rrule.byweekno_matches(weekno, weeks_in_year, rule.byweekno) THEN
       RETURN;
     END IF;
   END IF;
@@ -1091,17 +1449,17 @@ BEGIN
   -- BYYEARDAY filter: Rare but valid use case
   -- Example: FREQ=WEEKLY;BYYEARDAY=100 = "Every week, but only on day 100 of year"
   IF rule.byyearday IS NOT NULL THEN
-    IF NOT date_part('doy', after_ts) = ANY ( rule.byyearday ) THEN
+    IF NOT rrule.test_byyearday_rule(after_ts, rule.byyearday) THEN
       RETURN;
     END IF;
   END IF;
 
   -- Pass WKST and max_results to rrule_week_byday_set for proper week boundary calculation
-  OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r;
+  OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
   RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1135,6 +1493,12 @@ BEGIN
   * My guess is that this means 'INTERSECT'
   */
 
+  -- BYMONTH filter: Limits which months are considered
+  -- Example: FREQ=MONTHLY;BYMONTH=1,2,3 = "Every month, but only in Jan/Feb/Mar"
+  IF rule.bymonth IS NOT NULL AND NOT date_part('month', after_ts) = ANY ( rule.bymonth ) THEN
+    RETURN;
+  END IF;
+
   -- BYWEEKNO filter: Rare but valid use case
   -- Example: FREQ=MONTHLY;BYWEEKNO=10 = "Every month, but only in week 10 of year"
   IF rule.byweekno IS NOT NULL THEN
@@ -1147,7 +1511,7 @@ BEGIN
   -- BYYEARDAY filter: Rare but valid use case
   -- Example: FREQ=MONTHLY;BYYEARDAY=100 = "Every month, but only on day 100 of year"
   IF rule.byyearday IS NOT NULL THEN
-    IF NOT date_part('doy', after_ts) = ANY ( rule.byyearday ) THEN
+    IF NOT rrule.test_byyearday_rule(after_ts, rule.byyearday) THEN
       RETURN;
     END IF;
   END IF;
@@ -1166,7 +1530,7 @@ BEGIN
   RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1180,6 +1544,7 @@ CREATE OR REPLACE FUNCTION rrule_yearly_bymonth_set(
 DECLARE
   current_base TIMESTAMP WITH TIME ZONE;
   rr rrule.rrule_parts;
+  seen_months INT[] := ARRAY[]::INT[];  -- Track emitted months to prevent duplicates from BYMONTH=1,1
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -1190,17 +1555,55 @@ BEGIN
     -- Ensure we don't pass BYSETPOS down
     rr := rule;
     rr.bysetpos := NULL;
+    -- Apply BYWEEKNO/BYYEARDAY at YEARLY level, not per-month
+    rr.byweekno := NULL;
+    rr.byyearday := NULL;
     FOR i IN 1..12 LOOP
       EXIT WHEN rr.bymonth[i] IS NULL;
-      current_base := date_trunc( 'year', after_ts ) + ((rr.bymonth[i] - 1)::text || ' months')::interval + ((date_part('day', after_ts) - 1)::text || ' days')::interval + (after_ts::time)::interval;
-      RETURN QUERY SELECT r FROM rrule.monthly_set(current_base, rr, max_results) r;
+      -- Guard: skip if this month was already processed (e.g. BYMONTH=1,1)
+      CONTINUE WHEN rr.bymonth[i] = ANY(seen_months);
+      seen_months := array_append(seen_months, rr.bymonth[i]);
+      IF rr.bymonthday IS NULL AND rr.byday IS NULL THEN
+        -- No month-level filters: keep DTSTART day-of-month/time
+        current_base := date_trunc('year', after_ts)
+                        + ((rr.bymonth[i] - 1)::text || ' months')::interval
+                        + ((date_part('day', after_ts) - 1)::text || ' days')::interval
+                        + (after_ts::time)::interval;
+        IF date_part('month', current_base) = rr.bymonth[i] THEN
+          -- Day exists in the target month — emit directly
+          RETURN NEXT current_base;
+        ELSE
+          -- Day overflowed (e.g., day 30 in February) — apply SKIP rule (RFC 7529)
+          IF rr.skip = 'BACKWARD' THEN
+            -- Use last day of the target month
+            current_base := date_trunc('year', after_ts)
+                            + ((rr.bymonth[i])::text || ' months')::interval
+                            - INTERVAL '1 day'
+                            + (after_ts::time)::interval;
+            RETURN NEXT current_base;
+          ELSIF rr.skip = 'FORWARD' THEN
+            -- Use first day of the next month
+            current_base := date_trunc('year', after_ts)
+                            + ((rr.bymonth[i])::text || ' months')::interval
+                            + (after_ts::time)::interval;
+            RETURN NEXT current_base;
+          END IF;
+          -- OMIT (default) or NULL: skip this month — no RETURN NEXT
+        END IF;
+      ELSE
+        -- Month-level filters present: generate within the month (day-of-month comes from filters)
+        current_base := date_trunc('year', after_ts)
+                        + ((rr.bymonth[i] - 1)::text || ' months')::interval
+                        + (after_ts::time)::interval;
+        RETURN QUERY SELECT r FROM rrule.monthly_set(current_base, rr, max_results) r;
+      END IF;
     END LOOP;
   ELSE
     RETURN NEXT after_ts;
   END IF;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: calls monthly_set which uses cursors; STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1270,7 +1673,7 @@ BEGIN
   END LOOP;
 
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1286,14 +1689,14 @@ CREATE OR REPLACE FUNCTION rrule_yearly_byweekno_set(
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
   year_start TIMESTAMP WITH TIME ZONE;
-  week_num INT;
   week_start TIMESTAMP WITH TIME ZONE;
-  wkst_num INT;
-  first_day_dow INT;
-  days_to_first_wkst INT;
-  first_wkst TIMESTAMP WITH TIME ZONE;
+  week1_start TIMESTAMP WITH TIME ZONE;
+  weeks_in_year INT;
+  week_num INT;
+  normalized_week INT;
   occurrence TIMESTAMP WITH TIME ZONE;
   result_count INT := 0;
+  remaining INT;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -1301,37 +1704,37 @@ BEGIN
   END IF;
 
   year_start := date_trunc('year', after_ts);
-  wkst_num := rrule.weekday_to_number(rule.wkst);
-  first_day_dow := date_part('dow', year_start);
-
-  -- Calculate first WKST of the year (this is the start of week 1)
-  days_to_first_wkst := (wkst_num - first_day_dow + 7) % 7;
-  first_wkst := year_start + (days_to_first_wkst::TEXT || ' days')::INTERVAL;
+  -- ISO week 1 start: week containing Jan 4
+  week1_start := rrule.get_week_start(year_start + INTERVAL '3 days', rule.wkst);
+  weeks_in_year := rrule.weeks_in_year(year_start, rule.wkst);
 
   -- For each specified week number
   FOREACH week_num IN ARRAY rule.byweekno LOOP
-    -- Skip invalid week numbers (must be 1-53)
-    IF week_num < 1 OR week_num > 53 THEN
+    normalized_week := week_num;
+    IF week_num < 0 THEN
+      normalized_week := weeks_in_year + week_num + 1;
+    END IF;
+    -- Skip invalid week numbers (must be 1..weeks_in_year)
+    IF normalized_week < 1 OR normalized_week > weeks_in_year THEN
       CONTINUE;
     END IF;
 
     -- Calculate start of this week
     -- Week 1 starts at first_wkst, week 2 starts 7 days later, etc.
-    week_start := first_wkst + (INTERVAL '1 day' * ((week_num - 1) * 7));
+    week_start := week1_start + (INTERVAL '1 day' * ((normalized_week - 1) * 7));
 
     -- Add time component from 'after' to maintain time-of-day
     week_start := date_trunc('day', week_start) + (after_ts::time)::INTERVAL;
 
-    -- Check if this week is still in the same year
-    IF date_part('year', week_start) != date_part('year', after_ts) THEN
-      -- Week extends into next year, skip it
-      CONTINUE;
-    END IF;
-
     IF rule.byday IS NOT NULL THEN
+      remaining := CASE
+        WHEN max_results IS NULL THEN NULL
+        ELSE GREATEST(max_results - result_count, 0)
+      END;
+      EXIT WHEN max_results IS NOT NULL AND remaining = 0;
       -- Generate all BYDAY occurrences in this week
       FOR occurrence IN
-        SELECT r FROM rrule.rrule_week_byday_set(week_start, rule.byday, rule.wkst, max_results - result_count) r
+        SELECT r FROM rrule.rrule_week_byday_set(week_start, rule.byday, rule.wkst, remaining) r ORDER BY 1
       LOOP
         -- Only return occurrences that are still in the same year
         IF date_part('year', occurrence) = date_part('year', after_ts) THEN
@@ -1343,15 +1746,17 @@ BEGIN
       EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
     ELSE
       -- No BYDAY specified - return the week start date
-      RETURN NEXT week_start;
-      result_count := result_count + 1;
-      EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
+      IF date_part('year', week_start) = date_part('year', after_ts) THEN
+        RETURN NEXT week_start;
+        result_count := result_count + 1;
+        EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
+      END IF;
     END IF;
   END LOOP;
 
   RETURN;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1363,70 +1768,96 @@ CREATE OR REPLACE FUNCTION yearly_set(
   max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  current_base TIMESTAMP WITH TIME ZONE;
   curse REFCURSOR;
+  rr rrule.rrule_parts;
+  year_start TIMESTAMP WITH TIME ZONE;
+  has_yearly_ordinals BOOLEAN := FALSE;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
     RETURN;
   END IF;
 
-  -- Validate: BYMONTH + BYYEARDAY is contradictory and not supported
-  -- Example invalid case: "February (month 2) on day 100 of year" is impossible
-  IF rule.bymonth IS NOT NULL AND rule.byyearday IS NOT NULL THEN
-    RAISE EXCEPTION 'Invalid RRULE: FREQ=YEARLY with both BYMONTH and BYYEARDAY is not supported. BYMONTH specifies a specific month, while BYYEARDAY specifies a day of the year - these constraints are contradictory. Use either BYMONTH or BYYEARDAY, not both. Example valid patterns: FREQ=YEARLY;BYMONTH=2 or FREQ=YEARLY;BYYEARDAY=100';
+  year_start := date_trunc('year', after_ts);
+  rr := rule;
+  rr.bysetpos := NULL;  -- apply BYSETPOS at the end (RFC 5545 order)
+  -- Apply BYWEEKNO/BYYEARDAY at YEARLY level, not per-month
+  rr.byweekno := NULL;
+  rr.byyearday := NULL;
+
+  -- Detect YEARLY BYDAY ordinals without BYMONTH/BYWEEKNO (ordinals apply within the year)
+  IF rule.byday IS NOT NULL AND rule.bymonth IS NULL AND rule.byweekno IS NULL THEN
+    FOR i IN 1..array_length(rule.byday, 1) LOOP
+      EXIT WHEN rule.byday[i] IS NULL;
+      IF rule.byday[i] ~ '^[+-]?[0-9]+' THEN
+        has_yearly_ordinals := TRUE;
+        EXIT;
+      END IF;
+    END LOOP;
   END IF;
 
-  -- Determine which generator to use, with BYWEEKNO as filter or generator
+  -- Build candidate set according to RFC 5545 order, then apply BYSETPOS last.
+  -- BYMONTH and BYYEARDAY are both "Expand" with YEARLY (RFC 5545 §3.3.10 table).
+  -- When both are present, one generates candidates and the other filters (intersection).
+  -- See DECISIONS.md #5.
   IF rule.bymonth IS NOT NULL THEN
-    -- BYMONTH is the primary generator
-    -- BYWEEKNO acts as a filter on the generated dates
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_yearly_bymonth_set(after_ts, rule, max_results) r;
-    FOR current_base IN SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d LOOP
-      current_base := date_trunc('day', current_base) + (after_ts::time)::interval;
-      -- Apply BYWEEKNO filter if specified
-      IF rule.byweekno IS NOT NULL THEN
-        IF NOT rrule.get_week_number(current_base, rule.wkst) = ANY (rule.byweekno) THEN
-          CONTINUE;  -- Skip this date, wrong week number
-        END IF;
-      END IF;
-      RETURN NEXT current_base;
-    END LOOP;
-
-  ELSIF rule.byyearday IS NOT NULL THEN
-    -- BYYEARDAY is the primary generator
-    -- BYWEEKNO acts as a filter on the generated dates
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_yearly_byyearday_set(after_ts, rule, max_results) r ORDER BY 1;
-    IF rule.byweekno IS NOT NULL THEN
-      -- Filter results by week number
-      FOR current_base IN SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d LOOP
-        IF rrule.get_week_number(current_base, rule.wkst) = ANY (rule.byweekno) THEN
-          RETURN NEXT current_base;
-        END IF;
-      END LOOP;
-    ELSE
-      -- No BYWEEKNO filter needed
-      RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
-    END IF;
+    -- BYMONTH primary
+    OPEN curse SCROLL FOR
+      SELECT r
+      FROM rrule.rrule_yearly_bymonth_set(after_ts, rr, max_results) r
+      WHERE (rule.byweekno IS NULL OR rrule.byweekno_matches_for_year(r, year_start, rule.wkst, rule.byweekno))
+        AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
+      ORDER BY 1;
 
   ELSIF rule.byweekno IS NOT NULL THEN
-    -- BYWEEKNO is the primary generator (no BYMONTH or BYYEARDAY)
-    -- Example: FREQ=YEARLY;BYWEEKNO=1,10 = All dates in weeks 1 and 10
-    -- Example: FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO = All Mondays in week 1
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_yearly_byweekno_set(after_ts, rule, max_results) r ORDER BY 1;
-    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    -- BYWEEKNO primary
+    OPEN curse SCROLL FOR
+      SELECT r
+      FROM rrule.rrule_yearly_byweekno_set(after_ts, rule, max_results) r
+      WHERE (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
+        AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
+        AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
+      ORDER BY 1;
+
+  ELSIF rule.byyearday IS NOT NULL THEN
+    -- BYYEARDAY primary (pass rule, not rr, because rr has byyearday nulled out)
+    OPEN curse SCROLL FOR
+      SELECT r
+      FROM rrule.rrule_yearly_byyearday_set(after_ts, rule, max_results) r
+      WHERE (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
+        AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
+        AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
+      ORDER BY 1;
+
+  ELSIF has_yearly_ordinals THEN
+    -- YEARLY BYDAY ordinals (no BYMONTH/BYWEEKNO): ordinals apply across the year
+    OPEN curse SCROLL FOR
+      SELECT r
+      FROM rrule.rrule_year_byday_set(after_ts, rule.byday, max_results) r
+      WHERE (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
+      ORDER BY 1;
+
+  ELSIF rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL THEN
+    -- Month/day filters without BYMONTH: generate across all months
+    OPEN curse SCROLL FOR
+      SELECT r
+      FROM generate_series(1, 12) m
+      CROSS JOIN LATERAL rrule.monthly_set(
+        date_trunc('year', after_ts) + ((m - 1)::text || ' months')::interval + (after_ts::time)::interval,
+        rr,
+        max_results
+      ) r
+      ORDER BY 1;
 
   ELSE
-    -- No BYMONTH, BYYEARDAY, or BYWEEKNO - return anniversary of dtstart
-    -- Example: FREQ=YEARLY with dtstart=2025-03-15 = March 15 every year
-    -- Apply BYDAY filter if specified
-    IF rule.byday IS NOT NULL AND NOT substring(to_char(after_ts, 'DY') for 2 from 1) = ANY (rule.byday) THEN
-      RETURN;
-    END IF;
+    -- No BYMONTH/BYWEEKNO/BYYEARDAY/BYMONTHDAY/BYDAY - return anniversary of dtstart
     RETURN NEXT after_ts;
+    RETURN;
   END IF;
+
+  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;  -- STRICT removed to allow NULL max_results
+$$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1477,82 +1908,146 @@ CREATE OR REPLACE FUNCTION rrule_event_instances_range(
   max_count INT
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  loopmax INT;
-  loopcount INT;
-  base_day TIMESTAMP WITH TIME ZONE;
+  period_limit INT;
+  period_count INT := 0;
+  occurrence_count INT := 0;
+  emitted_count INT := 0;
+  output_limit INT;
+  original_day INT;
   current_base TIMESTAMP WITH TIME ZONE;
   current TIMESTAMP WITH TIME ZONE;
+  period_start TIMESTAMP WITH TIME ZONE;
+  min_in_period TIMESTAMP WITH TIME ZONE;
   rule rrule.rrule_parts%ROWTYPE;
 BEGIN
-  loopcount := 0;
-
   SELECT * INTO rule FROM rrule.parse_rrule_parts(basedate, repeatrule);
 
-  -- Security: Calculate safe iteration limit accounting for sparse BYxxx filters
+  -- Output cap: respect both API limit and RRULE COUNT
+  output_limit := max_count;
+  IF rule.count IS NOT NULL THEN
+    output_limit := COALESCE(output_limit, rule.count);
+    output_limit := LEAST(output_limit, rule.count);
+  END IF;
+
+  -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
   -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
   -- See calculate_safe_iteration_limit() for detailed security rationale.
-  loopmax := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, max_count);
+  period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit);
+  IF period_limit IS NULL THEN
+    period_limit := 2147483647;  -- effectively unlimited
+  END IF;
 
   current_base := basedate;
-  base_day := date_trunc('day', basedate);
-  WHILE loopcount < loopmax AND current_base < maxdate LOOP
+  WHILE period_count < period_limit AND current_base < maxdate LOOP
     IF rule.freq = 'DAILY' THEN
+      period_start := date_trunc('day', current_base) + (current_base::time)::interval;
+      min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT d FROM rrule.daily_set(current_base, rule,
                                                      CASE WHEN rule.bysetpos IS NULL
-                                                          THEN loopmax - loopcount
-                                                          ELSE NULL END) d WHERE d >= base_day LOOP
+                                                          THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
+                                                          ELSE NULL END) d WHERE d >= min_in_period LOOP
           EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+          EXIT WHEN current > maxdate;
+          occurrence_count := occurrence_count + 1;
+          EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
           IF current >= mindate THEN
             RETURN NEXT current;
+            emitted_count := emitted_count + 1;
+            EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
           END IF;
-          loopcount := loopcount + 1;
-          EXIT WHEN loopcount >= loopmax;
       END LOOP;
       current_base := current_base + make_interval(days => rule.interval);
     ELSIF rule.freq = 'WEEKLY' THEN
+      period_start := rrule.get_week_start(current_base, rule.wkst) + (current_base::time)::interval;
+      min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT w FROM rrule.weekly_set(current_base, rule,
                                                       CASE WHEN rule.bysetpos IS NULL
-                                                           THEN loopmax - loopcount
-                                                           ELSE NULL END) w WHERE w >= base_day LOOP
+                                                           THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
+                                                           ELSE NULL END) w WHERE w >= min_in_period LOOP
         IF rrule.test_byyearday_rule(current, rule.byyearday)
                AND rrule.test_bymonthday_rule(current, rule.bymonthday)
                AND rrule.test_bymonth_rule(current, rule.bymonth)
         THEN
           EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+          EXIT WHEN current > maxdate;
+          occurrence_count := occurrence_count + 1;
+          EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
           IF current >= mindate THEN
             RETURN NEXT current;
+            emitted_count := emitted_count + 1;
+            EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
           END IF;
-          loopcount := loopcount + 1;
-          EXIT WHEN loopcount >= loopmax;
         END IF;
       END LOOP;
       current_base := current_base + make_interval(weeks => rule.interval);
     ELSIF rule.freq = 'MONTHLY' THEN
+      period_start := date_trunc('month', current_base) + (current_base::time)::interval;
+      min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT m FROM rrule.monthly_set(current_base, rule,
                                                        CASE WHEN rule.bysetpos IS NULL
-                                                            THEN loopmax - loopcount
-                                                            ELSE NULL END) m WHERE m >= base_day LOOP
+                                                            THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
+                                                            ELSE NULL END) m WHERE m >= min_in_period LOOP
           EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+          EXIT WHEN current > maxdate;
+          occurrence_count := occurrence_count + 1;
+          EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
           IF current >= mindate THEN
             RETURN NEXT current;
+            emitted_count := emitted_count + 1;
+            EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
           END IF;
-          loopcount := loopcount + 1;
-          EXIT WHEN loopcount >= loopmax;
       END LOOP;
+      original_day := date_part('day', current_base)::INT;
       current_base := current_base + make_interval(months => rule.interval);
+      -- Handle implicit SKIP for month advancement without explicit BYMONTHDAY/BYDAY
+      -- PostgreSQL coerces invalid dates (e.g., Jan 31 + 1 month = Feb 28), which is BACKWARD behavior.
+      -- When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
+      IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+        IF date_part('day', current_base)::INT != original_day THEN
+          IF rule.skip = 'OMIT' THEN
+            -- Skip this month — the implicit day doesn't exist
+            CONTINUE;
+          ELSIF rule.skip = 'FORWARD' THEN
+            -- Move to 1st of next month
+            current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+          END IF;
+          -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
+        END IF;
+      END IF;
     ELSIF rule.freq = 'YEARLY' THEN
+      period_start := date_trunc('year', current_base) + (current_base::time)::interval;
+      min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule,
                                                       CASE WHEN rule.bysetpos IS NULL
-                                                           THEN loopmax - loopcount
-                                                           ELSE NULL END) y WHERE y >= base_day LOOP
+                                                           THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
+                                                           ELSE NULL END) y WHERE y >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
+        occurrence_count := occurrence_count + 1;
+        EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
           RETURN NEXT current;
+          emitted_count := emitted_count + 1;
+          EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         END IF;
-        loopcount := loopcount + 1;
-        EXIT WHEN loopcount >= loopmax;
       END LOOP;
+      original_day := date_part('day', current_base)::INT;
       current_base := current_base + make_interval(years => rule.interval);
+      -- Handle implicit SKIP for year advancement without explicit BYMONTHDAY/BYDAY
+      -- PostgreSQL coerces invalid dates (e.g., Feb 29 + 1 year = Feb 28 in non-leap year),
+      -- which is BACKWARD behavior. When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
+      IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+        IF date_part('day', current_base)::INT != original_day THEN
+          IF rule.skip = 'OMIT' THEN
+            -- Skip this year — the implicit day doesn't exist
+            CONTINUE;
+          ELSIF rule.skip = 'FORWARD' THEN
+            -- Move to 1st of next month
+            current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+          END IF;
+          -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
+        END IF;
+      END IF;
 
     -- ⚠️ SUB-DAY FREQUENCIES NOT AVAILABLE IN STANDARD INSTALLATION
     --
@@ -1576,16 +2071,33 @@ BEGIN
         RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY. For sub-day frequencies, see INCLUDING_SUBDAY_OPERATIONS.md', rule.freq;
       END IF;
     END IF;
+    period_count := period_count + 1;
+    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+    EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
     EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
   END LOOP;
+
+  -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
+  IF output_limit IS NOT NULL AND emitted_count >= output_limit THEN
+    IF (rule.count IS NULL OR occurrence_count < rule.count)
+       AND (rule.until IS NULL) THEN
+      RAISE WARNING 'rrule: result set truncated at % occurrences (limit: %). The recurrence rule has no COUNT or UNTIL and may produce more results beyond this limit.', emitted_count, output_limit;
+    END IF;
+  END IF;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE STRICT;
+$$ LANGUAGE plpgsql VOLATILE STRICT SET timezone = 'UTC';
 
 
 ------------------------------------------------------------------------------------------------------
--- PUBLIC API FUNCTIONS
+-- PUBLIC API FUNCTIONS (TIMESTAMP API)
 --
--- The following functions provide a standard API compatible with rrule.js and python-dateutil
+-- The following functions provide a standard API compatible with rrule.js and python-dateutil.
+--
+-- inc parameter (DECISIONS.md #3): between/after/before accept inc BOOLEAN DEFAULT FALSE.
+-- When TRUE, boundary dates are included. Default FALSE matches rrule.js and python-dateutil.
+--
+-- All functions use SET timezone = 'UTC' (DECISIONS.md #1) for deterministic expansion.
+-- The SET clause restores the caller's timezone on function exit — no session side effects.
 ------------------------------------------------------------------------------------------------------
 
 -- Create 'rrule' type as a domain over VARCHAR
@@ -1600,7 +2112,7 @@ END $$;
 
 
 ------------------------------------------------------------------------------------------------------
--- CORE API: rrule.all()
+-- CORE API: rrule."all"()
 --
 -- Returns all occurrences matching the RRULE (streaming via SETOF)
 -- Matches: rrule.js .all() and python-dateutil iteration
@@ -1665,7 +2177,7 @@ BEGIN
             max_count
         ) d;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1678,7 +2190,8 @@ CREATE OR REPLACE FUNCTION "between"(
     rrule_string VARCHAR,
     dtstart TIMESTAMP,
     start_date TIMESTAMP,
-    end_date TIMESTAMP
+    end_date TIMESTAMP,
+    inc BOOLEAN DEFAULT FALSE
 )
 RETURNS SETOF TIMESTAMP AS $$
 DECLARE
@@ -1702,17 +2215,22 @@ BEGIN
     end_utc := end_date AT TIME ZONE 'UTC';
 
     -- Generate occurrences in UTC space (naive timestamps treated as UTC)
+    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
     RETURN QUERY
         SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP
         FROM rrule.rrule_event_instances_range(
             dtstart_utc,
             rrule_string,
             start_utc,
-            end_utc,
+            end_utc + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
             max_count
-        ) d;
+        ) d
+        WHERE CASE
+            WHEN inc THEN d >= start_utc AND d <= end_utc
+            ELSE d > start_utc AND d < end_utc
+        END;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1724,7 +2242,8 @@ $$ LANGUAGE plpgsql STABLE;
 CREATE OR REPLACE FUNCTION "after"(
     rrule_string VARCHAR,
     dtstart TIMESTAMP,
-    after_date TIMESTAMP
+    after_date TIMESTAMP,
+    inc BOOLEAN DEFAULT FALSE
 )
 RETURNS TIMESTAMP AS $$
 DECLARE
@@ -1733,14 +2252,17 @@ BEGIN
     -- Get next occurrence using all() and filter
     -- TZID handling is done automatically by all()
     SELECT occurrence INTO next_occurrence
-    FROM rrule.all(rrule_string, dtstart) AS occurrence
-    WHERE occurrence > after_date
+    FROM rrule."all"(rrule_string, dtstart) AS occurrence
+    WHERE CASE
+        WHEN inc THEN occurrence >= after_date
+        ELSE occurrence > after_date
+    END
     ORDER BY occurrence ASC
     LIMIT 1;
 
     RETURN next_occurrence;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1752,7 +2274,8 @@ $$ LANGUAGE plpgsql STABLE;
 CREATE OR REPLACE FUNCTION "before"(
     rrule_string VARCHAR,
     dtstart TIMESTAMP,
-    before_date TIMESTAMP
+    before_date TIMESTAMP,
+    inc BOOLEAN DEFAULT FALSE
 )
 RETURNS TIMESTAMP AS $$
 DECLARE
@@ -1761,18 +2284,21 @@ BEGIN
     -- Get previous occurrence using all() and filter
     -- TZID handling is done automatically by all()
     SELECT occurrence INTO previous_occurrence
-    FROM rrule.all(rrule_string, dtstart) AS occurrence
-    WHERE occurrence < before_date
+    FROM rrule."all"(rrule_string, dtstart) AS occurrence
+    WHERE CASE
+        WHEN inc THEN occurrence <= before_date
+        ELSE occurrence < before_date
+    END
     ORDER BY occurrence DESC
     LIMIT 1;
 
     RETURN previous_occurrence;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 ------------------------------------------------------------------------------------------------------
--- CORE API: rrule.count()
+-- CORE API: rrule."count"()
 --
 -- Returns the total number of occurrences
 -- Matches: python-dateutil .count()
@@ -1786,49 +2312,51 @@ DECLARE
     occurrence_count INTEGER;
 BEGIN
     SELECT COUNT(*)::INTEGER INTO occurrence_count
-    FROM rrule.all(rrule_string, dtstart);
+    FROM rrule."all"(rrule_string, dtstart);
 
     RETURN occurrence_count;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE;
 
 
 ------------------------------------------------------------------------------------------------------
 -- CONVENIENCE: rrule.next()
 --
--- Get the next occurrence from NOW (current timestamp)
+-- Get the next occurrence from NOW (current timestamp) or a given reference time
 -- Common use case: "When does this event occur next?"
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION "next"(
     rrule_string VARCHAR,
-    dtstart TIMESTAMP
+    dtstart TIMESTAMP,
+    reference_time TIMESTAMP DEFAULT NULL
 )
 RETURNS TIMESTAMP AS $$
 BEGIN
-    RETURN rrule."after"(rrule_string, dtstart, NOW()::TIMESTAMP);
+    RETURN rrule."after"(rrule_string, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP));
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE;
 
 
 ------------------------------------------------------------------------------------------------------
 -- CONVENIENCE: rrule.most_recent()
 --
--- Get the most recent occurrence before NOW (current timestamp)
+-- Get the most recent occurrence before NOW (current timestamp) or a given reference time
 -- Common use case: "When did this event last occur?"
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION "most_recent"(
     rrule_string VARCHAR,
-    dtstart TIMESTAMP
+    dtstart TIMESTAMP,
+    reference_time TIMESTAMP DEFAULT NULL
 )
 RETURNS TIMESTAMP AS $$
 BEGIN
-    RETURN rrule."before"(rrule_string, dtstart, NOW()::TIMESTAMP);
+    RETURN rrule."before"(rrule_string, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP));
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE;
 
 
 ------------------------------------------------------------------------------------------------------
--- ADVANCED: rrule.overlaps()
+-- ADVANCED: rrule."overlaps"()
 --
 -- Check if a recurring event has ANY occurrences overlapping a date range
 -- Useful for calendar queries: "Does this meeting conflict with this date range?"
@@ -1845,41 +2373,40 @@ CREATE OR REPLACE FUNCTION "overlaps"(
 RETURNS BOOLEAN AS $$
 DECLARE
     base_date TIMESTAMP WITH TIME ZONE;
+    duration INTERVAL;
+    adjusted_mindate TIMESTAMP WITH TIME ZONE;
+    adjusted_maxdate TIMESTAMP WITH TIME ZONE;
 BEGIN
     IF dtstart IS NULL THEN
         RETURN NULL;
     END IF;
 
-    IF dtend IS NULL THEN
-        base_date := dtstart;
-    ELSE
-        base_date := dtend;
-    END IF;
+    base_date := dtstart;
+    duration := COALESCE(dtend, dtstart) - dtstart;
 
-    -- Adjust maxdate to account for event duration
-    IF maxdate IS NOT NULL THEN
-        maxdate := maxdate + (base_date - dtstart);
-    ELSE
-        maxdate := current_date + '10 years'::interval;
-    END IF;
+    adjusted_maxdate := COALESCE(maxdate, current_date + '10 years'::interval);
+    adjusted_mindate := COALESCE(mindate, current_date - '10 years'::interval);
 
-    IF mindate IS NULL THEN
-        mindate := current_date - '10 years'::interval;
+    -- Expand search window to account for event duration
+    IF duration > INTERVAL '0' THEN
+        adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
     IF rrule_string IS NULL THEN
-        RETURN (dtstart < maxdate AND base_date >= mindate);
+        RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
     END IF;
 
     -- Check if there's at least one occurrence in the range
+    -- max_count=1000 provides sufficient iteration budget for sparse rules (e.g., FREQ=DAILY;INTERVAL=100;BYMONTHDAY=31).
+    -- LIMIT 1 stops at the first match, so memory usage is bounded regardless of max_count.
     PERFORM d
-    FROM rrule.rrule_event_instances_range(base_date, rrule_string, mindate, maxdate, 60) d
+    FROM rrule.rrule_event_instances_range(base_date, rrule_string, adjusted_mindate, adjusted_maxdate, 1000) d
     LIMIT 1;
 
     RETURN FOUND;
 
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 -- ================================================================================================================
 -- TIMEZONE-AWARE RRULE API
@@ -1930,49 +2457,76 @@ CREATE OR REPLACE FUNCTION rrule.rrule_event_instances_range_tz(
 ) RETURNS SETOF TIMESTAMP AS $$
 #variable_conflict use_variable
 DECLARE
-    loopmax INT;
-    loopcount INT;
-    base_day TIMESTAMP;
+    period_limit INT;
+    period_count INT := 0;
+    occurrence_count INT := 0;
+    emitted_count INT := 0;
+    output_limit INT;
+    original_day INT;
     current_base TIMESTAMP;
     current TIMESTAMP;
+    period_start TIMESTAMP;
+    min_in_period TIMESTAMP;
     rrule rrule.rrule_parts%ROWTYPE;
 BEGIN
-    loopcount := 0;
-
     -- Parse the RRULE (note: basedate is converted to TIMESTAMPTZ for parsing, but only for date extraction)
     SELECT * INTO rrule FROM rrule.parse_rrule_parts( basedate::TIMESTAMPTZ, repeatrule );
 
-    -- Security: Calculate safe iteration limit accounting for sparse BYxxx filters
+    -- Output cap: respect both API limit and RRULE COUNT
+    output_limit := max_count;
+    IF rrule.count IS NOT NULL THEN
+        output_limit := COALESCE(output_limit, rrule.count);
+        output_limit := LEAST(output_limit, rrule.count);
+    END IF;
+
+    -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
     -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
     -- See calculate_safe_iteration_limit() for detailed security rationale.
-    loopmax := rrule.calculate_safe_iteration_limit(rrule.freq, rrule.count, max_count);
+    period_limit := rrule.calculate_safe_iteration_limit(rrule.freq, rrule.count, output_limit);
+    IF period_limit IS NULL THEN
+        period_limit := 2147483647;  -- effectively unlimited
+    END IF;
 
     current_base := basedate;
-    base_day := date_trunc('day', basedate);
 
-    WHILE loopcount < loopmax AND current_base < maxdate LOOP
+    WHILE period_count < period_limit AND current_base < maxdate LOOP
         IF rrule.freq = 'DAILY' THEN
             -- Call the existing daily_set but convert to/from TIMESTAMPTZ for compatibility
+            period_start := date_trunc('day', current_base) + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN
                 SELECT d::TIMESTAMP
-                FROM rrule.daily_set(current_base::TIMESTAMPTZ, rrule) d
-                WHERE d::TIMESTAMP >= base_day
+                FROM rrule.daily_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) d
+                WHERE d::TIMESTAMP >= min_in_period
             LOOP
                 EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
                 IF current >= mindate THEN
                     RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                 END IF;
-                loopcount := loopcount + 1;
-                EXIT WHEN loopcount >= loopmax;
             END LOOP;
             -- KEY FIX: Adding interval to naive TIMESTAMP preserves wall-clock time
             current_base := current_base + make_interval(days => rrule.interval);
 
         ELSIF rrule.freq = 'WEEKLY' THEN
+            period_start := rrule.get_week_start(current_base::TIMESTAMPTZ, rrule.wkst)::TIMESTAMP + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN
                 SELECT w::TIMESTAMP
-                FROM rrule.weekly_set(current_base::TIMESTAMPTZ, rrule) w
-                WHERE w::TIMESTAMP >= base_day
+                FROM rrule.weekly_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) w
+                WHERE w::TIMESTAMP >= min_in_period
             LOOP
                 -- Apply filters
                 IF rrule.test_byyearday_rule(current::TIMESTAMPTZ, rrule.byyearday)
@@ -1980,51 +2534,124 @@ BEGIN
                    AND rrule.test_bymonth_rule(current::TIMESTAMPTZ, rrule.bymonth)
                 THEN
                     EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                    EXIT WHEN current > maxdate;
+                    occurrence_count := occurrence_count + 1;
+                    EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
                     IF current >= mindate THEN
                         RETURN NEXT current;
+                        emitted_count := emitted_count + 1;
+                        EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                     END IF;
-                    loopcount := loopcount + 1;
-                    EXIT WHEN loopcount >= loopmax;
                 END IF;
             END LOOP;
             current_base := current_base + make_interval(weeks => rrule.interval);
 
         ELSIF rrule.freq = 'MONTHLY' THEN
+            period_start := date_trunc('month', current_base) + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN
                 SELECT m::TIMESTAMP
-                FROM rrule.monthly_set(current_base::TIMESTAMPTZ, rrule) m
-                WHERE m::TIMESTAMP >= base_day
+                FROM rrule.monthly_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) m
+                WHERE m::TIMESTAMP >= min_in_period
             LOOP
                 EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
                 IF current >= mindate THEN
                     RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                 END IF;
-                loopcount := loopcount + 1;
-                EXIT WHEN loopcount >= loopmax;
             END LOOP;
+            original_day := date_part('day', current_base)::INT;
             current_base := current_base + make_interval(months => rrule.interval);
+            -- Handle implicit SKIP for month advancement without explicit BYMONTHDAY/BYDAY
+            -- PostgreSQL coerces invalid dates (e.g., Jan 31 + 1 month = Feb 28), which is BACKWARD behavior.
+            -- When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
+            IF rrule.bymonthday IS NULL AND rrule.byday IS NULL THEN
+              IF date_part('day', current_base)::INT != original_day THEN
+                IF rrule.skip = 'OMIT' THEN
+                  -- Skip this month — the implicit day doesn't exist
+                  CONTINUE;
+                ELSIF rrule.skip = 'FORWARD' THEN
+                  -- Move to 1st of next month
+                  current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+                END IF;
+                -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
+              END IF;
+            END IF;
 
         ELSIF rrule.freq = 'YEARLY' THEN
+            period_start := date_trunc('year', current_base) + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN
                 SELECT y::TIMESTAMP
-                FROM rrule.yearly_set(current_base::TIMESTAMPTZ, rrule) y
-                WHERE y::TIMESTAMP >= base_day
+                FROM rrule.yearly_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) y
+                WHERE y::TIMESTAMP >= min_in_period
             LOOP
                 EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
                 IF current >= mindate THEN
                     RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                 END IF;
-                loopcount := loopcount + 1;
-                EXIT WHEN loopcount >= loopmax;
             END LOOP;
+            original_day := date_part('day', current_base)::INT;
             current_base := current_base + make_interval(years => rrule.interval);
+            -- Handle implicit SKIP for year advancement without explicit BYMONTHDAY/BYDAY
+            -- PostgreSQL coerces invalid dates (e.g., Feb 29 + 1 year = Feb 28 in non-leap year),
+            -- which is BACKWARD behavior. When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
+            IF rrule.bymonthday IS NULL AND rrule.byday IS NULL THEN
+              IF date_part('day', current_base)::INT != original_day THEN
+                IF rrule.skip = 'OMIT' THEN
+                  -- Skip this year — the implicit day doesn't exist
+                  CONTINUE;
+                ELSIF rrule.skip = 'FORWARD' THEN
+                  -- Move to 1st of next month
+                  current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+                END IF;
+                -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
+              END IF;
+            END IF;
 
         ELSE
             RAISE EXCEPTION 'Unsupported frequency: %', rrule.freq;
         END IF;
+        period_count := period_count + 1;
+        EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+        EXIT WHEN rrule.count IS NOT NULL AND occurrence_count >= rrule.count;
     END LOOP;
+
+    -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
+    IF output_limit IS NOT NULL AND emitted_count >= output_limit THEN
+      IF (rrule.count IS NULL OR occurrence_count < rrule.count)
+         AND (rrule.until IS NULL) THEN
+        RAISE WARNING 'rrule: result set truncated at % occurrences (limit: %). The recurrence rule has no COUNT or UNTIL and may produce more results beyond this limit.', emitted_count, output_limit;
+      END IF;
+    END IF;
 END;
-$$ LANGUAGE plpgsql STABLE SET search_path = rrule, pg_catalog;
+$$ LANGUAGE plpgsql VOLATILE SET search_path = rrule, pg_catalog;
+
+
+-- ================================================================================================================
+-- PUBLIC API: TIMESTAMPTZ API
+--
+-- These functions use set_config('TimeZone', ..., true) to expand in the target timezone.
+-- The function-level SET timezone = 'UTC' clause sandboxes this — caller's session is unaffected.
+-- See DECISIONS.md #1.
+-- ================================================================================================================
 
 
 -- ================================================================================================================
@@ -2073,6 +2700,9 @@ BEGIN
     -- Validate timezone (using centralized validation helper)
     PERFORM rrule.validate_timezone(tz_name);
 
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
+
     -- Convert TIMESTAMPTZ to wall-clock time in target timezone
     wall_clock_start := dtstart AT TIME ZONE tz_name;
 
@@ -2093,7 +2723,7 @@ BEGIN
         RETURN NEXT (naive_occurrence AT TIME ZONE tz_name);
     END LOOP;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
@@ -2105,7 +2735,8 @@ CREATE OR REPLACE FUNCTION rrule."between"(
     dtstart TIMESTAMPTZ,
     range_start TIMESTAMPTZ,
     range_end TIMESTAMPTZ,
-    timezone TEXT DEFAULT NULL
+    timezone TEXT DEFAULT NULL,
+    inc BOOLEAN DEFAULT FALSE
 ) RETURNS SETOF TIMESTAMPTZ AS $$
 DECLARE
     tz_name TEXT;
@@ -2124,25 +2755,39 @@ BEGIN
     -- Validate timezone (using centralized validation helper)
     PERFORM rrule.validate_timezone(tz_name);
 
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
+
     -- Convert all timestamps to wall-clock time in target timezone
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_range_start := range_start AT TIME ZONE tz_name;
     wall_clock_range_end := range_end AT TIME ZONE tz_name;
 
     -- Generate occurrences
+    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
+    -- (the range function uses current_base < maxdate, which would otherwise exclude it)
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
             wall_clock_start,
             rrule_string,
             wall_clock_range_start,
-            wall_clock_range_end,
+            wall_clock_range_end + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
             1000
         )
     LOOP
+        IF inc THEN
+            IF naive_occurrence < wall_clock_range_start OR naive_occurrence > wall_clock_range_end THEN
+                CONTINUE;
+            END IF;
+        ELSE
+            IF naive_occurrence <= wall_clock_range_start OR naive_occurrence >= wall_clock_range_end THEN
+                CONTINUE;
+            END IF;
+        END IF;
         RETURN NEXT (naive_occurrence AT TIME ZONE tz_name);
     END LOOP;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
@@ -2154,7 +2799,8 @@ CREATE OR REPLACE FUNCTION rrule."after"(
     dtstart TIMESTAMPTZ,
     after_date TIMESTAMPTZ,
     count INT,
-    timezone TEXT DEFAULT NULL
+    timezone TEXT DEFAULT NULL,
+    inc BOOLEAN DEFAULT FALSE
 ) RETURNS SETOF TIMESTAMPTZ AS $$
 DECLARE
     tz_name TEXT;
@@ -2174,6 +2820,14 @@ BEGIN
     -- Validate timezone (using centralized validation helper)
     PERFORM rrule.validate_timezone(tz_name);
 
+    -- Validate count
+    IF count IS NOT NULL AND count <= 0 THEN
+      RETURN;
+    END IF;
+
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
+
     -- Convert to wall-clock time
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_after := after_date AT TIME ZONE tz_name;
@@ -2189,12 +2843,21 @@ BEGIN
             1000
         )
     LOOP
+        IF inc THEN
+            IF naive_occurrence < wall_clock_after THEN
+                CONTINUE;
+            END IF;
+        ELSE
+            IF naive_occurrence <= wall_clock_after THEN
+                CONTINUE;
+            END IF;
+        END IF;
         RETURN NEXT (naive_occurrence AT TIME ZONE tz_name);
         occurrence_count := occurrence_count + 1;
         EXIT WHEN occurrence_count >= count;
     END LOOP;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
@@ -2206,7 +2869,8 @@ CREATE OR REPLACE FUNCTION rrule."before"(
     dtstart TIMESTAMPTZ,
     before_date TIMESTAMPTZ,
     count INT,
-    timezone TEXT DEFAULT NULL
+    timezone TEXT DEFAULT NULL,
+    inc BOOLEAN DEFAULT FALSE
 ) RETURNS SETOF TIMESTAMPTZ AS $$
 DECLARE
     tz_name TEXT;
@@ -2225,21 +2889,39 @@ BEGIN
     -- Validate timezone (using centralized validation helper)
     PERFORM rrule.validate_timezone(tz_name);
 
+    -- Validate count
+    IF count IS NOT NULL AND count <= 0 THEN
+      RETURN;
+    END IF;
+
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
+
     -- Convert to wall-clock time
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_before := before_date AT TIME ZONE tz_name;
 
     -- Generate all occurrences up to before_date and collect them
+    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
     results := ARRAY[]::TIMESTAMPTZ[];
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
             wall_clock_start,
             rrule_string,
             wall_clock_start,
-            wall_clock_before,
+            wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
             1000
         )
     LOOP
+        IF inc THEN
+            IF naive_occurrence > wall_clock_before THEN
+                CONTINUE;
+            END IF;
+        ELSE
+            IF naive_occurrence >= wall_clock_before THEN
+                CONTINUE;
+            END IF;
+        END IF;
         results := array_append(results, naive_occurrence AT TIME ZONE tz_name);
     END LOOP;
 
@@ -2250,7 +2932,7 @@ BEGIN
         END LOOP;
     END IF;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
@@ -2271,21 +2953,21 @@ BEGIN
 
     RETURN occurrence_count;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
--- PUBLIC API: next() - Get next occurrence from NOW (TIMESTAMPTZ version with timezone support)
+-- PUBLIC API: next() - Get next occurrence from NOW or reference_time (TIMESTAMPTZ version with timezone support)
 -- ================================================================================================================
 
 CREATE OR REPLACE FUNCTION rrule.next(
     rrule_string TEXT,
     dtstart TIMESTAMPTZ,
-    timezone TEXT DEFAULT NULL
+    timezone TEXT DEFAULT NULL,
+    reference_time TIMESTAMPTZ DEFAULT NULL
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     tz_name TEXT;
-    now_in_tz TIMESTAMPTZ;
 BEGIN
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
@@ -2294,30 +2976,33 @@ BEGIN
         'UTC'
     );
 
-    -- Get current time in the target timezone
-    now_in_tz := NOW() AT TIME ZONE tz_name;
+    -- Validate timezone (using centralized validation helper)
+    PERFORM rrule.validate_timezone(tz_name);
+
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
 
     -- Use after() to find the next occurrence
     RETURN (
-        SELECT * FROM rrule."after"(rrule_string, dtstart, now_in_tz, 1, timezone)
+        SELECT * FROM rrule."after"(rrule_string, dtstart, COALESCE(reference_time, NOW()), 1, timezone)
         LIMIT 1
     );
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
--- PUBLIC API: most_recent() - Get most recent occurrence before NOW (TIMESTAMPTZ version with timezone support)
+-- PUBLIC API: most_recent() - Get most recent occurrence before NOW or reference_time (TIMESTAMPTZ version with timezone support)
 -- ================================================================================================================
 
 CREATE OR REPLACE FUNCTION rrule.most_recent(
     rrule_string TEXT,
     dtstart TIMESTAMPTZ,
-    timezone TEXT DEFAULT NULL
+    timezone TEXT DEFAULT NULL,
+    reference_time TIMESTAMPTZ DEFAULT NULL
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     tz_name TEXT;
-    now_in_tz TIMESTAMPTZ;
 BEGIN
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
@@ -2326,16 +3011,19 @@ BEGIN
         'UTC'
     );
 
-    -- Get current time in the target timezone
-    now_in_tz := NOW() AT TIME ZONE tz_name;
+    -- Validate timezone (using centralized validation helper)
+    PERFORM rrule.validate_timezone(tz_name);
+
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
 
     -- Use before() to find the most recent occurrence
     RETURN (
-        SELECT * FROM rrule."before"(rrule_string, dtstart, now_in_tz, 1, timezone)
+        SELECT * FROM rrule."before"(rrule_string, dtstart, COALESCE(reference_time, NOW()), 1, timezone)
         LIMIT 1
     );
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 
 -- ================================================================================================================
@@ -2353,6 +3041,7 @@ CREATE OR REPLACE FUNCTION rrule.overlaps(
 DECLARE
     tz_name TEXT;
     base_date TIMESTAMPTZ;
+    duration INTERVAL;
     adjusted_maxdate TIMESTAMPTZ;
     adjusted_mindate TIMESTAMPTZ;
 BEGIN
@@ -2371,24 +3060,24 @@ BEGIN
     -- Validate timezone (using centralized validation helper)
     PERFORM rrule.validate_timezone(tz_name);
 
+    -- Ensure deterministic wall-clock calculations in target timezone
+    PERFORM set_config('TimeZone', tz_name, true);
+
     -- Determine base date (end time if available, otherwise start time)
-    IF dtend IS NULL THEN
-        base_date := dtstart;
-    ELSE
-        base_date := dtend;
-    END IF;
+    base_date := dtstart;
+    duration := COALESCE(dtend, dtstart) - dtstart;
 
     -- Adjust date range to account for event duration
     adjusted_mindate := COALESCE(mindate, CURRENT_TIMESTAMP - INTERVAL '10 years');
     adjusted_maxdate := COALESCE(maxdate, CURRENT_TIMESTAMP + INTERVAL '10 years');
 
-    IF dtend IS NOT NULL THEN
-        adjusted_maxdate := adjusted_maxdate + (base_date - dtstart);
+    IF duration > INTERVAL '0' THEN
+        adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
     -- If no RRULE, check single event overlap
     IF rrule_string IS NULL THEN
-        RETURN (dtstart < adjusted_maxdate AND base_date >= adjusted_mindate);
+        RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
     END IF;
 
     -- Check if there's at least one occurrence in the range
@@ -2398,4 +3087,4 @@ BEGIN
 
     RETURN FOUND;
 END;
-$$ LANGUAGE plpgsql STABLE;
+$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
