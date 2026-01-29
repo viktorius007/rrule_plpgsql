@@ -67,55 +67,83 @@ SET timezone = 'UTC';
 
 DO $$
 DECLARE
+    rrule_nsp OID;
     dep_list TEXT;
     error_msg TEXT;
 BEGIN
-    EXECUTE 'DROP SCHEMA IF EXISTS rrule';
-EXCEPTION
-    WHEN dependent_objects_still_exist THEN
-        SELECT string_agg('  - ' || n.nspname || '.' || c.relname || ' (' ||
-               CASE c.relkind
-                   WHEN 'v' THEN 'view'
-                   WHEN 'r' THEN 'table'
-                   WHEN 'm' THEN 'materialized view'
-                   ELSE 'object'
-               END || ')', E'\n')
+    rrule_nsp := to_regnamespace('rrule');
+    IF rrule_nsp IS NOT NULL THEN
+        WITH rrule_objects AS (
+            SELECT oid FROM pg_proc WHERE pronamespace = rrule_nsp
+            UNION ALL
+            SELECT oid FROM pg_type WHERE typnamespace = rrule_nsp
+            UNION ALL
+            SELECT oid FROM pg_class WHERE relnamespace = rrule_nsp
+        ),
+        deps AS (
+            SELECT DISTINCT
+                CASE d.classid
+                    WHEN 'pg_proc'::regclass THEN format('%I.%I (%s)', pn.nspname, p.proname, 'function')
+                    WHEN 'pg_class'::regclass THEN format('%I.%I (%s)', cn.nspname, c.relname,
+                        CASE c.relkind
+                            WHEN 'v' THEN 'view'
+                            WHEN 'm' THEN 'materialized view'
+                            WHEN 'r' THEN 'table'
+                            WHEN 'S' THEN 'sequence'
+                            ELSE 'relation'
+                        END)
+                    WHEN 'pg_type'::regclass THEN format('%I.%I (%s)', tn.nspname, t.typname, 'type')
+                    ELSE pg_describe_object(d.classid, d.objid, d.objsubid)
+                END AS dep_desc
+            FROM pg_depend d
+            JOIN rrule_objects ro ON d.refobjid = ro.oid
+            LEFT JOIN pg_proc p ON d.classid = 'pg_proc'::regclass AND d.objid = p.oid
+            LEFT JOIN pg_namespace pn ON p.pronamespace = pn.oid
+            LEFT JOIN pg_class c ON d.classid = 'pg_class'::regclass AND d.objid = c.oid
+            LEFT JOIN pg_namespace cn ON c.relnamespace = cn.oid
+            LEFT JOIN pg_type t ON d.classid = 'pg_type'::regclass AND d.objid = t.oid
+            LEFT JOIN pg_namespace tn ON t.typnamespace = tn.oid
+            WHERE d.deptype IN ('n', 'a', 'i')
+              AND d.objid NOT IN (SELECT oid FROM rrule_objects)
+              AND (pn.nspname IS NULL OR pn.nspname <> 'rrule')
+              AND (cn.nspname IS NULL OR cn.nspname <> 'rrule')
+              AND (tn.nspname IS NULL OR tn.nspname <> 'rrule')
+        )
+        SELECT string_agg('  - ' || dep_desc, E'\n' ORDER BY dep_desc)
         INTO dep_list
-        FROM pg_class c
-        JOIN pg_namespace n ON c.relnamespace = n.oid
-        JOIN pg_depend d ON d.refobjid = c.oid
-        JOIN pg_proc p ON d.objid = p.oid
-        JOIN pg_namespace pn ON p.pronamespace = pn.oid
-        WHERE pn.nspname = 'rrule'
-          AND c.relkind IN ('v', 'r', 'm')
-          AND n.nspname != 'rrule';
+        FROM deps;
 
-        error_msg := E'\n\n' ||
-            '╔════════════════════════════════════════════════════════════════════════════╗' || E'\n' ||
-            '║ ERROR: Cannot drop rrule schema - dependent objects exist                 ║' || E'\n' ||
-            '╠════════════════════════════════════════════════════════════════════════════╣' || E'\n' ||
-            '║                                                                            ║' || E'\n' ||
-            '║ The following objects depend on the rrule schema:                         ║' || E'\n' ||
-            '║                                                                            ║' || E'\n' ||
-            COALESCE(dep_list, '  (Unable to list dependencies - check manually)') || E'\n' ||
-            '║                                                                            ║' || E'\n' ||
-            '║ SOLUTION: Manual Migration Process                                        ║' || E'\n' ||
-            '║                                                                            ║' || E'\n' ||
-            '║ See the complete migration guide:                                         ║' || E'\n' ||
-            '║   https://github.com/sirrodgepodge/rrule_plpgsql/blob/main/MANUAL_MIGRATION.md ║' || E'\n' ||
-            '║                                                                            ║' || E'\n' ||
-            '╚════════════════════════════════════════════════════════════════════════════╝' || E'\n';
+        IF dep_list IS NOT NULL THEN
+            error_msg := E'\n\n' ||
+                '╔══════════════════════════════════════════════════════════════════════════════╗' || E'\n' ||
+                '║ ERROR: Cannot drop rrule schema - dependent objects exist                   ║' || E'\n' ||
+                '╠══════════════════════════════════════════════════════════════════════════════╣' || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
+                '║ The following objects depend on the rrule schema:                            ║' || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
+                COALESCE(dep_list, '  (Unable to list dependencies - check manually)') || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
+                '║ SOLUTION: Manual Migration Process                                          ║' || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
+                '║ See the complete migration guide:                                           ║' || E'\n' ||
+                '║   github.com/sirrodgepodge/rrule_plpgsql/blob/main/MANUAL_MIGRATION.md     ║' || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
+                '╚══════════════════════════════════════════════════════════════════════════════╝' || E'\n';
 
-        RAISE EXCEPTION '%', error_msg;
+            RAISE EXCEPTION '%', error_msg;
+        END IF;
+    END IF;
+
+    EXECUTE 'DROP SCHEMA IF EXISTS rrule CASCADE';
 END $$;
 
 CREATE SCHEMA rrule;
 
 \echo 'Installing core RRULE functions...'
-\i rrule.sql
+\ir rrule.sql
 
 \echo 'Installing sub-day frequency support...'
-\i rrule_subday.sql
+\ir rrule_subday.sql
 
 \echo ''
 \echo '====================================================================='
@@ -123,11 +151,11 @@ CREATE SCHEMA rrule;
 \echo '====================================================================='
 \echo ''
 \echo 'Installed API (rrule.js/python-dateutil compatible):'
-\echo '  - rrule.all(rrule, dtstart) -> SETOF TIMESTAMP'
-\echo '  - rrule.between(rrule, dtstart, start_date, end_date) -> SETOF TIMESTAMP'
-\echo '  - rrule.after(rrule, dtstart, after_date) -> TIMESTAMP'
-\echo '  - rrule.before(rrule, dtstart, before_date) -> TIMESTAMP'
-\echo '  - rrule.count(rrule, dtstart) -> INTEGER'
+\echo '  - rrule."all"(rrule, dtstart) -> SETOF TIMESTAMP'
+\echo '  - rrule."between"(rrule, dtstart, start_date, end_date, inc DEFAULT false) -> SETOF TIMESTAMP'
+\echo '  - rrule."after"(rrule, dtstart, after_date, inc DEFAULT false) -> TIMESTAMP'
+\echo '  - rrule."before"(rrule, dtstart, before_date, inc DEFAULT false) -> TIMESTAMP'
+\echo '  - rrule."count"(rrule, dtstart) -> INTEGER'
 \echo ''
 \echo 'Supported Frequencies:'
 \echo '  ✅ DAILY, WEEKLY, MONTHLY, YEARLY'
@@ -151,3 +179,8 @@ CREATE SCHEMA rrule;
 \echo ''
 
 COMMIT;
+
+-- Reset session settings modified during installation
+-- (prevents state leakage on pooled connections)
+RESET timezone;
+RESET search_path;

@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "test": "./test.sh",
-    "lint": "./lint.sh"
+    "lint": "./lint.sh",
+    "lint:tests": "./lint-tests.sh"
   },
   "repository": {
     "type": "git",
@@ -47,7 +48,7 @@
   },
   "homepage": "https://github.com/sirrodgepodge/rrule_plpgsql#readme",
   "engines": {
-    "node": ">=12.0.0"
+    "node": ">=18.0.0"
   },
   "dependencies": {}
 }

@@ -59,6 +59,11 @@ TEST_FILES=(
   "tests/test_internal_functions.sql"
 )
 
+# Additional test files that require sub-day frequency support
+SUBDAY_TEST_FILES=(
+  "tests/test_subday_correctness.sql"
+)
+
 # Counters
 TOTAL_SUITES=0
 PASSED_SUITES=0
@@ -104,11 +109,12 @@ setup_database() {
 # Function to run a single test file
 run_test() {
   local test_file=$1
+  local install_script=$2
   local test_name=$(basename "$test_file" .sql)
 
   echo -n "  Testing $test_name... "
 
-  if psql -d "$DB" -f "$test_file" > /tmp/test_output.log 2>&1; then
+  if psql -d "$DB" -v rrule_install="$install_script" -f "$test_file" > /tmp/test_output.log 2>&1; then
     echo -e "${GREEN}PASS${NC}"
     return 0
   else
@@ -124,6 +130,7 @@ run_test() {
 # Function to run all tests
 run_all_tests() {
   local mode_name=$1
+  local install_script=$2
 
   echo ""
   echo -e "${BLUE}========================================${NC}"
@@ -140,12 +147,24 @@ run_all_tests() {
 
   for test_file in "${TEST_FILES[@]}"; do
     ((suite_count++))
-    if run_test "$test_file"; then
+    if run_test "$test_file" "$install_script"; then
       ((pass_count++))
     else
       ((fail_count++))
     fi
   done
+
+  # Run sub-day specific tests when using sub-day installation
+  if [[ "$install_script" == *"subday"* ]]; then
+    for test_file in "${SUBDAY_TEST_FILES[@]}"; do
+      ((suite_count++))
+      if run_test "$test_file" "$install_script"; then
+        ((pass_count++))
+      else
+        ((fail_count++))
+      fi
+    done
+  fi
 
   # Update global counters
   TOTAL_SUITES=$((TOTAL_SUITES + suite_count))
@@ -174,21 +193,19 @@ main() {
 
   if [ "$MODE" == "--standard" ]; then
     # Tests will use src/install.sql (standard)
-    run_all_tests "Standard Installation"
+    run_all_tests "Standard Installation" "src/install.sql"
     exit_code=$?
 
   elif [ "$MODE" == "--subday" ]; then
     # Tests will use src/install_with_subday.sql (sub-day)
-    # Note: Current tests use install.sql, so this tests the same thing
-    # To test sub-day, tests would need to load install_with_subday.sql instead
-    run_all_tests "Sub-Day Installation"
+    run_all_tests "Sub-Day Installation" "src/install_with_subday.sql"
     exit_code=$?
 
   elif [ "$MODE" == "--both" ]; then
-    run_all_tests "Standard Installation"
+    run_all_tests "Standard Installation" "src/install.sql"
     local standard_exit=$?
 
-    run_all_tests "Sub-Day Installation"
+    run_all_tests "Sub-Day Installation" "src/install_with_subday.sql"
     local subday_exit=$?
 
     exit_code=$((standard_exit + subday_exit))
