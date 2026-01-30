@@ -430,3 +430,260 @@ BEGIN
   END IF;
 END;
 $$ LANGUAGE plpgsql VOLATILE STRICT SET timezone = 'UTC';
+
+
+------------------------------------------------------------------------------------------------------
+-- Override rrule_event_instances_range_tz to enable sub-day frequencies in TIMESTAMPTZ API
+-- This replaces the version from rrule.sql which only supports DAILY/WEEKLY/MONTHLY/YEARLY.
+------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION rrule_event_instances_range_tz(
+    basedate TIMESTAMP,
+    repeatrule TEXT,
+    mindate TIMESTAMP,
+    maxdate TIMESTAMP,
+    max_count INT
+) RETURNS SETOF TIMESTAMP AS $$
+#variable_conflict use_variable
+DECLARE
+    period_limit INT;
+    period_count INT := 0;
+    occurrence_count INT := 0;
+    emitted_count INT := 0;
+    output_limit INT;
+    dtstart_day INT;
+    month_max_day INT;
+    current_base TIMESTAMP;
+    current TIMESTAMP;
+    period_start TIMESTAMP;
+    min_in_period TIMESTAMP;
+    rrule rrule.rrule_parts%ROWTYPE;
+BEGIN
+    SELECT * INTO rrule FROM rrule.parse_rrule_parts( basedate::TIMESTAMPTZ, repeatrule );
+
+    output_limit := max_count;
+    IF rrule.count IS NOT NULL THEN
+        output_limit := COALESCE(output_limit, rrule.count);
+        output_limit := LEAST(output_limit, rrule.count);
+    END IF;
+
+    period_limit := rrule.calculate_safe_iteration_limit(rrule.freq, rrule.count, output_limit);
+    IF period_limit IS NULL THEN
+        period_limit := 2147483647;
+    END IF;
+
+    dtstart_day := date_part('day', basedate)::INT;
+
+    current_base := basedate;
+
+    WHILE period_count < period_limit AND current_base < maxdate LOOP
+        IF rrule.freq = 'DAILY' THEN
+            period_start := date_trunc('day', current_base) + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN
+                SELECT d::TIMESTAMP
+                FROM rrule.daily_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) d
+                WHERE d::TIMESTAMP >= min_in_period
+            LOOP
+                EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(days => rrule.interval);
+
+        ELSIF rrule.freq = 'WEEKLY' THEN
+            period_start := rrule.get_week_start(current_base::TIMESTAMPTZ, rrule.wkst)::TIMESTAMP + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN
+                SELECT w::TIMESTAMP
+                FROM rrule.weekly_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) w
+                WHERE w::TIMESTAMP >= min_in_period
+            LOOP
+                IF rrule.test_byyearday_rule(current::TIMESTAMPTZ, rrule.byyearday)
+                   AND rrule.test_bymonthday_rule(current::TIMESTAMPTZ, rrule.bymonthday)
+                   AND rrule.test_bymonth_rule(current::TIMESTAMPTZ, rrule.bymonth)
+                THEN
+                    EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                    EXIT WHEN current > maxdate;
+                    occurrence_count := occurrence_count + 1;
+                    EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                    IF current >= mindate THEN
+                        RETURN NEXT current;
+                        emitted_count := emitted_count + 1;
+                        EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                    END IF;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(weeks => rrule.interval);
+
+        ELSIF rrule.freq = 'MONTHLY' THEN
+            period_start := date_trunc('month', current_base) + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN
+                SELECT m::TIMESTAMP
+                FROM rrule.monthly_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) m
+                WHERE m::TIMESTAMP >= min_in_period
+            LOOP
+                EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(months => rrule.interval);
+            IF rrule.bymonthday IS NULL AND rrule.byday IS NULL THEN
+              LOOP
+                EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
+                month_max_day := date_part('day',
+                  (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
+                IF dtstart_day <= month_max_day THEN
+                  current_base := date_trunc('month', current_base)
+                    + make_interval(days => dtstart_day - 1)
+                    + (basedate::time)::interval;
+                  EXIT;
+                END IF;
+                IF rrule.skip = 'OMIT' THEN
+                  period_count := period_count + 1;
+                  current_base := current_base + make_interval(months => rrule.interval);
+                ELSIF rrule.skip = 'FORWARD' THEN
+                  current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+                  EXIT;
+                ELSE
+                  EXIT;
+                END IF;
+              END LOOP;
+            END IF;
+
+        ELSIF rrule.freq = 'YEARLY' THEN
+            period_start := date_trunc('year', current_base) + (current_base::time)::interval;
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN
+                SELECT y::TIMESTAMP
+                FROM rrule.yearly_set(current_base::TIMESTAMPTZ, rrule,
+                    CASE WHEN rrule.bysetpos IS NULL
+                         THEN (CASE WHEN output_limit IS NULL THEN NULL
+                               ELSE GREATEST(output_limit - emitted_count, 0) END)
+                         ELSE NULL END) y
+                WHERE y::TIMESTAMP >= min_in_period
+            LOOP
+                EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(years => rrule.interval);
+            IF rrule.bymonthday IS NULL AND rrule.byday IS NULL THEN
+              LOOP
+                EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
+                month_max_day := date_part('day',
+                  (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
+                IF dtstart_day <= month_max_day THEN
+                  current_base := date_trunc('month', current_base)
+                    + make_interval(days => dtstart_day - 1)
+                    + (basedate::time)::interval;
+                  EXIT;
+                END IF;
+                IF rrule.skip = 'OMIT' THEN
+                  period_count := period_count + 1;
+                  current_base := current_base + make_interval(years => rrule.interval);
+                ELSIF rrule.skip = 'FORWARD' THEN
+                  current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+                  EXIT;
+                ELSE
+                  EXIT;
+                END IF;
+              END LOOP;
+            END IF;
+
+        -- Sub-day frequencies (TZ-aware)
+        ELSIF rrule.freq = 'HOURLY' THEN
+            period_start := date_trunc('hour', current_base);
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN SELECT h::TIMESTAMP FROM rrule.hourly_set(current_base::TIMESTAMPTZ, rrule) h WHERE h::TIMESTAMP >= min_in_period LOOP
+                EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(hours => rrule.interval);
+
+        ELSIF rrule.freq = 'MINUTELY' THEN
+            period_start := date_trunc('minute', current_base);
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN SELECT m::TIMESTAMP FROM rrule.minutely_set(current_base::TIMESTAMPTZ, rrule) m WHERE m::TIMESTAMP >= min_in_period LOOP
+                EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(mins => rrule.interval);
+
+        ELSIF rrule.freq = 'SECONDLY' THEN
+            period_start := date_trunc('second', current_base);
+            min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
+            FOR current IN SELECT s::TIMESTAMP FROM rrule.secondly_set(current_base::TIMESTAMPTZ, rrule) s WHERE s::TIMESTAMP >= min_in_period LOOP
+                EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+                EXIT WHEN current > maxdate;
+                occurrence_count := occurrence_count + 1;
+                EXIT WHEN rrule.count IS NOT NULL AND occurrence_count > rrule.count;
+                IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                END IF;
+            END LOOP;
+            current_base := current_base + make_interval(secs => rrule.interval);
+
+        ELSE
+            RAISE EXCEPTION 'Unsupported frequency: %', rrule.freq;
+        END IF;
+        period_count := period_count + 1;
+        EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+        EXIT WHEN rrule.count IS NOT NULL AND occurrence_count >= rrule.count;
+        EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
+    END LOOP;
+
+    IF output_limit IS NOT NULL AND emitted_count >= output_limit THEN
+      IF (rrule.count IS NULL OR occurrence_count < rrule.count)
+         AND (rrule.until IS NULL) THEN
+        RAISE WARNING 'rrule: result set truncated at % occurrences (limit: %). The recurrence rule has no COUNT or UNTIL and may produce more results beyond this limit.', emitted_count, output_limit;
+      END IF;
+    END IF;
+END;
+$$ LANGUAGE plpgsql VOLATILE SET search_path = rrule, pg_catalog;

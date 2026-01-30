@@ -33,34 +33,7 @@ SET search_path = public;
 
 BEGIN;
 
-
--- Helper function to compare expected vs actual occurrences
-CREATE OR REPLACE FUNCTION assert_occurrences_equal(
-    test_name TEXT,
-    expected TIMESTAMP[],
-    actual TIMESTAMP[]
-)
-RETURNS TEXT AS $$
-DECLARE
-    i INT;
-BEGIN
-    IF array_length(expected, 1) IS DISTINCT FROM array_length(actual, 1) THEN
-        RAISE EXCEPTION 'FAIL [%]: Expected % occurrences, got %',
-            test_name,
-            COALESCE(array_length(expected, 1), 0),
-            COALESCE(array_length(actual, 1), 0);
-    END IF;
-
-    FOR i IN 1..COALESCE(array_length(expected, 1), 0) LOOP
-        IF expected[i] IS DISTINCT FROM actual[i] THEN
-            RAISE EXCEPTION 'FAIL [%]: Occurrence #% differs. Expected %, got %',
-                test_name, i, expected[i], actual[i];
-        END IF;
-    END LOOP;
-
-    RETURN 'PASS [' || test_name || ']';
-END;
-$$ LANGUAGE plpgsql;
+\i tests/helpers.sql
 
 -- Test results tracking
 CREATE TEMP TABLE skip_test_results (
@@ -346,6 +319,93 @@ VALUES ('SKIP preserves time component',
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=BACKWARD;COUNT=3',
             '2025-01-01 14:30:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 8: SKIP drift prevention (implicit SKIP without BYMONTHDAY)'
+\echo '==================================================================='
+
+-- Test 15: MONTHLY SKIP=BACKWARD drift prevention (Jan 31 start, no BYMONTHDAY)
+-- Without drift fix: Jan 31, Feb 28, Mar 28, Apr 28, May 28, Jun 28 (drifts to 28)
+-- With drift fix:    Jan 31, Feb 28, Mar 31, Apr 30, May 31, Jun 30 (restores to 31 when possible)
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY SKIP=BACKWARD drift prevention (Jan 31)',
+    assert_occurrences_equal(
+        'MONTHLY BACKWARD drift',
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-04-30 10:00:00'::TIMESTAMP,
+            '2025-05-31 10:00:00'::TIMESTAMP,
+            '2025-06-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=BACKWARD;COUNT=6',
+            '2025-01-31 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 16: YEARLY SKIP=BACKWARD drift prevention (Feb 29 leap year start)
+-- Without drift fix: 2024-02-29, 2025-02-28, 2026-02-28, 2027-02-28, 2028-02-28 (drifts)
+-- With drift fix:    2024-02-29, 2025-02-28, 2026-02-28, 2027-02-28, 2028-02-29 (restores on leap year)
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY SKIP=BACKWARD drift prevention (Feb 29)',
+    assert_occurrences_equal(
+        'YEARLY BACKWARD drift',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2026-02-28 10:00:00'::TIMESTAMP,
+            '2027-02-28 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=BACKWARD;COUNT=5',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 17: MONTHLY SKIP=OMIT drift prevention (Jan 31 start, no BYMONTHDAY)
+-- Months without day 31 should be skipped entirely
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY SKIP=OMIT drift prevention (Jan 31)',
+    assert_occurrences_equal(
+        'MONTHLY OMIT drift',
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-05-31 10:00:00'::TIMESTAMP,
+            '2025-07-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=OMIT;COUNT=4',
+            '2025-01-31 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 18: MONTHLY SKIP=FORWARD drift prevention (Jan 31 start, no BYMONTHDAY)
+-- Without BYMONTHDAY, FORWARD repositions to 1st of next month when day doesn't fit.
+-- After FORWARD, subsequent advances restore to dtstart day (31) when the month can hold it.
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY SKIP=FORWARD drift prevention (Jan 31)',
+    assert_occurrences_equal(
+        'MONTHLY FORWARD drift',
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP,
+            '2025-05-01 10:00:00'::TIMESTAMP,
+            '2025-07-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=FORWARD;COUNT=4',
+            '2025-01-31 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
 );

@@ -266,6 +266,124 @@ FROM rrule."all"(
 ) AS occurrence;
 
 -- ============================================================================
+-- SECTION 4: TIMESTAMPTZ API Sub-Day Tests (timezone-aware)
+-- ============================================================================
+\echo ''
+\echo '--- Section 4: TIMESTAMPTZ API Sub-Day Frequencies ---'
+
+-- Test 4.1: HOURLY via TIMESTAMPTZ API with explicit timezone
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    -- 3 hourly occurrences in America/New_York
+    expected := ARRAY[
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-01 11:00:00-05'::TIMESTAMPTZ,
+        '2025-01-01 12:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=HOURLY;COUNT=3',
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('TIMESTAMPTZ HOURLY', 'HOURLY via TIMESTAMPTZ API with timezone',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 4.2: MINUTELY via TIMESTAMPTZ API
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-01 10:15:00-05'::TIMESTAMPTZ,
+        '2025-01-01 10:30:00-05'::TIMESTAMPTZ,
+        '2025-01-01 10:45:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MINUTELY;INTERVAL=15;COUNT=4',
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('TIMESTAMPTZ MINUTELY', 'MINUTELY;INTERVAL=15 via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 4.3: SECONDLY via TIMESTAMPTZ API
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-01 10:00:30-05'::TIMESTAMPTZ,
+        '2025-01-01 10:01:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=SECONDLY;INTERVAL=30;COUNT=3',
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('TIMESTAMPTZ SECONDLY', 'SECONDLY;INTERVAL=30 via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 4.4: HOURLY across DST spring-forward (America/New_York 2025-03-09 02:00 AM)
+-- The TZ generator uses naive TIMESTAMP arithmetic which preserves wall-clock hours.
+-- At spring-forward, the naive 02:00 maps to 03:00 EDT in wall-clock, producing a
+-- duplicate with the next occurrence at 03:00.
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    -- Starting at 2025-03-09 00:00 EST, 4 hourly occurrences:
+    -- 00:00 EST, 01:00 EST, 02:00 (gap) → 03:00 EDT, 03:00 EDT
+    expected := ARRAY[
+        '2025-03-09 05:00:00+00'::TIMESTAMPTZ,
+        '2025-03-09 06:00:00+00'::TIMESTAMPTZ,
+        '2025-03-09 07:00:00+00'::TIMESTAMPTZ,
+        '2025-03-09 07:00:00+00'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=HOURLY;COUNT=4',
+        '2025-03-09 00:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('TIMESTAMPTZ DST', 'HOURLY across DST spring-forward (known gap-time duplicate)',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- ============================================================================
 -- TEST RESULTS SUMMARY
 -- ============================================================================
 \echo ''
