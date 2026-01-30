@@ -333,18 +333,15 @@ INSERT INTO test_results VALUES (17, 'Leap year Feb 29th (2024 and 2028)',
 
 -- Test 18: after() helper function
 INSERT INTO test_results VALUES (18, 'after() helper',
-    (SELECT CASE
-        WHEN result = '2025-01-02 10:00:00'::TIMESTAMP
-        THEN 'PASS [after() helper]'
-        ELSE 'FAIL [after() helper]: Expected 2025-01-02 10:00:00, got ' || result::TEXT
-    END
-    FROM (
-        SELECT rrule."after"(
+    assert_equals(
+        'after() helper',
+        '2025-01-02 10:00:00',
+        (SELECT rrule."after"(
             'FREQ=DAILY;COUNT=10',
             '2025-01-01 10:00:00'::TIMESTAMP,
             '2025-01-01 12:00:00'::TIMESTAMP
-        ) AS result
-    ) sub));
+        )::TEXT)
+    ));
 
 -- ============================================================================
 -- Print Test Results Summary

@@ -260,6 +260,93 @@ check_inc_default_false() {
   report_rule_result "inc defaults to FALSE (Rule 7)" "$count"
 }
 
+# Rule 8: No unconditional PASS in WHEN OTHERS exception handlers
+# Exception handlers should verify the error message content, not blindly pass
+check_when_others_without_message_check() {
+  local count=0
+  for file in tests/test_*.sql; do
+    # Find WHEN OTHERS blocks that have 'PASS' without CASE/IF on err_msg
+    # Look for the pattern: WHEN OTHERS followed within 5 lines by a bare 'PASS'
+    # without an intervening CASE or IF on err_msg
+    local in_when_others=0
+    local when_others_line=0
+    while IFS= read -r line_info; do
+      local lineno="${line_info%%:*}"
+      local content="${line_info#*:}"
+      # Skip comment lines
+      if echo "$content" | grep -qE '^[[:space:]]*--'; then continue; fi
+
+      if echo "$content" | grep -qiE 'WHEN[[:space:]]+OTHERS[[:space:]]+THEN'; then
+        in_when_others=1
+        when_others_line=$lineno
+      fi
+
+      if [ "$in_when_others" -eq 1 ]; then
+        # Check if we found a CASE/IF checking err_msg (good pattern)
+        if echo "$content" | grep -qiE 'CASE[[:space:]]+WHEN[[:space:]]+err_msg|IF[[:space:]]+err_msg'; then
+          in_when_others=0
+          continue
+        fi
+        # Check if we found bare 'PASS' without err_msg check (bad pattern)
+        if echo "$content" | grep -qE "'PASS'" && ! echo "$content" | grep -qiE 'err_msg'; then
+          report_violation "$file" "$when_others_line" "WHEN OTHERS handler unconditionally returns PASS — check err_msg content"
+          count=$((count + 1))
+          in_when_others=0
+          continue
+        fi
+        # Reset after END block
+        if echo "$content" | grep -qiE '^[[:space:]]*END[[:space:]]*;'; then
+          in_when_others=0
+        fi
+      fi
+    done < <(grep -n '.' "$file")
+  done
+  report_rule_result "No unconditional PASS in WHEN OTHERS handlers (Rule 8)" "$count"
+}
+
+# Rule 8: No MIN(...) IS NOT NULL loose assertions
+# MIN(col) IS NOT NULL only proves at least one row is non-NULL, not all rows
+check_min_is_not_null() {
+  local count=0
+  for file in tests/test_*.sql; do
+    while IFS= read -r line_info; do
+      local lineno="${line_info%%:*}"
+      report_violation "$file" "$lineno" "MIN(...) IS NOT NULL is a loose assertion — use COUNT(*) FILTER (WHERE col IS NOT NULL)"
+      count=$((count + 1))
+    done < <(grep -n '.' "$file" | filter_comments | grep -E 'MIN[[:space:]]*\([^)]+\)[[:space:]]+IS[[:space:]]+NOT[[:space:]]+NULL' || true)
+  done
+  report_rule_result "No MIN(...) IS NOT NULL loose assertions (Rule 8)" "$count"
+}
+
+# Rule 8: No inline CASE PASS/FAIL assertions in unit test files (advisory)
+# Unit tests should use shared assertion helpers (assert_equals, assert_true, etc.)
+# Advisory: reports warnings but does not fail the linter. Only checked in unit test
+# files, not integration tests like test_table_operations.sql.
+check_inline_case_assertions() {
+  local count=0
+  # Only check unit test files, not integration test files
+  local unit_test_files="tests/test_rrule_functions.sql tests/test_tzid_support.sql"
+  for file in $unit_test_files; do
+    [ -f "$file" ] || continue
+    while IFS= read -r line_info; do
+      local lineno="${line_info%%:*}"
+      local content="${line_info#*:}"
+      # Skip display/summary CASE blocks (e.g., formatting test results for output)
+      if echo "$content" | grep -qiE 'LIKE.*PASS'; then continue; fi
+      echo -e "  ${YELLOW}⚠${NC} ${file}:${lineno} — Inline CASE PASS/FAIL — consider using shared assertion helpers"
+      count=$((count + 1))
+    done < <(grep -n '.' "$file" | filter_comments | grep -E "THEN[[:space:]]*'PASS" || true)
+  done
+  # Advisory rule: report count but always pass
+  if [ "$count" -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} No inline CASE PASS/FAIL in unit tests (Rule 8, advisory)"
+  else
+    echo -e "${YELLOW}⚠${NC} No inline CASE PASS/FAIL in unit tests (Rule 8, advisory) — ${count} warning(s)"
+  fi
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo ""
+}
+
 # --- Main ---
 
 main() {
@@ -272,6 +359,9 @@ main() {
   check_array_agg_order_by
   check_no_permanent_tables
   check_schema_qualification
+  check_when_others_without_message_check
+  check_min_is_not_null
+  check_inline_case_assertions
 
   echo -e "${BLUE}Source file checks (src/*.sql)${NC}"
   echo ""

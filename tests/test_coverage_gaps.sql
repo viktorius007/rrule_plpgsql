@@ -2187,7 +2187,7 @@ BEGIN
             INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
                 'Additional Coverage',
                 'Test 19.3: Empty string RRULE raises error',
-                'PASS'
+                CASE WHEN err_msg LIKE '%FREQ%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
             );
     END;
 END $$;
@@ -2292,6 +2292,85 @@ SELECT
             'FREQ=MONTHLY;BYMONTHDAY=31,-1;COUNT=6',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
+    );
+
+-- ============================================================================
+-- SECTION 21: Consensus Review Quality Fixes
+-- ============================================================================
+\echo ''
+\echo '--- Section 21: Consensus Review Quality Fixes ---'
+
+-- Test 21.1: NULL dtstart produces zero results
+-- NULL dtstart is silently accepted by the parser but produces no occurrences
+-- because all date arithmetic with NULL yields NULL, which fails boundary checks.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Quality',
+    'Test 21.1: NULL dtstart produces zero results',
+    assert_true(
+        'NULL dtstart zero results',
+        (SELECT COUNT(*) FROM rrule."all"(
+            'FREQ=DAILY;COUNT=3',
+            NULL::TIMESTAMP
+        )) = 0
+    );
+
+-- Test 21.2: YEARLY+BYDAY+BYMONTH combination (all Mondays in March 2025)
+-- March 2025 Mondays: 3rd, 10th, 17th, 24th, 31st
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Quality',
+    'Test 21.2: YEARLY+BYDAY=MO+BYMONTH=3 (Mondays in March)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY BYMONTH combo',
+        ARRAY[
+            '2025-03-03 10:00:00'::TIMESTAMP,
+            '2025-03-10 10:00:00'::TIMESTAMP,
+            '2025-03-17 10:00:00'::TIMESTAMP,
+            '2025-03-24 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=MO;BYMONTH=3;COUNT=5',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 21.3: BYSETPOS with triple BYxxx (first weekday of January)
+-- BYMONTH=1, BYDAY=weekdays, BYMONTHDAY=1-7, BYSETPOS=1 → first weekday in first week of Jan
+-- Jan 2025: Wed Jan 1. Jan 2026: Thu Jan 1. Jan 2027: Fri Jan 1.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Quality',
+    'Test 21.3: BYSETPOS with triple BYxxx (first weekday of January)',
+    assert_occurrences_equal(
+        'Triple BYxxx BYSETPOS',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2026-01-01 10:00:00'::TIMESTAMP,
+            '2027-01-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=1;BYDAY=MO,TU,WE,TH,FR;BYMONTHDAY=1,2,3,4,5,6,7;BYSETPOS=1;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 21.4: RAISE WARNING on 1000-result cap (verify count capped at 1000)
+-- PostgreSQL RAISE WARNING cannot be captured in PL/pgSQL exception handlers
+-- (warnings don't trigger exceptions). We verify the cap behavior by checking
+-- that an unbounded rule returns exactly 1000 results. Warning emission is
+-- verified manually or via log inspection.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Quality',
+    'Test 21.4: Unbounded FREQ=DAILY capped at 1000 results',
+    assert_true(
+        '1000-result cap',
+        (SELECT COUNT(*) FROM rrule."all"(
+            'FREQ=DAILY',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        )) = 1000
     );
 
 -- Fail if any tests failed

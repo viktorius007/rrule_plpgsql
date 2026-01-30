@@ -391,8 +391,10 @@ VALUES ('MONTHLY SKIP=OMIT drift prevention (Jan 31)',
 );
 
 -- Test 18: MONTHLY SKIP=FORWARD drift prevention (Jan 31 start, no BYMONTHDAY)
--- Without BYMONTHDAY, FORWARD repositions to 1st of next month when day doesn't fit.
--- After FORWARD, subsequent advances restore to dtstart day (31) when the month can hold it.
+-- Without BYMONTHDAY, SKIP=FORWARD advances the current date by one month.
+-- When the resulting day doesn't exist (e.g., Feb 31), it forwards to the 1st
+-- of the following month. Subsequent iterations advance from that forwarded
+-- date, not from dtstart's original day.
 INSERT INTO skip_test_results (test_name, status)
 VALUES ('MONTHLY SKIP=FORWARD drift prevention (Jan 31)',
     assert_occurrences_equal(

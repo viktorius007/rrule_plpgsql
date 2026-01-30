@@ -93,7 +93,7 @@ WHERE status = 'active';
 
 INSERT INTO test_results VALUES (2, 'Batch UPDATE: compute next billing dates',
     (SELECT CASE
-        WHEN COUNT(*) = 3 AND MIN(next_billing_date) IS NOT NULL
+        WHEN COUNT(*) FILTER (WHERE next_billing_date IS NOT NULL) = 3
         THEN 'PASS'
         ELSE 'FAIL'
     END FROM subscriptions WHERE status = 'active')
