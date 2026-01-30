@@ -209,11 +209,11 @@ check_null_comparison() {
 }
 
 # Rule 5: IMMUTABLE only for pure-computation helpers
-# Allowed: weekday_to_number, byweekno_matches, calculate_safe_iteration_limit
+# Allowed: weekday_to_number, byweekno_matches, calculate_safe_iteration_limit, version
 check_immutable_usage() {
   local count=0
   # Functions explicitly allowed to be IMMUTABLE (CLAUDE.md Rule 5)
-  local allowed_funcs='weekday_to_number|byweekno_matches|calculate_safe_iteration_limit'
+  local allowed_funcs='weekday_to_number|byweekno_matches|calculate_safe_iteration_limit|version'
 
   for file in src/*.sql; do
     while IFS= read -r line_info; do
@@ -223,7 +223,7 @@ check_immutable_usage() {
       local context
       context=$(sed -n "${start},${lineno}p" "$file")
       # Check if this IMMUTABLE belongs to an allowed function
-      if echo "$context" | grep -qE "FUNCTION[[:space:]]+(${allowed_funcs})[[:space:]]*\("; then
+      if echo "$context" | grep -qE "FUNCTION[[:space:]]+\"?(${allowed_funcs})\"?[[:space:]]*\("; then
         continue
       fi
       report_violation "$file" "$lineno" "IMMUTABLE found — use STABLE or VOLATILE"

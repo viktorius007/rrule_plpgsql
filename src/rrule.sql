@@ -475,7 +475,7 @@ BEGIN
 
   -- Iterate through each BYDAY rule (e.g., MO, 2TU, -1FR)
   FOREACH dayrule IN ARRAY byday LOOP
-    dow := position(substring( dayrule from '..$') in 'SUMOTUWETHFRSA') / 2;
+    dow := rrule.weekday_to_number(substring(dayrule from '..$'));
     each_day := date_trunc( 'month', in_time ) + (in_time::time)::interval;
     this_month := date_part( 'month', in_time );
     first_dow := date_part( 'dow', each_day );
@@ -789,7 +789,7 @@ BEGIN
   i := 1;
   dayrule := byday[i];
   WHILE dayrule IS NOT NULL LOOP
-    dow := position(dayrule in 'SUMOTUWETHFRSA') / 2;
+    dow := rrule.weekday_to_number(dayrule);
     -- Calculate day_offset from week start (WKST day)
     -- Example: if WKST=SU (0) and we want MO (1), day_offset = (1-0+7)%7 = 1
     -- Example: if WKST=MO (1) and we want SU (0), day_offset = (0-1+7)%7 = 6
@@ -824,8 +824,10 @@ $$ LANGUAGE plpgsql STABLE;  -- No STRICT (was never STRICT)
 -- Convert weekday abbreviation to number (0=SU, 1=MO, 2=TU, 3=WE, 4=TH, 5=FR, 6=SA)
 -- Matches PostgreSQL's date_part('dow', ...) convention
 CREATE OR REPLACE FUNCTION weekday_to_number(wkst TEXT) RETURNS INT AS $$
+DECLARE
+    result INT;
 BEGIN
-    RETURN CASE COALESCE(wkst, 'MO')
+    result := CASE COALESCE(wkst, 'MO')
         WHEN 'SU' THEN 0
         WHEN 'MO' THEN 1
         WHEN 'TU' THEN 2
@@ -833,8 +835,11 @@ BEGIN
         WHEN 'TH' THEN 4
         WHEN 'FR' THEN 5
         WHEN 'SA' THEN 6
-        ELSE 1  -- Default to Monday if invalid
     END;
+    IF result IS NULL THEN
+        RAISE EXCEPTION 'Invalid weekday code: "%". Valid values are: SU, MO, TU, WE, TH, FR, SA', wkst;
+    END IF;
+    RETURN result;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
@@ -2006,6 +2011,7 @@ BEGIN
         IF date_part('day', current_base)::INT != original_day THEN
           IF rule.skip = 'OMIT' THEN
             -- Skip this month — the implicit day doesn't exist
+            period_count := period_count + 1;
             CONTINUE;
           ELSIF rule.skip = 'FORWARD' THEN
             -- Move to 1st of next month
@@ -2040,6 +2046,7 @@ BEGIN
         IF date_part('day', current_base)::INT != original_day THEN
           IF rule.skip = 'OMIT' THEN
             -- Skip this year — the implicit day doesn't exist
+            period_count := period_count + 1;
             CONTINUE;
           ELSIF rule.skip = 'FORWARD' THEN
             -- Move to 1st of next month
@@ -2248,16 +2255,35 @@ CREATE OR REPLACE FUNCTION "after"(
 RETURNS TIMESTAMP AS $$
 DECLARE
     next_occurrence TIMESTAMP;
+    dtstart_utc TIMESTAMPTZ;
+    after_utc TIMESTAMPTZ;
+    maxdate_utc TIMESTAMPTZ;
+    tzid TEXT;
 BEGIN
-    -- Get next occurrence using all() and filter
-    -- TZID handling is done automatically by all()
-    SELECT occurrence INTO next_occurrence
-    FROM rrule."all"(rrule_string, dtstart) AS occurrence
+    -- Extract TZID from rrule string
+    tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
+
+    -- Validate TZID if provided (using centralized validation helper)
+    PERFORM rrule.validate_timezone(tzid);
+
+    -- Optimized: call range function directly with after_date as mindate
+    -- This skips generating all occurrences before after_date (O(1) vs O(N))
+    dtstart_utc := dtstart AT TIME ZONE 'UTC';
+    after_utc := after_date AT TIME ZONE 'UTC';
+    maxdate_utc := dtstart_utc + INTERVAL '10 years';
+
+    SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP INTO next_occurrence
+    FROM rrule.rrule_event_instances_range(
+        dtstart_utc,
+        rrule_string,
+        after_utc,
+        maxdate_utc,
+        1000
+    ) d
     WHERE CASE
-        WHEN inc THEN occurrence >= after_date
-        ELSE occurrence > after_date
+        WHEN inc THEN (d AT TIME ZONE 'UTC')::TIMESTAMP >= after_date
+        ELSE (d AT TIME ZONE 'UTC')::TIMESTAMP > after_date
     END
-    ORDER BY occurrence ASC
     LIMIT 1;
 
     RETURN next_occurrence;
@@ -2280,11 +2306,35 @@ CREATE OR REPLACE FUNCTION "before"(
 RETURNS TIMESTAMP AS $$
 DECLARE
     previous_occurrence TIMESTAMP;
+    dtstart_utc TIMESTAMPTZ;
+    before_utc TIMESTAMPTZ;
+    maxdate_utc TIMESTAMPTZ;
+    tzid TEXT;
 BEGIN
-    -- Get previous occurrence using all() and filter
-    -- TZID handling is done automatically by all()
+    -- Extract TZID from rrule string
+    tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
+
+    -- Validate TZID if provided (using centralized validation helper)
+    PERFORM rrule.validate_timezone(tzid);
+
+    -- Optimized: call range function with before_date as maxdate
+    -- This avoids scanning beyond the boundary (up to 10 years)
+    dtstart_utc := dtstart AT TIME ZONE 'UTC';
+    before_utc := before_date AT TIME ZONE 'UTC';
+    -- Add 1 day buffer when inc=true so the range function generates the boundary period
+    maxdate_utc := before_utc + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END;
+
     SELECT occurrence INTO previous_occurrence
-    FROM rrule."all"(rrule_string, dtstart) AS occurrence
+    FROM (
+        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence
+        FROM rrule.rrule_event_instances_range(
+            dtstart_utc,
+            rrule_string,
+            dtstart_utc,
+            maxdate_utc,
+            1000
+        ) d
+    ) sub
     WHERE CASE
         WHEN inc THEN occurrence <= before_date
         ELSE occurrence < before_date
@@ -2577,6 +2627,7 @@ BEGIN
               IF date_part('day', current_base)::INT != original_day THEN
                 IF rrule.skip = 'OMIT' THEN
                   -- Skip this month — the implicit day doesn't exist
+                  period_count := period_count + 1;
                   CONTINUE;
                 ELSIF rrule.skip = 'FORWARD' THEN
                   -- Move to 1st of next month
@@ -2617,6 +2668,7 @@ BEGIN
               IF date_part('day', current_base)::INT != original_day THEN
                 IF rrule.skip = 'OMIT' THEN
                   -- Skip this year — the implicit day doesn't exist
+                  period_count := period_count + 1;
                   CONTINUE;
                 ELSIF rrule.skip = 'FORWARD' THEN
                   -- Move to 1st of next month
@@ -3088,3 +3140,12 @@ BEGIN
     RETURN FOUND;
 END;
 $$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
+
+
+------------------------------------------------------------------------------------------------------
+-- VERSION TRACKING
+------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION "version"()
+RETURNS TEXT AS $$
+    SELECT '1.1.1'::TEXT;
+$$ LANGUAGE SQL IMMUTABLE;

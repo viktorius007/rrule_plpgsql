@@ -96,7 +96,7 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 4. **Linting Required:** `plpgsql_check` must report 0 errors and 0 warnings. `lint-tests.sh` must also pass (static SQL coding standards).
 
-5. **Type Safety:** Use explicit parameter types, proper NULL handling with `IS DISTINCT FROM` (never `= NULL` / `<> NULL` / `!= NULL`). Mark functions VOLATILE (cursors, SET timezone, set_config), STABLE (internal computation calling other STABLE/VOLATILE functions), or IMMUTABLE (pure-computation helpers only: `weekday_to_number`, `byweekno_matches`, `calculate_safe_iteration_limit`).
+5. **Type Safety:** Use explicit parameter types, proper NULL handling with `IS DISTINCT FROM` (never `= NULL` / `<> NULL` / `!= NULL`). Mark functions VOLATILE (cursors, SET timezone, set_config), STABLE (internal computation calling other STABLE/VOLATILE functions), or IMMUTABLE (pure-computation helpers only: `weekday_to_number`, `byweekno_matches`, `calculate_safe_iteration_limit`, `version`).
 
 6. **Security:** Sub-day frequencies are disabled by default to prevent DoS (31M+ occurrences/year for SECONDLY). Changes to this require explicit justification.
 
@@ -104,7 +104,7 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 8. **Testing Standards:** Follow rules in [TESTING_STANDARDS.md](TESTING_STANDARDS.md) -- key rules: ROLLBACK not COMMIT, fixed timestamps not NOW(), exact assertions not loose comparisons, ORDER BY in array_agg, test boundary/invalid inputs, test DST gap times, test BYxxx deduplication.
 
-9. **Dual Generator Maintenance:** `rrule_event_instances_range()` and `rrule_event_instances_range_tz()` share identical loop structure. Any fix to one (boundary checks, EXIT conditions, SKIP handling) must be mirrored in the other.
+9. **Triple Generator Maintenance:** Three copies of `rrule_event_instances_range()` exist: (1) TIMESTAMP generator in `src/rrule.sql`, (2) TZ generator (`rrule_event_instances_range_tz()`) in `src/rrule.sql`, and (3) subday override in `src/rrule_subday.sql` which replaces the TIMESTAMP generator and adds HOURLY/MINUTELY/SECONDLY branches. All three share identical loop structure. Any fix to one (boundary checks, EXIT conditions, SKIP handling) must be mirrored in all three.
 
 ## RRULE Parameters Supported
 

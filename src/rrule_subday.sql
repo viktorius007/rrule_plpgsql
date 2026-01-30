@@ -245,6 +245,7 @@ BEGIN
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT d FROM rrule.daily_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) d WHERE d >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
@@ -264,6 +265,7 @@ BEGIN
                AND rrule.test_bymonth_rule(current, rule.bymonth)
         THEN
           EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+          EXIT WHEN current > maxdate;
           occurrence_count := occurrence_count + 1;
           EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
           IF current >= mindate THEN
@@ -280,6 +282,7 @@ BEGIN
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT m FROM rrule.monthly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) m WHERE m >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
@@ -295,6 +298,7 @@ BEGIN
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) y WHERE y >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
@@ -313,6 +317,7 @@ BEGIN
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT h FROM rrule.hourly_set(current_base, rule) h WHERE h >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
@@ -328,6 +333,7 @@ BEGIN
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT m FROM rrule.minutely_set(current_base, rule) m WHERE m >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
@@ -343,6 +349,7 @@ BEGIN
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT s FROM rrule.secondly_set(current_base, rule) s WHERE s >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
