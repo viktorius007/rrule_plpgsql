@@ -306,7 +306,7 @@ INSERT INTO test_results VALUES (70, 'Specific counts: Daily Standup=500, Weekly
     END)
 );
 
--- Test 7a: Verify exact next_occurrence dates per event
+-- Test 7b: Verify exact next_occurrence dates per event
 INSERT INTO test_results VALUES (71, 'Specific dates: next_occurrence for each event',
     (SELECT CASE
         WHEN (SELECT next_occurrence FROM events WHERE title = 'Daily Standup') = '2025-02-06 09:00:00+00'::TIMESTAMPTZ

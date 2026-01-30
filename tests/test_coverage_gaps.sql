@@ -2202,6 +2202,98 @@ SELECT
         LENGTH(rrule."version"()) > 0
     );
 
+-- ============================================================================
+-- SECTION 20: Consensus Review Additions
+-- ============================================================================
+\echo ''
+\echo '--- Section 20: Consensus Review Additions ---'
+
+-- Test 20.1: RRULE: prefix is accepted by parser
+-- iCalendar files include the "RRULE:" property prefix. The parser uses
+-- substring regex that finds FREQ= anywhere in the string, so the prefix
+-- is silently accepted. Verify this produces correct results.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Review',
+    'Test 20.1: RRULE: prefix is accepted by parser',
+    assert_occurrences_equal(
+        'RRULE: prefix',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'RRULE:FREQ=DAILY;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 20.2: Non-zero seconds in dtstart are preserved across recurrences
+-- All other tests use :00 seconds. Verify second-level time preservation.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Review',
+    'Test 20.2: Non-zero seconds preserved in dtstart',
+    assert_occurrences_equal(
+        'Seconds preservation',
+        ARRAY[
+            '2025-01-01 10:15:45'::TIMESTAMP,
+            '2025-01-02 10:15:45'::TIMESTAMP,
+            '2025-01-03 10:15:45'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;COUNT=3',
+            '2025-01-01 10:15:45'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 20.3: Explicit positive ordinal +1MO parses same as 1MO
+-- RFC 5545 BYDAY allows optional +/- sign. Parser regex uses [+-]?
+-- so +1MO and 1MO should produce identical results.
+-- 1st Monday of each month from Jan 2025: Jan 6, Feb 3, Mar 3
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Review',
+    'Test 20.3: Explicit positive ordinal +1MO equals 1MO',
+    assert_occurrences_equal(
+        '+1MO ordinal',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-02-03 10:00:00'::TIMESTAMP,
+            '2025-03-03 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=+1MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 20.4: Resolved-date deduplication for BYMONTHDAY=31,-1
+-- In January, both 31 and -1 resolve to Jan 31. The parser deduplicates
+-- at the resolved-date level (seen_dates array), not input-value level.
+-- Expected: one date per month (last day), not two.
+-- Jan 31, Feb 28, Mar 31, Apr 30, May 31, Jun 30
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Review',
+    'Test 20.4: Resolved-date dedup BYMONTHDAY=31,-1',
+    assert_occurrences_equal(
+        'BYMONTHDAY 31,-1 dedup',
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-04-30 10:00:00'::TIMESTAMP,
+            '2025-05-31 10:00:00'::TIMESTAMP,
+            '2025-06-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=31,-1;COUNT=6',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE

@@ -253,7 +253,7 @@ INSERT INTO test_results VALUES (12, 'YEARLY with BYMONTH=1,7',
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTH=1,7;COUNT=3', '2025-01-15 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
--- Test 12a: YEARLY with BYMONTHDAY without BYMONTH (all months)
+-- Test 13: YEARLY with BYMONTHDAY without BYMONTH (all months)
 INSERT INTO test_results VALUES (13, 'YEARLY with BYMONTHDAY=1 (all months)',
     assert_occurrences_equal(
         'YEARLY with BYMONTHDAY=1 (all months)',
