@@ -518,7 +518,7 @@ BEGIN
                         + CASE WHEN dow < first_dow THEN '1 week'::interval ELSE '0s'::interval END;
 
     IF length(dayrule) > 2 THEN
-      index := (substring(dayrule from '^[0-9-]+'))::int;
+      index := (substring(dayrule from '^[+-]?[0-9]+'))::int;
 
       IF index = 0 THEN
         RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
@@ -612,7 +612,7 @@ BEGIN
                         + CASE WHEN dow < first_dow THEN '1 week'::interval ELSE '0s'::interval END;
 
     IF length(dayrule) > 2 THEN
-      index := (substring(dayrule from '^[0-9-]+'))::int;
+      index := (substring(dayrule from '^[+-]?[0-9]+'))::int;
 
       IF index = 0 THEN
         RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
