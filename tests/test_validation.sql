@@ -8,7 +8,7 @@
  * Usage:
  *   psql -d your_database -f tests/test_validation.sql
  *
- * Expected output: All tests pass with ✓ markers
+ * Expected output: All tests pass with PASS markers
  */
 
 \set ON_ERROR_STOP on
@@ -883,22 +883,13 @@ ORDER BY test_number;
 \echo 'TEST GROUP 5: Syntax Robustness Tests'
 \echo '====================================================================='
 
--- Test 5.1: Duplicate FREQ parameters - first occurrence wins (silently)
--- Parser uses regex substring which returns first match.
--- DAILY produces Jan 1, 2, 3; WEEKLY would produce Jan 1, 8, 15.
+-- Test 5.1: Duplicate FREQ parameters should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('Syntax Robustness', 'Duplicate FREQ=DAILY;FREQ=WEEKLY (first wins)',
-    assert_occurrences_equal(
-        'Duplicate FREQ first wins',
-        ARRAY[
-            '2025-01-01 10:00:00'::TIMESTAMP,
-            '2025-01-02 10:00:00'::TIMESTAMP,
-            '2025-01-03 10:00:00'::TIMESTAMP
-        ],
-        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
-            'FREQ=DAILY;FREQ=WEEKLY;COUNT=3',
-            '2025-01-01 10:00:00'::TIMESTAMP
-        ) AS occurrence)
+VALUES ('Syntax Robustness', 'Duplicate FREQ=DAILY;FREQ=WEEKLY (rejected)',
+    assert_rrule_rejected(
+        'Duplicate FREQ rejected',
+        'FREQ=DAILY;FREQ=WEEKLY;COUNT=3',
+        '%Duplicate FREQ%'
     )
 );
 
@@ -1014,6 +1005,33 @@ VALUES ('WKST Validation', 'WKST=SU (should be accepted)',
         3
     )
 );
+
+-- Test 5.13: NULL dtstart should be rejected with descriptive error
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_count INT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."all"(
+            'FREQ=DAILY;COUNT=3',
+            NULL::TIMESTAMP
+        );
+        INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
+            'NULL Input Validation',
+            'NULL dtstart rejected',
+            'FAIL: expected exception but got ' || result_count || ' results'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
+                'NULL Input Validation',
+                'NULL dtstart rejected',
+                CASE WHEN err_msg LIKE '%dtstart%NULL%' OR err_msg LIKE '%dtstart%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
+            );
+    END;
+END $$;
 
 \echo ''
 \echo '====================================================================='

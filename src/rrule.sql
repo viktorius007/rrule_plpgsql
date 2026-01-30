@@ -104,6 +104,11 @@ BEGIN
 
   result.freq       := substring(repeatrule from 'FREQ=([A-Z]+)(;|$)');
 
+  -- Reject duplicate FREQ parameters (e.g., "FREQ=DAILY;FREQ=WEEKLY")
+  IF repeatrule ~ 'FREQ=[A-Z]+.*;.*FREQ=' THEN
+    RAISE EXCEPTION 'Invalid RRULE: Duplicate FREQ parameter. Only one FREQ is allowed per RRULE.  RFC 5545 Section 3.3.10: Each rule part MUST only be specified once.';
+  END IF;
+
   -- Check for negative COUNT value in raw RRULE string before parsing
   IF repeatrule ~* 'COUNT=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer';
@@ -2206,6 +2211,10 @@ BEGIN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
     END IF;
 
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     max_count := 1000;
 
     -- Extract TZID from rrule string
@@ -2267,6 +2276,10 @@ BEGIN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
     END IF;
 
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     max_count := 1000;
 
     -- Extract TZID from rrule string
@@ -2322,6 +2335,10 @@ BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
     IF rrule_string IS NULL THEN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
     -- Extract TZID from rrule string
@@ -2381,6 +2398,10 @@ BEGIN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
     END IF;
 
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     -- Extract TZID from rrule string
     tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
 
@@ -2437,6 +2458,10 @@ RETURNS INTEGER AS $$
 DECLARE
     occurrence_count INTEGER;
 BEGIN
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     SELECT COUNT(*)::INTEGER INTO occurrence_count
     FROM rrule."all"(rrule_string, dtstart);
 
@@ -2458,6 +2483,10 @@ CREATE OR REPLACE FUNCTION "next"(
 )
 RETURNS TIMESTAMP AS $$
 BEGIN
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     RETURN rrule."after"(rrule_string, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP));
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -2476,6 +2505,10 @@ CREATE OR REPLACE FUNCTION "most_recent"(
 )
 RETURNS TIMESTAMP AS $$
 BEGIN
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     RETURN rrule."before"(rrule_string, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP));
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -2504,7 +2537,7 @@ DECLARE
     adjusted_maxdate TIMESTAMP WITH TIME ZONE;
 BEGIN
     IF dtstart IS NULL THEN
-        RETURN NULL;
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
@@ -2847,6 +2880,10 @@ BEGIN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
     END IF;
 
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
@@ -2905,6 +2942,10 @@ BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
     IF rrule_string IS NULL THEN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
     -- Determine timezone
@@ -2975,6 +3016,10 @@ BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
     IF rrule_string IS NULL THEN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
     -- Determine timezone
@@ -3049,6 +3094,10 @@ BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
     IF rrule_string IS NULL THEN
         RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
     -- Determine timezone
@@ -3126,6 +3175,10 @@ CREATE OR REPLACE FUNCTION rrule.count(
 DECLARE
     occurrence_count INTEGER;
 BEGIN
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     -- Leverage the all() function which handles timezone resolution
     SELECT COUNT(*)::INTEGER INTO occurrence_count
     FROM rrule."all"(rrule_string, dtstart, timezone);
@@ -3148,6 +3201,10 @@ CREATE OR REPLACE FUNCTION rrule.next(
 DECLARE
     tz_name TEXT;
 BEGIN
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
@@ -3183,6 +3240,10 @@ CREATE OR REPLACE FUNCTION rrule.most_recent(
 DECLARE
     tz_name TEXT;
 BEGIN
+    IF dtstart IS NULL THEN
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
@@ -3226,7 +3287,7 @@ DECLARE
 BEGIN
     -- Handle NULL dtstart
     IF dtstart IS NULL THEN
-        RETURN NULL;
+        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
     -- Determine timezone (priority: explicit param > TZID in RRULE > session timezone)
