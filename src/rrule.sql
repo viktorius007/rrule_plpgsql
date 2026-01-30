@@ -2684,6 +2684,7 @@ BEGIN
         period_count := period_count + 1;
         EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         EXIT WHEN rrule.count IS NOT NULL AND occurrence_count >= rrule.count;
+        EXIT WHEN rrule.until IS NOT NULL AND current::TIMESTAMPTZ > rrule.until;
     END LOOP;
 
     -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)

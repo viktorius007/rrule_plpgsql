@@ -212,6 +212,7 @@ DECLARE
   occurrence_count INT := 0;
   emitted_count INT := 0;
   output_limit INT;
+  original_day INT;
   current_base TIMESTAMP WITH TIME ZONE;
   current TIMESTAMP WITH TIME ZONE;
   period_start TIMESTAMP WITH TIME ZONE;
@@ -291,7 +292,24 @@ BEGIN
           EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         END IF;
       END LOOP;
+      original_day := date_part('day', current_base)::INT;
       current_base := current_base + make_interval(months => rule.interval);
+      -- Handle implicit SKIP for month advancement without explicit BYMONTHDAY/BYDAY
+      -- PostgreSQL coerces invalid dates (e.g., Jan 31 + 1 month = Feb 28), which is BACKWARD behavior.
+      -- When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
+      IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+        IF date_part('day', current_base)::INT != original_day THEN
+          IF rule.skip = 'OMIT' THEN
+            -- Skip this month — the implicit day doesn't exist
+            period_count := period_count + 1;
+            CONTINUE;
+          ELSIF rule.skip = 'FORWARD' THEN
+            -- Move to 1st of next month
+            current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+          END IF;
+          -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
+        END IF;
+      END IF;
 
     ELSIF rule.freq = 'YEARLY' THEN
       period_start := date_trunc('year', current_base) + (current_base::time)::interval;
@@ -307,7 +325,24 @@ BEGIN
           EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         END IF;
       END LOOP;
+      original_day := date_part('day', current_base)::INT;
       current_base := current_base + make_interval(years => rule.interval);
+      -- Handle implicit SKIP for year advancement without explicit BYMONTHDAY/BYDAY
+      -- PostgreSQL coerces invalid dates (e.g., Feb 29 + 1 year = Feb 28 in non-leap year),
+      -- which is BACKWARD behavior. When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
+      IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+        IF date_part('day', current_base)::INT != original_day THEN
+          IF rule.skip = 'OMIT' THEN
+            -- Skip this year — the implicit day doesn't exist
+            period_count := period_count + 1;
+            CONTINUE;
+          ELSIF rule.skip = 'FORWARD' THEN
+            -- Move to 1st of next month
+            current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+          END IF;
+          -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
+        END IF;
+      END IF;
 
     -- ⚠️  SUB-DAY FREQUENCIES ENABLED ⚠️
     -- These are active in this file. See header comments for security implications.
@@ -369,5 +404,13 @@ BEGIN
     EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
     EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
   END LOOP;
+
+  -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
+  IF output_limit IS NOT NULL AND emitted_count >= output_limit THEN
+    IF (rule.count IS NULL OR occurrence_count < rule.count)
+       AND (rule.until IS NULL) THEN
+      RAISE WARNING 'rrule: result set truncated at % occurrences (limit: %). The recurrence rule has no COUNT or UNTIL and may produce more results beyond this limit.', emitted_count, output_limit;
+    END IF;
+  END IF;
 END;
 $$ LANGUAGE plpgsql VOLATILE STRICT SET timezone = 'UTC';
