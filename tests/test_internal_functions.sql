@@ -341,13 +341,14 @@ SELECT 'calculate_safe_iteration_limit()', 'NULL count + NULL max = NULL',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_month_byday_set()', 'Generate Mondays in January 2025',
-    assert_equals('4 or 5 Mondays', 'true',
-        (SELECT (COUNT(*) BETWEEN 4 AND 5)::TEXT FROM rrule.rrule_month_byday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO'], NULL)));
+    assert_equals('4 Mondays', '4',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_month_byday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO'], NULL)));
 
+-- January 2025: 4 Mondays (6,13,20,27) + 5 Wednesdays (1,8,15,22,29) + 5 Fridays (3,10,17,24,31) = 14
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_month_byday_set()', 'Generate MO,WE,FR in January 2025',
-    assert_equals('12-15 days', 'true',
-        (SELECT (COUNT(*) BETWEEN 12 AND 15)::TEXT FROM rrule.rrule_month_byday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO','WE','FR'], NULL)));
+    assert_equals('14 days', '14',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_month_byday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO','WE','FR'], NULL)));
 
 -- ============================================================================
 -- SECTION 12: rrule_month_bymonthday_set() Tests

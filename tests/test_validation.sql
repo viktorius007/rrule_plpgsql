@@ -1128,7 +1128,7 @@ VALUES ('BYxxx Parse Failure', 'BYSECOND=FOO (unparseable)',
 -- Timezone Validation Tests (validate_timezone helper function)
 ------------------------------------------------------------------------------------------------------
 
--- Test 5.1: Valid timezone should succeed
+-- Test 7.1: Valid timezone should succeed
 DO $$
 DECLARE
   test_passed BOOLEAN := TRUE;
@@ -1147,7 +1147,7 @@ BEGIN
   );
 END $$;
 
--- Test 5.2: NULL timezone should succeed (optional parameter)
+-- Test 7.2: NULL timezone should succeed (optional parameter)
 DO $$
 DECLARE
   test_passed BOOLEAN := TRUE;
@@ -1166,7 +1166,7 @@ BEGIN
   );
 END $$;
 
--- Test 5.3: Invalid timezone should raise exception
+-- Test 7.3: Invalid timezone should raise exception
 DO $$
 DECLARE
   test_passed BOOLEAN := FALSE;
@@ -1187,7 +1187,7 @@ BEGIN
   );
 END $$;
 
--- Test 5.4: Integration with rrule."all"() TZID parameter
+-- Test 7.4: Integration with rrule."all"() TZID parameter
 DO $$
 DECLARE
   test_passed BOOLEAN := FALSE;
@@ -1209,12 +1209,12 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- SECTION 6: BYHOUR/BYMINUTE/BYSECOND Frequency Restriction Tests
+-- SECTION 8: BYHOUR/BYMINUTE/BYSECOND Frequency Restriction Tests
 -- ============================================================================
 \echo ''
-\echo '--- Section 6: BYHOUR/BYMINUTE/BYSECOND Frequency Restrictions ---'
+\echo '--- Section 8: BYHOUR/BYMINUTE/BYSECOND Frequency Restrictions ---'
 
--- Test 6.1: BYHOUR with WEEKLY should be rejected
+-- Test 8.1: BYHOUR with WEEKLY should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=WEEKLY (should be rejected)',
     assert_rrule_rejected(
@@ -1224,7 +1224,7 @@ VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=WEEKLY (shoul
     )
 );
 
--- Test 6.2: BYHOUR with MONTHLY should be rejected
+-- Test 8.2: BYHOUR with MONTHLY should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=MONTHLY (should be rejected)',
     assert_rrule_rejected(
@@ -1234,7 +1234,7 @@ VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=MONTHLY (shou
     )
 );
 
--- Test 6.3: BYHOUR with YEARLY should be rejected
+-- Test 8.3: BYHOUR with YEARLY should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=YEARLY (should be rejected)',
     assert_rrule_rejected(
@@ -1244,7 +1244,7 @@ VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=YEARLY (shoul
     )
 );
 
--- Test 6.4: BYMINUTE with MONTHLY should be rejected
+-- Test 8.4: BYMINUTE with MONTHLY should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYMINUTE with FREQ=MONTHLY (should be rejected)',
     assert_rrule_rejected(
@@ -1254,13 +1254,41 @@ VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYMINUTE with FREQ=MONTHLY (sh
     )
 );
 
--- Test 6.5: BYSECOND with YEARLY should be rejected
+-- Test 8.5: BYSECOND with YEARLY should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYSECOND with FREQ=YEARLY (should be rejected)',
     assert_rrule_rejected(
         'BYSECOND with YEARLY',
         'FREQ=YEARLY;BYSECOND=0;COUNT=3',
         '%BYSECOND is not supported with FREQ=YEARLY%'
+    )
+);
+
+-- ============================================================================
+-- SECTION 9: Additional Edge Case Validations
+-- ============================================================================
+\echo ''
+\echo '--- Section 9: Additional Edge Case Validations ---'
+
+-- Test 9.1: Empty RRULE string should be rejected (missing FREQ)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Empty/Malformed RRULE', 'Empty string (should be rejected)',
+    assert_rrule_rejected(
+        'Empty RRULE',
+        '',
+        '%FREQ parameter is required%'
+    )
+);
+
+-- Test 9.2: Negative INTERVAL value
+-- Note: The parser regex captures digits only, so INTERVAL=-1 silently parses as INTERVAL=1.
+-- This test documents current behavior (silently accepted, treated as positive).
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Validation', 'INTERVAL=-1 (silently treated as INTERVAL=1)',
+    assert_rrule_accepted(
+        'INTERVAL=-1 silently accepted',
+        'FREQ=DAILY;INTERVAL=-1;COUNT=3',
+        3
     )
 );
 

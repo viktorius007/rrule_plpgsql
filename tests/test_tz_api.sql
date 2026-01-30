@@ -48,11 +48,14 @@ CREATE TEMPORARY TABLE tz_api_test_results (
 );
 
 -- Helper function for simple assert tests (used by count/next/most_recent/overlaps tests)
+-- This file uses its own assert_equal helper instead of helpers.sql because the TIMESTAMPTZ API
+-- test pattern uses a 4-param signature (test_suite, test_name, actual, expected) and inserts
+-- results into the tz_api_test_results table for per-suite tracking.
 CREATE OR REPLACE FUNCTION assert_equal(test_suite TEXT, test_name TEXT, actual TEXT, expected TEXT)
 RETURNS TEXT AS $$
 BEGIN
-    INSERT INTO tz_api_test_results VALUES (test_suite, test_name, actual = expected, actual, expected);
-    IF actual = expected THEN
+    INSERT INTO tz_api_test_results VALUES (test_suite, test_name, actual IS NOT DISTINCT FROM expected, actual, expected);
+    IF actual IS NOT DISTINCT FROM expected THEN
         RETURN '✓';
     ELSE
         RAISE WARNING 'Test failed: %', test_name;
@@ -818,9 +821,7 @@ $$;
 \echo '=================================================='
 \echo ''
 
--- Test 9.1: next() with explicit timezone parameter
--- Note: next() returns occurrence after current time, so result depends on when test runs
--- We test that the function returns a valid TIMESTAMPTZ (not NULL) for an infinite recurrence
+-- Test 9.1: next() with explicit timezone parameter (deterministic with fixed reference_time)
 DO $$
 DECLARE
     result TIMESTAMPTZ;
@@ -829,15 +830,15 @@ BEGIN
     SELECT rrule."next"(
         'FREQ=DAILY',
         '2020-01-01 10:00:00-05'::TIMESTAMPTZ,
-        'America/New_York'
+        'America/New_York',
+        '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    -- Test that result is not NULL and is a valid timestamp
     status := assert_equal(
         'next() API',
-        'Returns valid TIMESTAMPTZ for infinite recurrence',
-        CASE WHEN result IS NOT NULL THEN 'valid' ELSE 'null' END,
-        'valid'
+        'Returns next daily occurrence after reference_time',
+        result::TEXT,
+        '2025-06-15 14:00:00+00'
     );
 
     RAISE NOTICE 'Test 9.1: next() with explicit timezone % - Result: %', status, result;
@@ -1008,8 +1009,9 @@ DECLARE
 BEGIN
     SELECT rrule."most_recent"(
         'FREQ=DAILY',
-        ('2026-06-15 12:00:00+00'::TIMESTAMPTZ + INTERVAL '1 year'),
-        'UTC'
+        '2099-01-01 10:00:00+00'::TIMESTAMPTZ,
+        'UTC',
+        '2025-01-01 00:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
     status := assert_equal(

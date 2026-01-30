@@ -39,6 +39,7 @@ SET search_path = public;
 
 BEGIN;
 
+\i tests/helpers.sql
 
 \echo ''
 \echo '==================================================================='
@@ -70,7 +71,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     expected := ARRAY[
         '2025-01-06 00:00:00'::TIMESTAMP,
         '2025-02-03 00:00:00'::TIMESTAMP,
@@ -101,7 +101,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     expected := ARRAY[
         '2025-01-13 00:00:00'::TIMESTAMP,
         '2025-02-10 00:00:00'::TIMESTAMP,
@@ -133,7 +132,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     expected := ARRAY[
         '2025-01-27 00:00:00'::TIMESTAMP,
         '2025-02-24 00:00:00'::TIMESTAMP,
@@ -164,7 +162,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     expected := ARRAY[
         '2025-01-20 00:00:00'::TIMESTAMP,
         '2025-02-17 00:00:00'::TIMESTAMP,
@@ -204,7 +201,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     -- Expected: 1st Mon (Jan 6), 3rd Mon (Jan 20), 1st Mon (Feb 3)
     expected := ARRAY[
         '2025-01-06 00:00:00'::TIMESTAMP,
@@ -236,7 +232,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     -- Should get 2 per month (first and last Monday), COUNT=4 means 4 total
     expected := ARRAY[
         '2025-01-06 00:00:00'::TIMESTAMP,
@@ -269,7 +264,6 @@ DECLARE
     expected TIMESTAMP[];
     actual TIMESTAMP[];
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     -- Weekly, all weekdays (MO-FR), get only first 2 each week
     -- Should get 2 per week (first 2 weekdays), stop at COUNT=3 means 3 total
     expected := ARRAY[
@@ -310,7 +304,6 @@ CREATE OR REPLACE FUNCTION test_bysetpos_out_of_range() RETURNS TEXT AS $$
 DECLARE
     result_count INT;
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
     FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=6;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
@@ -335,7 +328,6 @@ CREATE OR REPLACE FUNCTION test_bysetpos_out_of_range_negative() RETURNS TEXT AS
 DECLARE
     result_count INT;
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
     FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-10;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
@@ -360,7 +352,6 @@ CREATE OR REPLACE FUNCTION test_bysetpos_count_one() RETURNS TEXT AS $$
 DECLARE
     result_count INT;
 BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
     SELECT COUNT(*) INTO result_count
     FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
 
@@ -380,100 +371,27 @@ VALUES (
 );
 
 -- Test 3.4: Mixed positive and negative with gaps (BYSETPOS=1,3,-2,-1)
-CREATE OR REPLACE FUNCTION test_bysetpos_mixed_complex() RETURNS TEXT AS $$
-DECLARE
-    result_count INT;
-BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3,-2,-1;COUNT=8', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
-
-    -- Should get 4 per month (1st, 3rd, 2nd-to-last, last), COUNT=8 means 8 total
-    IF result_count = 8 THEN
-        RETURN 'PASSED';
-    ELSE
-        RETURN 'FAILED - Expected 8 results, got ' || result_count;
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Jan 2025 Mondays: 6,13,20,27 → pos 1=6, pos 3=20, pos -2=20, pos -1=27
+-- After dedup: 6, 20, 27 from Jan; then Feb Mondays: 3,10,17,24 → 3, 17, 17, 24 → 3, 17, 24
+-- COUNT=8 picks first 8 distinct from rolling months
 INSERT INTO bysetpos_test_results (test_category, test_name, status)
 VALUES (
     'Edge Cases',
     'BYSETPOS=1,3,-2,-1 (complex mixed)',
-    test_bysetpos_mixed_complex()
-);
-
-------------------------------------------------------------------------------------------------------
--- Category 4: Correctness Verification
-------------------------------------------------------------------------------------------------------
-\echo ''
-\echo '==================================================================='
-\echo 'Category 4: Correctness Verification'
-\echo '==================================================================='
-
--- Test 4.1: Verify first Monday dates are correct
-CREATE OR REPLACE FUNCTION test_bysetpos_first_monday_dates() RETURNS TEXT AS $$
-DECLARE
-    expected TIMESTAMP[];
-    actual TIMESTAMP[];
-BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
-    -- First Monday of Jan, Feb, Mar 2025
-    expected := ARRAY[
-        '2025-01-06 00:00:00'::TIMESTAMP,
-        '2025-02-03 00:00:00'::TIMESTAMP,
-        '2025-03-03 00:00:00'::TIMESTAMP
-    ];
-
-    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
-    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
-
-    IF actual = expected THEN
-        RETURN 'PASSED';
-    ELSE
-        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
-
-INSERT INTO bysetpos_test_results (test_category, test_name, status)
-VALUES (
-    'Correctness Verification',
-    'First Monday dates are correct',
-    test_bysetpos_first_monday_dates()
-);
-
--- Test 4.2: Verify last Monday dates are correct
-CREATE OR REPLACE FUNCTION test_bysetpos_last_monday_dates() RETURNS TEXT AS $$
-DECLARE
-    expected TIMESTAMP[];
-    actual TIMESTAMP[];
-BEGIN
-    PERFORM set_config('timezone', 'UTC', false);
-    -- Last Monday of Jan, Feb, Mar 2025
-    expected := ARRAY[
-        '2025-01-27 00:00:00'::TIMESTAMP,
-        '2025-02-24 00:00:00'::TIMESTAMP,
-        '2025-03-31 00:00:00'::TIMESTAMP
-    ];
-
-    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
-    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2025-01-01'::TIMESTAMP)) AS t(occurrence);
-
-    IF actual = expected THEN
-        RETURN 'PASSED';
-    ELSE
-        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
-
-INSERT INTO bysetpos_test_results (test_category, test_name, status)
-VALUES (
-    'Correctness Verification',
-    'Last Monday dates are correct',
-    test_bysetpos_last_monday_dates()
+    assert_occurrences_equal(
+        'BYSETPOS=1,3,-2,-1 mixed complex',
+        ARRAY[
+            '2025-01-06 00:00:00'::TIMESTAMP,
+            '2025-01-20 00:00:00'::TIMESTAMP,
+            '2025-01-27 00:00:00'::TIMESTAMP,
+            '2025-02-03 00:00:00'::TIMESTAMP,
+            '2025-02-17 00:00:00'::TIMESTAMP,
+            '2025-02-24 00:00:00'::TIMESTAMP,
+            '2025-03-03 00:00:00'::TIMESTAMP,
+            '2025-03-17 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3,-2,-1;COUNT=8', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
 );
 
 ------------------------------------------------------------------------------------------------------

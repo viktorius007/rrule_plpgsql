@@ -1578,6 +1578,144 @@ BEGIN
     END IF;
 END $$;
 
+-- ============================================================================
+-- SECTION 14: Version, API Limits, and Additional Coverage Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 14: Version, API Limits, and Additional Coverage ---'
+
+-- Coverage Gap 15: version() function untested
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'version() API',
+    'Test 14.1: version() returns semver string',
+    assert_true(
+        'version() semver',
+        (SELECT rrule."version"() ~ '^\d+\.\d+\.\d+$')
+    );
+
+-- Coverage Gap 17: BYSETPOS + YEARLY undertested
+-- First weekday of Jan 2025 = Jan 1 (Wed), last weekday = Jan 31 (Fri)
+-- First weekday of Jul 2025 = Jul 1 (Tue), last weekday = Jul 31 (Thu)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYSETPOS + YEARLY',
+    'Test 14.2: BYSETPOS=1,-1 with YEARLY BYMONTH BYDAY weekdays',
+    assert_equals(
+        'BYSETPOS+YEARLY first/last weekday',
+        '{"2025-01-01 00:00:00","2025-07-31 00:00:00","2026-01-01 00:00:00","2026-07-31 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=1,7;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1;COUNT=4',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Coverage Gap 18: WKST + INTERVAL>1 + BYDAY interaction
+-- dtstart=Sunday Jan 5 exposes difference: WKST=SU starts week on Jan 5, WKST=MO starts on Jan 6
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'WKST + INTERVAL>1',
+    'Test 14.3: WKST=SU biweekly TU,TH (week starts Sunday)',
+    assert_equals(
+        'WKST=SU biweekly',
+        '{"2025-01-07 00:00:00","2025-01-09 00:00:00","2025-01-21 00:00:00","2025-01-23 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=SU;COUNT=4',
+            '2025-01-05 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'WKST + INTERVAL>1',
+    'Test 14.4: WKST=MO biweekly TU,TH (different week boundary)',
+    assert_equals(
+        'WKST=MO biweekly',
+        '{"2025-01-14 00:00:00","2025-01-16 00:00:00","2025-01-28 00:00:00","2025-01-30 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=MO;COUNT=4',
+            '2025-01-05 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Coverage Gap 19: 1000-result cap
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Limits',
+    'Test 14.5: all() caps at 1000 results for infinite rule',
+    assert_equals(
+        '1000-result cap',
+        '1000',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=DAILY',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))
+    );
+
+-- Coverage Gap 20: 10-year window cap
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Limits',
+    'Test 14.6: all() caps at 10-year window from dtstart',
+    assert_true(
+        '10-year window cap',
+        (SELECT MAX(d) <= '2025-01-01 00:00:00'::TIMESTAMP + INTERVAL '10 years'
+         FROM rrule."all"(
+            'FREQ=YEARLY;COUNT=20',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) d)
+    );
+
+-- Coverage Gap 21: Very large INTERVAL values
+-- INTERVAL=10000 days = ~27 years; from 2025-01-01, only 1 result fits in 10-year window
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Large INTERVAL',
+    'Test 14.7: DAILY INTERVAL=10000 COUNT=3 completes without error',
+    assert_equals(
+        'Large INTERVAL result',
+        '1',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=DAILY;INTERVAL=10000;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))
+    );
+
+-- Coverage Gap 22: overlaps() with 5-param signature (no timezone parameter)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'overlaps() 5-param',
+    'Test 14.8: overlaps() 5-param signature (match)',
+    assert_equals(
+        'overlaps 5-param TRUE',
+        'true',
+        (SELECT rrule."overlaps"(
+            '2025-01-15 10:00:00+00'::TIMESTAMPTZ,
+            '2025-01-15 11:00:00+00'::TIMESTAMPTZ,
+            'FREQ=DAILY;COUNT=5',
+            '2025-01-10 00:00:00+00'::TIMESTAMPTZ,
+            '2025-01-20 23:59:59+00'::TIMESTAMPTZ,
+            NULL::TEXT
+        )::TEXT)
+    );
+
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'overlaps() 5-param',
+    'Test 14.9: overlaps() 5-param signature (no match)',
+    assert_equals(
+        'overlaps 5-param FALSE',
+        'false',
+        (SELECT rrule."overlaps"(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            '2025-01-01 11:00:00+00'::TIMESTAMPTZ,
+            'FREQ=DAILY;COUNT=3',
+            '2025-02-01 00:00:00+00'::TIMESTAMPTZ,
+            '2025-02-28 23:59:59+00'::TIMESTAMPTZ,
+            NULL::TEXT
+        )::TEXT)
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE

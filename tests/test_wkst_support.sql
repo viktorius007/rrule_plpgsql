@@ -500,18 +500,21 @@ VALUES ('BYWEEKNO=53 with BYDAY=TH',
 );
 
 -- Test: Negative BYWEEKNO=-1 should find the last week of each year
--- For 2025 (52-week year), week -1 = week 52
--- For 2026 (53-week year), week -1 = week 53
+-- For 2025 (52-week year), week -1 = week 52 → Monday = 2025-12-22
+-- For 2026 (53-week year), week -1 = week 53 → Monday = 2026-12-28
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('BYWEEKNO=-1 finds last week of year',
-    (SELECT CASE
-        WHEN COUNT(*) = 2
-        THEN 'PASS [BYWEEKNO=-1 last week of year]'
-        ELSE 'FAIL [Expected 2, got ' || COUNT(*) || ']'
-    END FROM rrule."all"(
-        'FREQ=YEARLY;BYWEEKNO=-1;BYDAY=MO;COUNT=2',
-        '2025-01-01 10:00:00'::TIMESTAMP
-    ) AS occurrence)
+    assert_occurrences_equal(
+        'BYWEEKNO=-1 last week of year',
+        ARRAY[
+            '2025-12-22 10:00:00'::TIMESTAMP,
+            '2026-12-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYWEEKNO=-1;BYDAY=MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
 );
 
 \echo ''

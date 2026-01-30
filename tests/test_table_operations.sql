@@ -253,7 +253,7 @@ INSERT INTO test_results VALUES (9, 'Create calendar events',
 -- Proposed meeting: 2025-01-07 14:15 for 30 minutes (should conflict with Weekly 1:1)
 INSERT INTO test_results VALUES (10, 'Conflict detection: find overlapping events',
     (SELECT CASE
-        WHEN COUNT(*) >= 1  -- Should find at least the Weekly 1:1 conflict
+        WHEN COUNT(*) = 1  -- Exactly the Weekly 1:1 conflict (14:00-14:30 overlaps 14:15-14:45)
         THEN 'PASS'
         ELSE 'FAIL'
     END
@@ -305,7 +305,7 @@ INSERT INTO test_results VALUES (11, 'Create room bookings',
 -- Looking for availability on 2025-01-08 10:00-12:00
 INSERT INTO test_results VALUES (12, 'Resource availability: find free rooms',
     (SELECT CASE
-        WHEN COUNT(*) >= 1  -- Should find at least room 2 available
+        WHEN COUNT(*) = 2  -- Both rooms available: room 1 standup ends 09:30 (before 10:00), client meeting at 14:00 (after 12:00)
         THEN 'PASS'
         ELSE 'FAIL'
     END
@@ -410,7 +410,7 @@ INSERT INTO test_results VALUES (16, 'Window functions: occurrence ranking',
 -- Test 17: Subquery with occurrence filtering
 INSERT INTO test_results VALUES (17, 'Subquery: filter by occurrence count',
     (SELECT CASE
-        WHEN COUNT(*) > 0  -- Should find events with >10 occurrences
+        WHEN COUNT(*) = 3  -- Daily Standup (500), Weekly Review (200), Monthly Planning (120) all have >10
         THEN 'PASS'
         ELSE 'FAIL'
     END
