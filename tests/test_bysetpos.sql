@@ -395,6 +395,48 @@ VALUES (
 );
 
 ------------------------------------------------------------------------------------------------------
+-- Category 4: YEARLY + BYSETPOS Tests
+------------------------------------------------------------------------------------------------------
+\echo ''
+\echo '==================================================================='
+\echo 'Category 4: YEARLY + BYSETPOS'
+\echo '==================================================================='
+
+-- Test 4.1: First Monday of each year (BYSETPOS=1)
+-- 2025: Jan 6, 2026: Jan 5, 2027: Jan 4
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'YEARLY BYSETPOS',
+    'BYSETPOS=1 (first Monday of year)',
+    assert_occurrences_equal(
+        'First Monday of year',
+        ARRAY[
+            '2025-01-06 00:00:00'::TIMESTAMP,
+            '2026-01-05 00:00:00'::TIMESTAMP,
+            '2027-01-04 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYDAY=MO;BYSETPOS=1;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 4.2: Last Monday of each year (BYSETPOS=-1)
+-- 2025: Dec 29, 2026: Dec 28, 2027: Dec 27
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'YEARLY BYSETPOS',
+    'BYSETPOS=-1 (last Monday of year)',
+    assert_occurrences_equal(
+        'Last Monday of year',
+        ARRAY[
+            '2025-12-29 00:00:00'::TIMESTAMP,
+            '2026-12-28 00:00:00'::TIMESTAMP,
+            '2027-12-27 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYDAY=MO;BYSETPOS=-1;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+------------------------------------------------------------------------------------------------------
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------
 \echo ''

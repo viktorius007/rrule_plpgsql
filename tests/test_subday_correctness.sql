@@ -137,9 +137,9 @@ INSERT INTO subday_test_results (test_category, test_name, status)
 SELECT
     'HOURLY Filters',
     'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=4 only Monday occurrences',
-    CASE WHEN COUNT(*) = COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)
+    CASE WHEN COUNT(*) = 4 AND COUNT(*) = COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)
     THEN 'PASS'
-    ELSE 'FAIL - Non-Monday occurrences found' END
+    ELSE 'FAIL - Expected 4 Monday occurrences, got ' || COUNT(*)::TEXT || ' total, ' || COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)::TEXT || ' Mondays' END
 FROM rrule."all"(
     'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=4',
     '2025-01-06 10:00:00'::TIMESTAMP  -- Monday

@@ -119,6 +119,17 @@ INSERT INTO test_results VALUES (3, 'Query: subscriptions due in next 7 days',
       AND next_billing_date <= '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '7 days')
 );
 
+-- Test 3a: Verify specific plan names due in next 7 days
+INSERT INTO test_results VALUES (30, 'Specific plans: Premium Monthly and Basic Weekly due',
+    (SELECT CASE
+        WHEN array_agg(plan_name ORDER BY plan_name) = ARRAY['Basic Weekly', 'Premium Monthly']
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(array_agg(plan_name ORDER BY plan_name)::TEXT, 'NULL')
+    END FROM subscriptions
+    WHERE status = 'active'
+      AND next_billing_date <= '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '7 days')
+);
+
 -- Test 4: Generate billing schedule (next 3 occurrences) using LATERAL JOIN
 INSERT INTO test_results VALUES (4, 'LATERAL JOIN: generate billing schedules',
     (SELECT CASE
@@ -149,6 +160,31 @@ INSERT INTO test_results VALUES (5, 'Aggregation: revenue forecast by month',
         SELECT
             DATE_TRUNC('month', occurrence) AS billing_month,
             SUM(s.amount) AS expected_revenue
+        FROM subscriptions s
+        CROSS JOIN LATERAL (
+            SELECT occurrence FROM rrule."between"(
+                s.rrule,
+                s.subscription_start,
+                '2025-02-05 12:00:00+00'::TIMESTAMPTZ,
+                '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '3 months'
+            ) AS occurrence
+        ) AS occ
+        WHERE s.status = 'active'
+        GROUP BY billing_month
+    ) revenue_by_month)
+);
+
+-- Test 5a: Verify specific billing months (Feb, Mar, Apr, May 2025)
+INSERT INTO test_results VALUES (50, 'Specific months: Feb, Mar, Apr, May 2025',
+    (SELECT CASE
+        WHEN array_agg(DISTINCT TO_CHAR(billing_month, 'YYYY-MM') ORDER BY TO_CHAR(billing_month, 'YYYY-MM'))
+             = ARRAY['2025-02', '2025-03', '2025-04', '2025-05']
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(array_agg(DISTINCT TO_CHAR(billing_month, 'YYYY-MM') ORDER BY TO_CHAR(billing_month, 'YYYY-MM'))::TEXT, 'NULL')
+    END
+    FROM (
+        SELECT
+            DATE_TRUNC('month', occurrence) AS billing_month
         FROM subscriptions s
         CROSS JOIN LATERAL (
             SELECT occurrence FROM rrule."between"(
@@ -308,6 +344,31 @@ INSERT INTO test_results VALUES (12, 'Resource availability: find free rooms',
         WHEN COUNT(*) = 2  -- Both rooms available: room 1 standup ends 09:30 (before 10:00), client meeting at 14:00 (after 12:00)
         THEN 'PASS'
         ELSE 'FAIL'
+    END
+    FROM (
+        SELECT DISTINCT room_id
+        FROM room_bookings
+    ) all_rooms
+    WHERE room_id NOT IN (
+        SELECT DISTINCT rb.room_id
+        FROM room_bookings rb
+        CROSS JOIN LATERAL (
+            SELECT occurrence FROM rrule."between"(
+                rb.rrule,
+                rb.booking_start,
+                '2025-01-08 09:00:00+00'::TIMESTAMPTZ,
+                '2025-01-08 13:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
+        WHERE occurrence < '2025-01-08 12:00:00+00'::TIMESTAMPTZ
+          AND occurrence + (rb.duration_minutes || ' minutes')::INTERVAL > '2025-01-08 10:00:00+00'::TIMESTAMPTZ
+    ))
+);
+
+-- Test 12a: Verify specific room_ids that are available
+INSERT INTO test_results VALUES (120, 'Specific rooms: room 1 and room 2 available',
+    (SELECT CASE
+        WHEN array_agg(room_id ORDER BY room_id) = ARRAY[1, 2]
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(array_agg(room_id ORDER BY room_id)::TEXT, 'NULL')
     END
     FROM (
         SELECT DISTINCT room_id

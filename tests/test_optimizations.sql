@@ -397,6 +397,153 @@ VALUES (
     test_correctness_monthly()
 );
 
+-- Test 5.3: Verify DAILY correctness
+CREATE OR REPLACE FUNCTION test_correctness_daily() RETURNS TEXT AS $$
+DECLARE
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-02 10:00:00'::TIMESTAMP,
+        '2025-01-03 10:00:00'::TIMESTAMP,
+        '2025-01-04 10:00:00'::TIMESTAMP,
+        '2025-01-05 10:00:00'::TIMESTAMP,
+        '2025-01-06 10:00:00'::TIMESTAMP,
+        '2025-01-07 10:00:00'::TIMESTAMP,
+        '2025-01-08 10:00:00'::TIMESTAMP,
+        '2025-01-09 10:00:00'::TIMESTAMP,
+        '2025-01-10 10:00:00'::TIMESTAMP
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=DAILY;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
+        RETURN 'PASSED';
+    ELSE
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Correctness Verification',
+    'DAILY COUNT=10 produces correct consecutive dates',
+    test_correctness_daily()
+);
+
+-- Test 5.4: Verify MONTHLY+BYMONTHDAY correctness
+CREATE OR REPLACE FUNCTION test_correctness_monthly_bymonthday() RETURNS TEXT AS $$
+DECLARE
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
+BEGIN
+    -- BYMONTHDAY=1,15,31: Jan 1, Jan 15, Jan 31, Feb 1, Feb 15 (Feb has no 31st, skipped)
+    expected := ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-01-15 00:00:00'::TIMESTAMP,
+        '2025-01-31 00:00:00'::TIMESTAMP,
+        '2025-02-01 00:00:00'::TIMESTAMP,
+        '2025-02-15 00:00:00'::TIMESTAMP
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=1,15,31;COUNT=5', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
+        RETURN 'PASSED';
+    ELSE
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Correctness Verification',
+    'MONTHLY BYMONTHDAY=1,15,31 produces correct dates',
+    test_correctness_monthly_bymonthday()
+);
+
+-- Test 5.5: Verify WEEKLY+multi-BYDAY correctness
+CREATE OR REPLACE FUNCTION test_correctness_weekly_multi_byday() RETURNS TEXT AS $$
+DECLARE
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
+BEGIN
+    -- 2025-01-01 is Wednesday; BYDAY=MO,WE,FR
+    -- Week 1: Wed Jan 1, Fri Jan 3
+    -- Week 2: Mon Jan 6, Wed Jan 8, Fri Jan 10
+    -- Week 3: Mon Jan 13, Wed Jan 15, Fri Jan 17
+    -- Week 4: Mon Jan 20
+    expected := ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-01-03 00:00:00'::TIMESTAMP,
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-01-08 00:00:00'::TIMESTAMP,
+        '2025-01-10 00:00:00'::TIMESTAMP,
+        '2025-01-13 00:00:00'::TIMESTAMP,
+        '2025-01-15 00:00:00'::TIMESTAMP,
+        '2025-01-17 00:00:00'::TIMESTAMP,
+        '2025-01-20 00:00:00'::TIMESTAMP
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=9', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
+        RETURN 'PASSED';
+    ELSE
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Correctness Verification',
+    'WEEKLY BYDAY=MO,WE,FR produces correct dates',
+    test_correctness_weekly_multi_byday()
+);
+
+-- Test 5.6: Verify YEARLY+BYMONTH correctness
+CREATE OR REPLACE FUNCTION test_correctness_yearly_bymonth() RETURNS TEXT AS $$
+DECLARE
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
+BEGIN
+    -- YEARLY;BYMONTH=1,6,12 starting 2025-01-01
+    -- Year 1: Jan 1, Jun 1, Dec 1
+    -- Year 2: Jan 1, Jun 1, Dec 1
+    expected := ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-06-01 00:00:00'::TIMESTAMP,
+        '2025-12-01 00:00:00'::TIMESTAMP,
+        '2026-01-01 00:00:00'::TIMESTAMP,
+        '2026-06-01 00:00:00'::TIMESTAMP,
+        '2026-12-01 00:00:00'::TIMESTAMP
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=YEARLY;BYMONTH=1,6,12;COUNT=6', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
+        RETURN 'PASSED';
+    ELSE
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Correctness Verification',
+    'YEARLY BYMONTH=1,6,12 produces correct dates',
+    test_correctness_yearly_bymonth()
+);
+
 ------------------------------------------------------------------------------------------------------
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------

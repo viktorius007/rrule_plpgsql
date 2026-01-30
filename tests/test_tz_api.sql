@@ -1333,6 +1333,24 @@ BEGIN
         result_count::TEXT,
         '3'
     );
+
+    -- Verify exact timestamps:
+    -- Mar 8: 2:30 AM EST = 07:30 UTC
+    -- Mar 9: 2:30 AM doesn't exist (spring forward); PG advances to 3:30 AM EDT = 07:30 UTC
+    -- Mar 10: 2:30 AM EDT = 06:30 UTC
+    INSERT INTO tz_api_test_results VALUES (
+        'DST Gap Times',
+        'Spring-forward gap: exact UTC timestamps',
+        results IS NOT NULL
+            AND array_length(results, 1) = 3
+            AND EXTRACT(HOUR FROM results[1]) = 7 AND EXTRACT(MINUTE FROM results[1]) = 30
+            AND results[1]::DATE = '2025-03-08'
+            AND results[2]::DATE = '2025-03-09'
+            AND results[3]::DATE = '2025-03-10'
+            AND EXTRACT(HOUR FROM results[3]) = 6 AND EXTRACT(MINUTE FROM results[3]) = 30,
+        COALESCE(results::TEXT, 'NULL'),
+        'Mar 8 07:30 UTC, Mar 9 (gap-advanced), Mar 10 06:30 UTC'
+    );
 END;
 $$;
 
@@ -1361,6 +1379,25 @@ BEGIN
         result_count = 3,
         result_count::TEXT,
         '3'
+    );
+
+    -- Verify exact timestamps:
+    -- Nov 1: 1:30 AM EDT = 05:30 UTC
+    -- Nov 2: 1:30 AM EST (PG picks standard time) = 06:30 UTC
+    -- Nov 3: 1:30 AM EST = 06:30 UTC
+    INSERT INTO tz_api_test_results VALUES (
+        'DST Gap Times',
+        'Fall-back ambiguous: exact UTC timestamps',
+        results IS NOT NULL
+            AND array_length(results, 1) = 3
+            AND results[1]::DATE = '2025-11-01'
+            AND EXTRACT(HOUR FROM results[1]) = 5 AND EXTRACT(MINUTE FROM results[1]) = 30
+            AND results[2]::DATE = '2025-11-02'
+            AND EXTRACT(HOUR FROM results[2]) = 6 AND EXTRACT(MINUTE FROM results[2]) = 30
+            AND results[3]::DATE = '2025-11-03'
+            AND EXTRACT(HOUR FROM results[3]) = 6 AND EXTRACT(MINUTE FROM results[3]) = 30,
+        COALESCE(results::TEXT, 'NULL'),
+        'Nov 1 05:30 UTC, Nov 2 06:30 UTC, Nov 3 06:30 UTC'
     );
 
     -- Phase C1: Assert which UTC offset PostgreSQL chooses for the ambiguous Nov 2 time.

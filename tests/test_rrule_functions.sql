@@ -1,13 +1,15 @@
 /**
- * Comprehensive Unit Tests for Pure PL/pgSQL RRULE Implementation
+ * Basic Unit Tests for Pure PL/pgSQL RRULE Implementation
  *
- * These tests verify that our PL/pgSQL RRULE functions behave identically
- * to the pg_rrule C extension and rrule.js library.
+ * These tests verify core RRULE function behavior for standard frequency
+ * patterns and BYxxx rules. Advanced features (BYSETPOS, timezone,
+ * sub-day frequencies, validation, optimizations, table operations) are
+ * covered by dedicated test files in tests/.
  *
- * Test categories:
+ * Test groups:
  * 1. Basic frequency patterns (DAILY, WEEKLY, MONTHLY, YEARLY)
  * 2. INTERVAL support
- * 3. COUNT and UNTIL limits
+ * 3. UNTIL limits
  * 4. BYDAY rules (weekdays)
  * 5. BYMONTHDAY rules (including negative indices for month-end)
  * 6. BYMONTH rules

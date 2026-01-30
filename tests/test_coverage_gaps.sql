@@ -693,7 +693,8 @@ SELECT
         'NULL',
         (SELECT COALESCE(rrule."next"(
             'FREQ=DAILY;COUNT=5',
-            '2020-01-01 10:00:00'::TIMESTAMP
+            '2020-01-01 10:00:00'::TIMESTAMP,
+            '2025-06-01 00:00:00'::TIMESTAMP
         )::TEXT, 'NULL'))
     );
 
@@ -707,7 +708,8 @@ SELECT
         'NULL',
         (SELECT COALESCE(rrule."next"(
             'FREQ=DAILY;UNTIL=20200131T235959Z',
-            '2020-01-01 10:00:00'::TIMESTAMP
+            '2020-01-01 10:00:00'::TIMESTAMP,
+            '2025-06-01 00:00:00'::TIMESTAMP
         )::TEXT, 'NULL'))
     );
 
@@ -1715,6 +1717,11 @@ SELECT
             NULL::TEXT
         )::TEXT)
     );
+
+-- NOTE: The true 5-param overlaps() (src/rrule.sql:2461) cannot be called distinctly
+-- because the 6-param version (src/rrule.sql:3156) has DEFAULT NULL for timezone,
+-- making the signatures ambiguous. Tests 14.8/14.9 above cover the NULL-timezone
+-- path which exercises the TIMESTAMP generator via the 6-param dispatch.
 
 -- Fail if any tests failed
 DO $$
