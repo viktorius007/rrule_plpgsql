@@ -241,7 +241,26 @@ VALUES ('YEARLY;BYWEEKNO=2;BYDAY=SU with WKST=SU',
     )
 );
 
--- Test 11: YEARLY;BYWEEKNO with multiple weeks and days (ISO week 2 + week 52)
+-- Test 11: YEARLY;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR with WKST=WE (mid-week start)
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('YEARLY;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR with WKST=WE',
+    assert_occurrences_equal(
+        'YEARLY;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR with WKST=WE',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,  -- Wed, week 1
+            '2025-01-02 10:00:00'::TIMESTAMP,  -- Thu, week 1
+            '2025-01-03 10:00:00'::TIMESTAMP,  -- Fri, week 1
+            '2025-01-06 10:00:00'::TIMESTAMP,  -- Mon, week 1
+            '2025-01-07 10:00:00'::TIMESTAMP   -- Tue, week 1
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;COUNT=5;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR;WKST=WE',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 12: YEARLY;BYWEEKNO with multiple weeks and days (ISO week 2 + week 52)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('YEARLY;BYWEEKNO=2,52;BYDAY=MO,FR with WKST=MO',
     assert_occurrences_equal(
@@ -263,7 +282,7 @@ VALUES ('YEARLY;BYWEEKNO=2,52;BYDAY=MO,FR with WKST=MO',
 \echo 'TEST GROUP 4: Year boundary edge cases'
 \echo '==================================================================='
 
--- Test 12: DAILY in first partial week with WKST=MO
+-- Test 13: DAILY in first partial week with WKST=MO
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('DAILY in first partial week with WKST=MO',
     assert_occurrences_equal(
@@ -282,7 +301,7 @@ VALUES ('DAILY in first partial week with WKST=MO',
     )
 );
 
--- Test 13: DAILY in last partial week with WKST=SU
+-- Test 14: DAILY in last partial week with WKST=SU
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('DAILY in last partial week with WKST=SU',
     assert_occurrences_equal(
@@ -300,7 +319,7 @@ VALUES ('DAILY in last partial week with WKST=SU',
     )
 );
 
--- Test 14: New Year's transition with WKST=TH (Thursday week start)
+-- Test 15: New Year's transition with WKST=TH (Thursday week start)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('New Year transition with WKST=TH',
     assert_occurrences_equal(
@@ -321,7 +340,7 @@ VALUES ('New Year transition with WKST=TH',
 \echo 'TEST GROUP 5: All 7 WKST values systematically'
 \echo '==================================================================='
 
--- Test 15: WKST=SU (Sunday = 0)
+-- Test 16: WKST=SU (Sunday = 0)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=SU (Sunday)',
     assert_occurrences_equal(
@@ -337,7 +356,7 @@ VALUES ('WEEKLY with WKST=SU (Sunday)',
     )
 );
 
--- Test 16: WKST=MO (Monday = 1)
+-- Test 17: WKST=MO (Monday = 1)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=MO (Monday)',
     assert_occurrences_equal(
@@ -353,7 +372,7 @@ VALUES ('WEEKLY with WKST=MO (Monday)',
     )
 );
 
--- Test 17: WKST=TU (Tuesday = 2)
+-- Test 18: WKST=TU (Tuesday = 2)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=TU (Tuesday)',
     assert_occurrences_equal(
@@ -369,7 +388,7 @@ VALUES ('WEEKLY with WKST=TU (Tuesday)',
     )
 );
 
--- Test 18: WKST=WE (Wednesday = 3)
+-- Test 19: WKST=WE (Wednesday = 3)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=WE (Wednesday)',
     assert_occurrences_equal(
@@ -385,7 +404,7 @@ VALUES ('WEEKLY with WKST=WE (Wednesday)',
     )
 );
 
--- Test 19: WKST=TH (Thursday = 4)
+-- Test 20: WKST=TH (Thursday = 4)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=TH (Thursday)',
     assert_occurrences_equal(
@@ -401,7 +420,7 @@ VALUES ('WEEKLY with WKST=TH (Thursday)',
     )
 );
 
--- Test 20: WKST=FR (Friday = 5)
+-- Test 21: WKST=FR (Friday = 5)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=FR (Friday)',
     assert_occurrences_equal(
@@ -417,7 +436,7 @@ VALUES ('WEEKLY with WKST=FR (Friday)',
     )
 );
 
--- Test 21: WKST=SA (Saturday = 6)
+-- Test 22: WKST=SA (Saturday = 6)
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY with WKST=SA (Saturday)',
     assert_occurrences_equal(
@@ -481,7 +500,7 @@ VALUES ('RFC 5545 canonical: WKST=MO INTERVAL=2 BYDAY=TU,TH',
     )
 );
 
--- Test 22: Missing WKST defaults to MO
+-- Test 23: Missing WKST defaults to MO
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY without WKST (defaults to MO)',
     assert_occurrences_equal(

@@ -17,7 +17,7 @@
 -- ================================================================================================================
 
 \set ON_ERROR_STOP on
-\set ECHO queries
+\set ECHO all
 \set QUIET off
 
 -- Ensure we're testing in UTC timezone for consistency
@@ -51,6 +51,11 @@ CREATE TEMPORARY TABLE tz_api_test_results (
 -- This file uses its own assert_equal helper instead of helpers.sql because the TIMESTAMPTZ API
 -- test pattern uses a 4-param signature (test_suite, test_name, actual, expected) and inserts
 -- results into the tz_api_test_results table for per-suite tracking.
+--
+-- ASSERTION PATTERN: This file uses a soft-fail assertion pattern (RAISE WARNING + insert passed=false)
+-- instead of the hard-fail pattern (RAISE EXCEPTION) used in other test files. This allows all tests
+-- within a suite to execute even if earlier tests fail, collecting all failures for the end-of-file
+-- summary. The final DO block raises EXCEPTION if any failures occurred, ensuring CI still catches them.
 CREATE OR REPLACE FUNCTION assert_equal(test_suite TEXT, test_name TEXT, actual TEXT, expected TEXT)
 RETURNS TEXT AS $$
 BEGIN
@@ -1831,7 +1836,7 @@ INSERT INTO tz_api_test_results (test_suite, test_name, passed, actual, expected
 SELECT
     'Overlaps Boundary',
     'TIMESTAMPTZ overlaps() detects boundary occurrence',
-    rrule.overlaps(
+    rrule."overlaps"(
         '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
         NULL::TIMESTAMPTZ,
         'FREQ=DAILY;COUNT=5',
@@ -1839,7 +1844,7 @@ SELECT
         '2025-01-05 10:00:00-05'::TIMESTAMPTZ,
         'America/New_York'
     ) = TRUE,
-    (rrule.overlaps(
+    (rrule."overlaps"(
         '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
         NULL::TIMESTAMPTZ,
         'FREQ=DAILY;COUNT=5',

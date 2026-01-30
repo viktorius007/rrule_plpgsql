@@ -805,13 +805,25 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'all() Edge Cases',
     'BYMONTHDAY=30 skips February',
-    assert_equals(
+    assert_occurrences_equal(
         'Skip Feb 30',
-        '11',
-        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+        ARRAY[
+            '2025-01-30 10:00:00'::TIMESTAMP,
+            '2025-03-30 10:00:00'::TIMESTAMP,
+            '2025-04-30 10:00:00'::TIMESTAMP,
+            '2025-05-30 10:00:00'::TIMESTAMP,
+            '2025-06-30 10:00:00'::TIMESTAMP,
+            '2025-07-30 10:00:00'::TIMESTAMP,
+            '2025-08-30 10:00:00'::TIMESTAMP,
+            '2025-09-30 10:00:00'::TIMESTAMP,
+            '2025-10-30 10:00:00'::TIMESTAMP,
+            '2025-11-30 10:00:00'::TIMESTAMP,
+            '2025-12-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYMONTHDAY=30;COUNT=11',
             '2025-01-30 10:00:00'::TIMESTAMP
-        ))
+        ) AS occurrence)
     );
 
 -- Test 6.2: all() with BYDAY ordinal at month end
@@ -819,13 +831,17 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'all() Edge Cases',
     'Last Friday of month (-1FR)',
-    assert_equals(
+    assert_occurrences_equal(
         'Last Friday',
-        '3',
-        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-03-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYDAY=-1FR;COUNT=3',
             '2025-01-31 10:00:00'::TIMESTAMP
-        ))
+        ) AS occurrence)
     );
 
 -- Test 6.3: all() with multiple BYMONTH
@@ -833,13 +849,18 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'all() Edge Cases',
     'Multiple BYMONTH values',
-    assert_equals(
+    assert_occurrences_equal(
         'Multiple months',
-        '4',
-        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+        ARRAY[
+            '2025-01-15 10:00:00'::TIMESTAMP,
+            '2025-04-15 10:00:00'::TIMESTAMP,
+            '2025-07-15 10:00:00'::TIMESTAMP,
+            '2025-10-15 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=YEARLY;BYMONTH=1,4,7,10;COUNT=4',
             '2025-01-15 10:00:00'::TIMESTAMP
-        ))
+        ) AS occurrence)
     );
 
 -- Test 6.4: all() with complex BYDAY combination
@@ -847,13 +868,18 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'all() Edge Cases',
     'Complex BYDAY: 2nd and 4th Tuesday',
-    assert_equals(
+    assert_occurrences_equal(
         'Complex BYDAY',
-        '4',
-        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+        ARRAY[
+            '2025-01-14 10:00:00'::TIMESTAMP,
+            '2025-01-28 10:00:00'::TIMESTAMP,
+            '2025-02-11 10:00:00'::TIMESTAMP,
+            '2025-02-25 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYDAY=2TU,4TU;COUNT=4',
             '2025-01-14 10:00:00'::TIMESTAMP
-        ))
+        ) AS occurrence)
     );
 
 -- ============================================================================
@@ -867,14 +893,18 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'rrule.* API',
     'rrule."all"() with timezone',
-    assert_equals(
+    assert_occurrences_equal(
         'TZ API',
-        '3',
-        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+        ARRAY[
+            '2025-01-15 09:00:00'::TIMESTAMP,
+            '2025-01-16 09:00:00'::TIMESTAMP,
+            '2025-01-17 09:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg((occurrence AT TIME ZONE 'America/New_York')::TIMESTAMP ORDER BY occurrence) FROM rrule."all"(
             'FREQ=DAILY;COUNT=3',
-            '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+            '2025-01-15 09:00:00-05'::TIMESTAMPTZ,
             'America/New_York'
-        ))
+        ) AS occurrence)
     );
 
 -- Test 7.2: rrule."between"() TIMESTAMPTZ API
@@ -1192,7 +1222,7 @@ SELECT
     test_category,
     test_name,
     CASE
-        WHEN status = 'PASS' THEN '  PASS ' || test_name
+        WHEN status LIKE 'PASS%' THEN '  PASS ' || test_name
         ELSE '  FAIL ' || test_name || ' - ' || status
     END AS result
 FROM coverage_gap_results
@@ -1203,8 +1233,8 @@ ORDER BY test_category, test_id;
 SELECT
     test_category,
     COUNT(*) AS total,
-    COUNT(*) FILTER (WHERE status = 'PASS') AS passed,
-    COUNT(*) FILTER (WHERE status != 'PASS') AS failed
+    COUNT(*) FILTER (WHERE status LIKE 'PASS%') AS passed,
+    COUNT(*) FILTER (WHERE status NOT LIKE 'PASS%') AS failed
 FROM coverage_gap_results
 GROUP BY test_category
 ORDER BY test_category;
@@ -1213,9 +1243,9 @@ ORDER BY test_category;
 \echo 'Overall Summary:'
 SELECT
     COUNT(*) AS total_tests,
-    COUNT(*) FILTER (WHERE status = 'PASS') AS passed,
-    COUNT(*) FILTER (WHERE status != 'PASS') AS failed,
-    ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'PASS') / COUNT(*), 1) || '%' AS pass_rate
+    COUNT(*) FILTER (WHERE status LIKE 'PASS%') AS passed,
+    COUNT(*) FILTER (WHERE status NOT LIKE 'PASS%') AS failed,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status LIKE 'PASS%') / COUNT(*), 1) || '%' AS pass_rate
 FROM coverage_gap_results;
 
 -- ==========================================
@@ -1744,7 +1774,7 @@ DO $$
 DECLARE
     failed_count INT;
 BEGIN
-    SELECT COUNT(*) INTO failed_count FROM coverage_gap_results WHERE status != 'PASS';
+    SELECT COUNT(*) INTO failed_count FROM coverage_gap_results WHERE status NOT LIKE 'PASS%';
     IF failed_count > 0 THEN
         RAISE EXCEPTION 'COVERAGE GAP TESTS FAILED: % test(s) failed', failed_count;
     ELSE

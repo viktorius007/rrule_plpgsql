@@ -191,18 +191,27 @@ VALUES (
 \echo '==================================================================='
 
 -- Test 2.1: weekday_to_number() helper
--- Tests optimization count correctness; exact dates verified in test_rrule_functions.sql
 CREATE OR REPLACE FUNCTION test_weekday_to_number() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP)) sub;
+    -- FREQ=MONTHLY;BYDAY=MO;COUNT=3 from 2025-01-01 10:00:00
+    -- BYDAY=MO without ordinal in MONTHLY expands to ALL Mondays per month
+    -- First 3 Mondays in January 2025: Jan 6, 13, 20
+    expected := ARRAY[
+        '2025-01-06 10:00:00'::TIMESTAMP,
+        '2025-01-13 10:00:00'::TIMESTAMP,
+        '2025-01-20 10:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 3 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 3 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -226,18 +235,35 @@ VALUES (
 \echo '==================================================================='
 
 -- Test 3.1: WEEKLY with make_interval
--- Tests optimization count correctness; exact dates verified in test_rrule_functions.sql
 CREATE OR REPLACE FUNCTION test_make_interval_weekly() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,TU,WE;COUNT=9', '2025-01-01'::TIMESTAMP)) sub;
+    -- FREQ=WEEKLY;BYDAY=MO,TU,WE;COUNT=9 from 2025-01-01 (Wednesday)
+    -- Week 1: Wed Jan 1
+    -- Week 2: Mon Jan 6, Tue Jan 7, Wed Jan 8
+    -- Week 3: Mon Jan 13, Tue Jan 14, Wed Jan 15
+    -- Week 4: Mon Jan 20, Tue Jan 21 (stops at 9)
+    expected := ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-01-07 00:00:00'::TIMESTAMP,
+        '2025-01-08 00:00:00'::TIMESTAMP,
+        '2025-01-13 00:00:00'::TIMESTAMP,
+        '2025-01-14 00:00:00'::TIMESTAMP,
+        '2025-01-15 00:00:00'::TIMESTAMP,
+        '2025-01-20 00:00:00'::TIMESTAMP,
+        '2025-01-21 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 9 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,TU,WE;COUNT=9', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 9 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -250,18 +276,30 @@ VALUES (
 );
 
 -- Test 3.2: YEARLY with BYMONTH using make_interval
--- Tests optimization count correctness; exact dates verified in test_rrule_functions.sql
 CREATE OR REPLACE FUNCTION test_make_interval_yearly() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=YEARLY;BYMONTH=1,6,12;COUNT=6', '2025-01-01'::TIMESTAMP)) sub;
+    -- FREQ=YEARLY;BYMONTH=1,6,12;COUNT=6 from 2025-01-01
+    -- Year 1: Jan 1, Jun 1, Dec 1
+    -- Year 2: Jan 1, Jun 1, Dec 1
+    expected := ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-06-01 00:00:00'::TIMESTAMP,
+        '2025-12-01 00:00:00'::TIMESTAMP,
+        '2026-01-01 00:00:00'::TIMESTAMP,
+        '2026-06-01 00:00:00'::TIMESTAMP,
+        '2026-12-01 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 6 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=YEARLY;BYMONTH=1,6,12;COUNT=6', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 6 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -284,16 +322,25 @@ VALUES (
 -- Test 4.1: date_part() with DAILY + BYDAY filter
 CREATE OR REPLACE FUNCTION test_date_part_daily() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
-    -- Every day in January 2025, but only Mondays: Jan 6, 13, 20, 27 = exactly 4
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=DAILY;BYDAY=MO;UNTIL=20250131T235959Z', '2025-01-01'::TIMESTAMP)) sub;
+    -- FREQ=DAILY;BYDAY=MO;UNTIL=20250131T235959Z from 2025-01-01
+    -- Every day in January 2025, but only Mondays: Jan 6, 13, 20, 27
+    expected := ARRAY[
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-01-13 00:00:00'::TIMESTAMP,
+        '2025-01-20 00:00:00'::TIMESTAMP,
+        '2025-01-27 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 4 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=DAILY;BYDAY=MO;UNTIL=20250131T235959Z', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 4 Mondays, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -308,15 +355,33 @@ VALUES (
 -- Test 4.2: date_part() with WEEKLY + BYDAY
 CREATE OR REPLACE FUNCTION test_date_part_weekly() RETURNS TEXT AS $$
 DECLARE
-    result_count INT;
+    expected TIMESTAMP[];
+    actual TIMESTAMP[];
 BEGIN
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=9', '2025-01-01'::TIMESTAMP)) sub;
+    -- FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=9 from 2025-01-01 (Wednesday)
+    -- Week 1: Wed Jan 1, Fri Jan 3
+    -- Week 2: Mon Jan 6, Wed Jan 8, Fri Jan 10
+    -- Week 3: Mon Jan 13, Wed Jan 15, Fri Jan 17
+    -- Week 4: Mon Jan 20 (stops at 9)
+    expected := ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-01-03 00:00:00'::TIMESTAMP,
+        '2025-01-06 00:00:00'::TIMESTAMP,
+        '2025-01-08 00:00:00'::TIMESTAMP,
+        '2025-01-10 00:00:00'::TIMESTAMP,
+        '2025-01-13 00:00:00'::TIMESTAMP,
+        '2025-01-15 00:00:00'::TIMESTAMP,
+        '2025-01-17 00:00:00'::TIMESTAMP,
+        '2025-01-20 00:00:00'::TIMESTAMP
+    ];
 
-    IF result_count = 9 THEN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=9', '2025-01-01'::TIMESTAMP) AS occurrence;
+
+    IF actual = expected THEN
         RETURN 'PASSED';
     ELSE
-        RETURN 'FAILED - Expected 9 results, got ' || result_count;
+        RETURN 'FAILED - Expected ' || expected::TEXT || ', got ' || actual::TEXT;
     END IF;
 END;
 $$ LANGUAGE plpgsql;

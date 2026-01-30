@@ -280,10 +280,9 @@ SELECT 'parse_rrule_parts()', 'Parse WKST=SU',
         (SELECT (rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;WKST=SU;COUNT=5')).wkst));
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'parse_rrule_parts()', 'WKST defaults to MO or NULL',
+SELECT 'parse_rrule_parts()', 'WKST defaults to NULL',
     assert_true('Default WKST',
-        (SELECT (rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;COUNT=5')).wkst IS NULL
-         OR (rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;COUNT=5')).wkst = 'MO'));
+        (SELECT (rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;COUNT=5')).wkst IS NULL));
 
 -- ============================================================================
 -- SECTION 10: calculate_safe_iteration_limit() Tests

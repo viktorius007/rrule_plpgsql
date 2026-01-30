@@ -111,7 +111,7 @@ INSERT INTO test_results VALUES (20, 'Specific date: Premium Monthly next_billin
 -- Test 3: Find subscriptions due in next 7 days (reference: 2025-02-05)
 INSERT INTO test_results VALUES (3, 'Query: subscriptions due in next 7 days',
     (SELECT CASE
-        WHEN COUNT(*) = 2  -- Premium Monthly (Feb 1) and Basic Weekly (Jan 27) are within 7 days
+        WHEN COUNT(*) = 2  -- Premium Monthly (next: Feb 1) and Basic Weekly (next: Jan 27) both fall before Feb 12 cutoff
         THEN 'PASS'
         ELSE 'FAIL'
     END FROM subscriptions
@@ -147,6 +147,29 @@ INSERT INTO test_results VALUES (4, 'LATERAL JOIN: generate billing schedules',
         )
     ) AS occurrence
     WHERE s.status = 'active')
+);
+
+-- Test 4a: Verify specific billing dates for Premium Monthly (Feb 1, Mar 1, Apr 1)
+INSERT INTO test_results VALUES (40, 'Specific dates: Premium Monthly Feb 1, Mar 1, Apr 1',
+    (SELECT CASE
+        WHEN array_agg(after_result ORDER BY after_result) = ARRAY[
+            '2025-02-01 00:00:00+00'::TIMESTAMPTZ,
+            '2025-03-01 00:00:00+00'::TIMESTAMPTZ,
+            '2025-04-01 00:00:00+00'::TIMESTAMPTZ
+        ]
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(array_agg(after_result ORDER BY after_result)::TEXT, 'NULL')
+    END
+    FROM subscriptions s
+    CROSS JOIN LATERAL (
+        SELECT after_result FROM rrule."after"(
+            s.rrule,
+            s.subscription_start,
+            COALESCE(s.last_billed_at, s.subscription_start),
+            3
+        ) AS after_result
+    ) AS occurrence
+    WHERE s.plan_name = 'Premium Monthly')
 );
 
 -- Test 5: Revenue forecast by month (aggregation, reference: 2025-02-05)
@@ -199,6 +222,32 @@ INSERT INTO test_results VALUES (50, 'Specific months: Feb, Mar, Apr, May 2025',
     ) revenue_by_month)
 );
 
+-- Test 5b: Verify specific revenue amount for February 2025
+INSERT INTO test_results VALUES (51, 'Specific revenue: February 2025 total',
+    (SELECT CASE
+        WHEN expected_revenue = 59.97  -- Basic Weekly only (19.99 × 3 occurrences: Feb 10, 17, 24)
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(expected_revenue::TEXT, 'NULL')
+    END
+    FROM (
+        SELECT
+            DATE_TRUNC('month', occurrence) AS billing_month,
+            SUM(s.amount) AS expected_revenue
+        FROM subscriptions s
+        CROSS JOIN LATERAL (
+            SELECT occurrence FROM rrule."between"(
+                s.rrule,
+                s.subscription_start,
+                '2025-02-05 12:00:00+00'::TIMESTAMPTZ,
+                '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '3 months'
+            ) AS occurrence
+        ) AS occ
+        WHERE s.status = 'active'
+        GROUP BY billing_month
+    ) revenue_by_month
+    WHERE billing_month = '2025-02-01 00:00:00+00'::TIMESTAMPTZ)
+);
+
 ---------------------------------------------------------------------------------------------------
 -- SECTION 2: Batch Operations
 ---------------------------------------------------------------------------------------------------
@@ -240,6 +289,21 @@ INSERT INTO test_results VALUES (7, 'Batch UPDATE: multiple computed columns',
         THEN 'PASS'
         ELSE 'FAIL'
     END FROM events)
+);
+
+-- Test 7a: Verify individual event occurrence counts
+INSERT INTO test_results VALUES (70, 'Specific counts: Daily Standup=500, Weekly Review=200, Monthly Planning=120, Archived=10',
+    (SELECT CASE
+        WHEN (SELECT occurrence_count FROM events WHERE title = 'Daily Standup') = 500
+         AND (SELECT occurrence_count FROM events WHERE title = 'Weekly Review') = 200
+         AND (SELECT occurrence_count FROM events WHERE title = 'Monthly Planning') = 120
+         AND (SELECT occurrence_count FROM events WHERE title = 'Archived Event') = 10
+        THEN 'PASS'
+        ELSE 'FAIL: Daily=' || (SELECT occurrence_count FROM events WHERE title = 'Daily Standup')::TEXT ||
+             ' Weekly=' || (SELECT occurrence_count FROM events WHERE title = 'Weekly Review')::TEXT ||
+             ' Monthly=' || (SELECT occurrence_count FROM events WHERE title = 'Monthly Planning')::TEXT ||
+             ' Archived=' || (SELECT occurrence_count FROM events WHERE title = 'Archived Event')::TEXT
+    END)
 );
 
 -- Test 8: Filtering with set operations - events on weekends
@@ -424,6 +488,28 @@ INSERT INTO test_results VALUES (14, 'Maintenance schedule: next 90 days',
     WHERE occurrence > '2025-02-05 12:00:00+00'::TIMESTAMPTZ)
 );
 
+-- Test 14a: Verify specific maintenance dates (Server A: Mar 1, Apr 1, May 1; HVAC: Mar 15)
+INSERT INTO test_results VALUES (140, 'Specific dates: Server A and HVAC maintenance',
+    (SELECT CASE
+        WHEN array_agg(equipment_name || ': ' || TO_CHAR(occurrence, 'YYYY-MM-DD') ORDER BY occurrence) = ARRAY[
+            'Server A: 2025-03-01',
+            'HVAC System: 2025-03-15',
+            'Server A: 2025-04-01',
+            'Server A: 2025-05-01'
+        ]
+        THEN 'PASS'
+        ELSE 'FAIL: got ' || COALESCE(array_agg(equipment_name || ': ' || TO_CHAR(occurrence, 'YYYY-MM-DD') ORDER BY occurrence)::TEXT, 'NULL')
+    END
+    FROM equipment e
+    CROSS JOIN LATERAL (
+        SELECT occurrence FROM rrule."between"(
+            e.maintenance_rrule,
+            COALESCE(e.last_maintenance, e.install_date),
+            '2025-02-05 12:00:00+00'::TIMESTAMPTZ,
+            '2025-02-05 12:00:00+00'::TIMESTAMPTZ + INTERVAL '90 days' ) AS occurrence ) AS occ
+    WHERE occurrence > '2025-02-05 12:00:00+00'::TIMESTAMPTZ)
+);
+
 ---------------------------------------------------------------------------------------------------
 -- SECTION 5: Complex Query Patterns
 ---------------------------------------------------------------------------------------------------
@@ -454,6 +540,32 @@ INSERT INTO test_results VALUES (16, 'Window functions: occurrence ranking',
         WHEN MAX(occurrence_rank) = 5  -- 5 occurrences per event, ranked 1-5
         THEN 'PASS'
         ELSE 'FAIL'
+    END
+    FROM (
+        SELECT
+            e.id,
+            occ.occurrence,
+            ROW_NUMBER() OVER (PARTITION BY e.id ORDER BY occ.occurrence) AS occurrence_rank
+        FROM events e
+        CROSS JOIN LATERAL (
+            SELECT after_result AS occurrence FROM rrule."after"(e.rrule, e.event_start, '2025-02-05 12:00:00+00'::TIMESTAMPTZ, 5) AS after_result
+        ) AS occ
+        WHERE e.status = 'active'
+    ) ranked_occurrences)
+);
+
+-- Test 16a: Verify total row count and rank distribution (3 active events × 5 occurrences = 15 rows)
+INSERT INTO test_results VALUES (160, 'Specific counts: 15 total rows, ranks 1-5 per event',
+    (SELECT CASE
+        WHEN COUNT(*) = 15
+         AND MIN(occurrence_rank) = 1
+         AND MAX(occurrence_rank) = 5
+         AND COUNT(DISTINCT occurrence_rank) = 5
+        THEN 'PASS'
+        ELSE 'FAIL: count=' || COUNT(*)::TEXT ||
+             ' min_rank=' || MIN(occurrence_rank)::TEXT ||
+             ' max_rank=' || MAX(occurrence_rank)::TEXT ||
+             ' distinct_ranks=' || COUNT(DISTINCT occurrence_rank)::TEXT
     END
     FROM (
         SELECT
