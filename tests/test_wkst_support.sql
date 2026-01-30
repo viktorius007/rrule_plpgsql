@@ -438,6 +438,49 @@ VALUES ('WEEKLY with WKST=SA (Saturday)',
 \echo 'TEST GROUP 6: Edge cases and regression tests'
 \echo '==================================================================='
 
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 7: RFC 5545 Canonical WKST Example (INTERVAL=2)'
+\echo '==================================================================='
+
+-- RFC 5545 Section 3.3.10 canonical example: WKST affects which weeks are counted
+-- when INTERVAL>1. dtstart=Sunday Jan 5 2025.
+-- With WKST=SU: Week 1 = Jan 5-11, Week 2 (skipped) = Jan 12-18, Week 3 = Jan 19-25
+-- With WKST=MO: Week containing Jan 5 starts Dec 30; next counted week = Jan 13-19
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('RFC 5545 canonical: WKST=SU INTERVAL=2 BYDAY=TU,TH',
+    assert_occurrences_equal(
+        'WKST=SU biweekly canonical',
+        ARRAY[
+            '2025-01-07 10:00:00'::TIMESTAMP,
+            '2025-01-09 10:00:00'::TIMESTAMP,
+            '2025-01-21 10:00:00'::TIMESTAMP,
+            '2025-01-23 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=SU;COUNT=4',
+            '2025-01-05 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('RFC 5545 canonical: WKST=MO INTERVAL=2 BYDAY=TU,TH',
+    assert_occurrences_equal(
+        'WKST=MO biweekly canonical',
+        ARRAY[
+            '2025-01-14 10:00:00'::TIMESTAMP,
+            '2025-01-16 10:00:00'::TIMESTAMP,
+            '2025-01-28 10:00:00'::TIMESTAMP,
+            '2025-01-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=MO;COUNT=4',
+            '2025-01-05 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
 -- Test 22: Missing WKST defaults to MO
 INSERT INTO wkst_test_results (test_name, status)
 VALUES ('WEEKLY without WKST (defaults to MO)',

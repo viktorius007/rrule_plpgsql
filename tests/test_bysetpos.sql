@@ -347,27 +347,17 @@ VALUES (
     test_bysetpos_out_of_range_negative()
 );
 
--- Test 3.3: BYSETPOS with COUNT=1 (minimum)
-CREATE OR REPLACE FUNCTION test_bysetpos_count_one() RETURNS TEXT AS $$
-DECLARE
-    result_count INT;
-BEGIN
-    SELECT COUNT(*) INTO result_count
-    FROM (SELECT * FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence) sub;
-
-    IF result_count = 1 THEN
-        RETURN 'PASSED';
-    ELSE
-        RETURN 'FAILED - Expected 1 result, got ' || result_count;
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
-
+-- Test 3.3: BYSETPOS with COUNT=1 (minimum) - exact date assertion
+-- First Monday of January 2025 = Jan 6
 INSERT INTO bysetpos_test_results (test_category, test_name, status)
 VALUES (
     'Edge Cases',
     'BYSETPOS=1 with COUNT=1 (minimum)',
-    test_bysetpos_count_one()
+    assert_occurrences_equal(
+        'BYSETPOS=1 COUNT=1',
+        ARRAY['2025-01-06 00:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
 );
 
 -- Test 3.4: Mixed positive and negative with gaps (BYSETPOS=1,3,-2,-1)
@@ -391,6 +381,24 @@ VALUES (
             '2025-03-17 00:00:00'::TIMESTAMP
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,3,-2,-1;COUNT=8', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 3.5: BYSETPOS with BYMONTHDAY expansion
+-- BYMONTHDAY=1,15,28 produces 3 candidates per month; BYSETPOS=1,-1 selects first and last
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'Edge Cases',
+    'BYSETPOS=1,-1 with BYMONTHDAY=1,15,28',
+    assert_occurrences_equal(
+        'BYSETPOS with BYMONTHDAY expansion',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-28 00:00:00'::TIMESTAMP,
+            '2025-02-01 00:00:00'::TIMESTAMP,
+            '2025-02-28 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=1,15,28;BYSETPOS=1,-1;COUNT=4', '2025-01-01'::TIMESTAMP) AS occurrence)
     )
 );
 

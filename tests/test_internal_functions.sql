@@ -341,8 +341,9 @@ SELECT 'calculate_safe_iteration_limit()', 'NULL count + NULL max = NULL',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_month_byday_set()', 'Generate Mondays in January 2025',
-    assert_equals('4 Mondays', '4',
-        (SELECT COUNT(*)::TEXT FROM rrule.rrule_month_byday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO'], NULL)));
+    assert_equals('4 Mondays',
+        '{"2025-01-06 10:00:00+00","2025-01-13 10:00:00+00","2025-01-20 10:00:00+00","2025-01-27 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_month_byday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO'], NULL) d));
 
 -- January 2025: 4 Mondays (6,13,20,27) + 5 Wednesdays (1,8,15,22,29) + 5 Fridays (3,10,17,24,31) = 14
 INSERT INTO internal_test_results (test_category, test_name, status)
@@ -358,13 +359,15 @@ SELECT 'rrule_month_byday_set()', 'Generate MO,WE,FR in January 2025',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_month_bymonthday_set()', 'Generate day 15 in January',
-    assert_equals('1 day', '1',
-        (SELECT COUNT(*)::TEXT FROM rrule.rrule_month_bymonthday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY[15], 'OMIT', NULL)));
+    assert_equals('Day 15',
+        '{"2025-01-15 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_month_bymonthday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY[15], 'OMIT', NULL) d));
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_month_bymonthday_set()', 'Generate days 1,15 in January',
-    assert_equals('2 days', '2',
-        (SELECT COUNT(*)::TEXT FROM rrule.rrule_month_bymonthday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY[1,15], 'OMIT', NULL)));
+    assert_equals('Days 1 and 15',
+        '{"2025-01-01 10:00:00+00","2025-01-15 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_month_bymonthday_set('2025-01-15 10:00:00+00'::TIMESTAMPTZ, ARRAY[1,15], 'OMIT', NULL) d));
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_month_bymonthday_set()', 'SKIP=OMIT for Feb 30',
@@ -379,13 +382,15 @@ SELECT 'rrule_month_bymonthday_set()', 'SKIP=OMIT for Feb 30',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_week_byday_set()', 'Generate MO in week (WKST=MO)',
-    assert_equals('1 day', '1',
-        (SELECT COUNT(*)::TEXT FROM rrule.rrule_week_byday_set('2025-01-08 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO'], 'MO', NULL)));
+    assert_equals('MO in week',
+        '{"2025-01-06 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_week_byday_set('2025-01-08 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO'], 'MO', NULL) d));
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'rrule_week_byday_set()', 'Generate MO,WE,FR in week',
-    assert_equals('3 days', '3',
-        (SELECT COUNT(*)::TEXT FROM rrule.rrule_week_byday_set('2025-01-08 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO','WE','FR'], 'MO', NULL)));
+    assert_equals('MO,WE,FR in week',
+        '{"2025-01-06 10:00:00+00","2025-01-08 10:00:00+00","2025-01-10 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_week_byday_set('2025-01-08 10:00:00+00'::TIMESTAMPTZ, ARRAY['MO','WE','FR'], 'MO', NULL) d));
 
 -- ============================================================================
 -- SECTION 14: daily_set() Tests
@@ -395,12 +400,13 @@ SELECT 'rrule_week_byday_set()', 'Generate MO,WE,FR in week',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'daily_set()', 'Generate 1 day with BYDAY filter',
-    assert_true('1 day',
-        (SELECT COUNT(*) = 1 FROM rrule.daily_set(
+    assert_equals('WE filter on Wed Jan 8',
+        '{"2025-01-08 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.daily_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYDAY=WE;COUNT=5'),
             NULL
-        )));
+        ) d));
 
 -- ============================================================================
 -- SECTION 15: weekly_set() Tests
@@ -410,12 +416,13 @@ SELECT 'daily_set()', 'Generate 1 day with BYDAY filter',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'weekly_set()', 'Generate days in a week',
-    assert_true('3 days',
-        (SELECT COUNT(*) = 3 FROM rrule.weekly_set(
+    assert_equals('MO,WE,FR in week of Jan 6',
+        '{"2025-01-06 10:00:00+00","2025-01-08 10:00:00+00","2025-01-10 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.weekly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=10'),
             NULL
-        )));
+        ) d));
 
 -- ============================================================================
 -- SECTION 16: monthly_set() Tests
@@ -425,21 +432,23 @@ SELECT 'weekly_set()', 'Generate days in a week',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'monthly_set()', 'Generate days in a month with BYDAY',
-    assert_true('4 days',
-        (SELECT COUNT(*) = 4 FROM rrule.monthly_set(
+    assert_equals('Mondays in Jan 2025',
+        '{"2025-01-06 10:00:00+00","2025-01-13 10:00:00+00","2025-01-20 10:00:00+00","2025-01-27 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.monthly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=MONTHLY;BYDAY=MO;COUNT=10'),
             NULL
-        )));
+        ) d));
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'monthly_set()', 'Generate days in a month with BYMONTHDAY',
-    assert_true('1 day',
-        (SELECT COUNT(*) = 1 FROM rrule.monthly_set(
+    assert_equals('Day 15 in Jan',
+        '{"2025-01-15 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.monthly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=10'),
             NULL
-        )));
+        ) d));
 
 -- ============================================================================
 -- SECTION 17: yearly_set() Tests
@@ -449,12 +458,13 @@ SELECT 'monthly_set()', 'Generate days in a month with BYMONTHDAY',
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'yearly_set()', 'Generate days in a year with BYMONTH',
-    assert_true('2 days',
-        (SELECT COUNT(*) = 2 FROM rrule.yearly_set(
+    assert_equals('BYMONTH=1,6 in 2025',
+        '{"2025-01-08 10:00:00+00","2025-06-08 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.yearly_set(
             '2025-01-08 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYMONTH=1,6;COUNT=10'),
             NULL
-        )));
+        ) d));
 
 -- ============================================================================
 -- SECTION 18: rrule_year_byday_set() Tests
@@ -495,6 +505,106 @@ SELECT 'rrule_year_byday_set()', 'All Mondays of year (first 5)',
         ) d) = ARRAY['2025-01-06 00:00:00', '2025-01-13 00:00:00', '2025-01-20 00:00:00',
               '2025-01-27 00:00:00', '2025-02-03 00:00:00']::TIMESTAMP[]
     );
+
+-- ============================================================================
+-- SECTION 19: byweekno_matches() Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 19: byweekno_matches() ---'
+
+-- byweekno_matches(week_num INT, weeks_in_year INT, byweekno INT[]) returns BOOLEAN
+-- Takes computed week number and total weeks in year (not raw timestamps).
+
+-- Test 19.1: Positive BYWEEKNO match (week 3 matches BYWEEKNO=3)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'byweekno_matches()', 'Week 3 matches BYWEEKNO=3',
+    assert_true('Week 3 match',
+        rrule.byweekno_matches(3, 52, ARRAY[3]));
+
+-- Test 19.2: Negative BYWEEKNO match (week -1 = last week of year)
+-- 52-week year: week -1 = week 52
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'byweekno_matches()', 'Week 52 matches BYWEEKNO=-1 (52-week year)',
+    assert_true('Week -1 match',
+        rrule.byweekno_matches(52, 52, ARRAY[-1]));
+
+-- Test 19.3: Non-matching BYWEEKNO
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'byweekno_matches()', 'Week 3 does not match BYWEEKNO=10',
+    assert_true('Week 10 no match',
+        NOT rrule.byweekno_matches(3, 52, ARRAY[10]));
+
+-- Test 19.4: Multiple BYWEEKNO values
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'byweekno_matches()', 'Week 3 matches BYWEEKNO=1,3,5',
+    assert_true('Multi week match',
+        rrule.byweekno_matches(3, 52, ARRAY[1,3,5]));
+
+-- Test 19.5: NULL BYWEEKNO always matches (no filter)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'byweekno_matches()', 'NULL BYWEEKNO always matches',
+    assert_true('NULL match',
+        rrule.byweekno_matches(3, 52, NULL));
+
+-- ============================================================================
+-- SECTION 20: weeks_in_year() Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 20: weeks_in_year() ---'
+
+-- weeks_in_year(year_start TIMESTAMPTZ, wkst TEXT) returns INT
+-- Takes a timestamp representing the start of the year and WKST day code.
+
+-- Test 20.1: 2025 has 52 ISO weeks (WKST=MO)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'weeks_in_year()', '2025 has 52 ISO weeks (WKST=MO)',
+    assert_equals('2025 weeks', '52', rrule.weeks_in_year('2025-01-01 00:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- Test 20.2: 2020 has 53 ISO weeks (Jan 1 = Wednesday, Dec 31 = Thursday)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'weeks_in_year()', '2020 has 53 ISO weeks (WKST=MO)',
+    assert_equals('2020 weeks', '53', rrule.weeks_in_year('2020-01-01 00:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- Test 20.3: 2015 has 53 ISO weeks
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'weeks_in_year()', '2015 has 53 ISO weeks (WKST=MO)',
+    assert_equals('2015 weeks', '53', rrule.weeks_in_year('2015-01-01 00:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- Test 20.4: 2024 has 52 ISO weeks (leap year)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'weeks_in_year()', '2024 has 52 ISO weeks (WKST=MO)',
+    assert_equals('2024 weeks', '52', rrule.weeks_in_year('2024-01-01 00:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- Test 20.5: 2026 has 53 ISO weeks (Jan 1 = Thursday)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'weeks_in_year()', '2026 has 53 ISO weeks (WKST=MO)',
+    assert_equals('2026 weeks', '53', rrule.weeks_in_year('2026-01-01 00:00:00+00'::TIMESTAMPTZ, 'MO')::TEXT);
+
+-- ============================================================================
+-- SECTION 21: validate_timezone() Invalid Input Test
+-- ============================================================================
+\echo ''
+\echo '--- Section 21: validate_timezone() Invalid Input ---'
+
+-- Test 21.1: Invalid timezone should raise exception
+DO $$
+DECLARE
+    test_passed BOOLEAN := FALSE;
+BEGIN
+    BEGIN
+        PERFORM rrule.validate_timezone('Invalid/Zone');
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE '%Invalid timezone%' THEN
+                test_passed := TRUE;
+            END IF;
+    END;
+
+    INSERT INTO internal_test_results (test_category, test_name, status)
+    VALUES ('validate_timezone()', 'Invalid/Zone raises exception',
+        CASE WHEN test_passed THEN 'PASS' ELSE 'FAIL - No exception for invalid timezone' END);
+END;
+$$;
 
 -- ============================================================================
 -- TEST RESULTS SUMMARY

@@ -2,10 +2,13 @@
  * RFC 5545 & RFC 7529 Compliance Tests
  *
  * Tests RFC compliance for:
+ * - RFC 5545 Section 3.3.10 RRULE recurrence rule semantics
  * - RFC 7529 SKIP/RSCALE parameter relationships
  * - RSCALE auto-addition for RFC 7529 compliance
  * - RSCALE validation (only GREGORIAN supported)
  * - Backward compatibility with SKIP-only RRULEs
+ *
+ * See also: SPEC_COMPLIANCE.md for full RFC conformance status.
  *
  * Usage:
  *   psql -d your_database -f tests/test_rfc_compliance.sql

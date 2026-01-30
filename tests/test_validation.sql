@@ -50,7 +50,7 @@ BEGIN
         RAISE EXCEPTION 'FAIL [%]: RRULE was accepted when it should have been rejected: %',
             test_name, invalid_rrule;
     EXCEPTION
-        WHEN OTHERS THEN
+        WHEN raise_exception THEN
             -- Check if error message matches expected pattern
             IF SQLERRM LIKE expected_error_pattern THEN
                 RETURN 'PASS [' || test_name || ']';
@@ -623,6 +623,18 @@ VALUES ('COUNT Validation', 'COUNT=0 (should be rejected)',
         'COUNT=0 invalid',
         'FREQ=DAILY;COUNT=0',
         '%COUNT must be a positive integer%'
+    )
+);
+
+-- Test 3.0a: COUNT=-1 (negative COUNT silently treated as no COUNT due to regex parser)
+-- The parser regex captures digits only, so COUNT=-1 doesn't match and COUNT is NULL.
+-- This documents current behavior: negative COUNT is silently ignored (no validation error).
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('COUNT Validation', 'COUNT=-1 (silently ignored by parser)',
+    assert_rrule_accepted(
+        'COUNT=-1 silently ignored',
+        'FREQ=DAILY;COUNT=-1;UNTIL=20250105T235959Z',
+        5
     )
 );
 

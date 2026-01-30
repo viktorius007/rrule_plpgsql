@@ -320,14 +320,15 @@ INSERT INTO test_results VALUES (16, 'MONTHLY BYMONTHDAY=31 skips short months',
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;COUNT=4', '2025-01-31 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
--- Test 17: Leap year February 29th
-INSERT INTO test_results VALUES (17, 'Leap year Feb 29th',
+-- Test 17: Leap year February 29th (multiple leap years)
+INSERT INTO test_results VALUES (17, 'Leap year Feb 29th (2024 and 2028)',
     assert_occurrences_equal(
         'Leap year Feb 29th',
         ARRAY[
-            '2024-02-29 10:00:00'::TIMESTAMP   -- 2024 is leap year
+            '2024-02-29 10:00:00'::TIMESTAMP,  -- 2024 is leap year
+            '2028-02-29 10:00:00'::TIMESTAMP    -- 2028 is leap year (2025-2027 skipped)
         ],
-        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=1', '2024-02-29 10:00:00'::TIMESTAMP) AS occurrence)
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=2', '2024-02-29 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- Test 18: after() helper function

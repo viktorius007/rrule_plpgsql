@@ -714,6 +714,7 @@ SELECT
     );
 
 -- Test 4.3: most_recent() returns NULL when dtstart in future
+-- Pass explicit reference_time to avoid NOW() dependency (TESTING_STANDARDS: fixed timestamps)
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'most_recent() Edge Cases',
@@ -723,7 +724,8 @@ SELECT
         'NULL',
         (SELECT COALESCE(rrule."most_recent"(
             'FREQ=DAILY;COUNT=10',
-            '2099-01-01 10:00:00'::TIMESTAMP
+            '2099-01-01 10:00:00'::TIMESTAMP,
+            '2025-06-15 00:00:00'::TIMESTAMP
         )::TEXT, 'NULL'))
     );
 
@@ -973,10 +975,10 @@ SELECT
     assert_equals(
         'YEARLY BYYEARDAY=-1',
         '2025-12-31 00:00:00',
-        (SELECT occurrence::TEXT FROM rrule."all"(
+        (SELECT (array_agg(occurrence ORDER BY occurrence))[1]::TEXT FROM rrule."all"(
           'FREQ=YEARLY;BYYEARDAY=-1;COUNT=3',
           '2025-01-01'::TIMESTAMP
-        ) AS occurrence LIMIT 1)
+        ) AS occurrence)
     );
 
 -- Test 8.2: Negative BYYEARDAY=-31 on YEARLY (Dec 1 in a non-leap year)
@@ -1053,10 +1055,10 @@ SELECT
     assert_equals(
         'MONTHLY BYMONTHDAY=-1 dates',
         '2025-01-31 00:00:00',
-        (SELECT occurrence::TEXT FROM rrule."all"(
+        (SELECT (array_agg(occurrence ORDER BY occurrence))[1]::TEXT FROM rrule."all"(
           'FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=3',
           '2025-01-01'::TIMESTAMP
-        ) AS occurrence LIMIT 1)
+        ) AS occurrence)
     );
 
 -- Test 8.7: Negative BYMONTHDAY=-2 on MONTHLY (second to last day of month)
@@ -1092,6 +1094,20 @@ SELECT
         'BYDAY+BYMONTHDAY dedup',
         'true',
         (SELECT (COUNT(*) = COUNT(DISTINCT occurrence))::TEXT FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=MO;BYMONTHDAY=6;COUNT=12',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 9.1a: BYDAY+BYMONTHDAY deduplication produces exactly 12 results
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Deduplication',
+    'BYDAY+BYMONTHDAY COUNT=12 produces exactly 12 results',
+    assert_equals(
+        'BYDAY+BYMONTHDAY count',
+        '12',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
             'FREQ=MONTHLY;BYDAY=MO;BYMONTHDAY=6;COUNT=12',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)

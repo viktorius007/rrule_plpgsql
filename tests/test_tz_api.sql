@@ -1243,6 +1243,14 @@ $$;
 DO $$
 DECLARE
     results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2025-03-07 10:00:00 EST',
+        '2025-03-08 10:00:00 EST',
+        '2025-03-09 10:00:00 EDT',
+        '2025-03-10 10:00:00 EDT',
+        '2025-03-11 10:00:00 EDT'
+    ];
     result_count INT;
 BEGIN
     -- Daily at 10:00 AM ET starting March 7, range through March 11 (after spring-forward on March 9)
@@ -1257,12 +1265,15 @@ BEGIN
         TRUE
     ) ts;
 
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
     INSERT INTO tz_api_test_results VALUES (
         'UNTIL + Timezone',
-        'UNTIL across DST with between() produces correct count',
-        result_count = 5,
-        result_count::TEXT,
-        '5'
+        'UNTIL across DST with between() produces correct count and dates',
+        result_count = 5 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(actual, ', '),
+        '5 dates: ' || array_to_string(expected, ', ')
     );
 END;
 $$;
@@ -1271,6 +1282,12 @@ $$;
 DO $$
 DECLARE
     results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2025-01-06 09:00:00 EST',
+        '2025-01-13 09:00:00 EST',
+        '2025-01-20 09:00:00 EST'
+    ];
     result_count INT;
 BEGIN
     -- Weekly on Mondays, range covers exactly 3 weeks
@@ -1285,12 +1302,15 @@ BEGIN
         TRUE
     ) ts;
 
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
     INSERT INTO tz_api_test_results VALUES (
         'UNTIL + Timezone',
-        'UNTIL with WEEKLY+BYDAY produces exactly 3 occurrences',
-        result_count = 3,
-        result_count::TEXT,
-        '3'
+        'UNTIL with WEEKLY+BYDAY produces exact 3 Monday dates',
+        result_count = 3 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(actual, ', '),
+        '3 dates: ' || array_to_string(expected, ', ')
     );
 END;
 $$;

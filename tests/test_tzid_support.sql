@@ -562,6 +562,155 @@ SELECT
 FROM tzid_test_results
 ORDER BY test_number;
 
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 9: DST Gap and Ambiguous Times (TZID API)'
+\echo '==================================================================='
+
+-- Test 25: Spring-forward gap time (2:30 AM on March 9, 2025 does not exist)
+-- TZID API uses TIMESTAMP arithmetic; wall-clock 2:30 AM on gap date
+-- will be advanced by PostgreSQL to 3:30 AM EDT when converting.
+-- Non-gap dates preserve 2:30 AM wall-clock time.
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    result_count INT;
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence), COUNT(*) INTO actual, result_count
+    FROM rrule."all"(
+        'FREQ=DAILY;COUNT=3;TZID=America/New_York',
+        '2025-03-08 02:30:00'::TIMESTAMP
+    ) AS occurrence;
+
+    -- Must produce exactly 3 occurrences (no crash/skip on the gap date)
+    -- Wall-clock: Mar 8 02:30, Mar 9 02:30 (gap → PG produces 02:30 in TIMESTAMP), Mar 10 02:30
+    IF result_count = 3
+        AND actual[1] = '2025-03-08 02:30:00'::TIMESTAMP
+        AND actual[2] = '2025-03-09 02:30:00'::TIMESTAMP
+        AND actual[3] = '2025-03-10 02:30:00'::TIMESTAMP
+    THEN
+        INSERT INTO tzid_test_results (test_name, status)
+        VALUES ('DST spring-forward gap 2:30 AM (TZID)', 'PASS [DST gap]');
+    ELSE
+        INSERT INTO tzid_test_results (test_name, status)
+        VALUES ('DST spring-forward gap 2:30 AM (TZID)',
+            'FAIL: Expected 3 occurrences at 02:30, got ' || result_count || ': ' || actual::TEXT);
+    END IF;
+END;
+$$;
+
+-- Test 26: Fall-back ambiguous time (1:30 AM on November 2, 2025 occurs twice)
+-- TZID API uses TIMESTAMP arithmetic; wall-clock 1:30 AM stays consistent.
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    result_count INT;
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence), COUNT(*) INTO actual, result_count
+    FROM rrule."all"(
+        'FREQ=DAILY;COUNT=3;TZID=America/New_York',
+        '2025-11-01 01:30:00'::TIMESTAMP
+    ) AS occurrence;
+
+    -- Wall-clock times should stay at 01:30 for all 3 days
+    IF result_count = 3
+        AND actual[1] = '2025-11-01 01:30:00'::TIMESTAMP
+        AND actual[2] = '2025-11-02 01:30:00'::TIMESTAMP
+        AND actual[3] = '2025-11-03 01:30:00'::TIMESTAMP
+    THEN
+        INSERT INTO tzid_test_results (test_name, status)
+        VALUES ('DST fall-back ambiguous 1:30 AM (TZID)', 'PASS [DST ambiguous]');
+    ELSE
+        INSERT INTO tzid_test_results (test_name, status)
+        VALUES ('DST fall-back ambiguous 1:30 AM (TZID)',
+            'FAIL: Expected 3 occurrences at 01:30, got ' || result_count || ': ' || actual::TEXT);
+    END IF;
+END;
+$$;
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 10: Full API Surface with TZID'
+\echo '==================================================================='
+
+-- Test 27: between() with TZID
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('between() with TZID',
+    assert_occurrences_equal(
+        'between() with TZID',
+        ARRAY[
+            '2025-01-02 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=DAILY;COUNT=5;TZID=America/New_York',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 23:59:59'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 28: before() with TZID
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('before() with TZID',
+    (SELECT CASE
+        WHEN result = '2025-01-02 10:00:00'::TIMESTAMP
+        THEN 'PASS [before() with TZID]'
+        ELSE 'FAIL [before() with TZID]: Expected 2025-01-02 10:00:00, got ' || result::TEXT
+    END
+    FROM (
+        SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=5;TZID=America/New_York',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ) AS result
+    ) sub)
+);
+
+-- Test 29: count() with TZID
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('count() with TZID',
+    (SELECT CASE
+        WHEN rrule."count"(
+            'FREQ=DAILY;COUNT=5;TZID=America/New_York',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) = 5
+        THEN 'PASS [count() with TZID]'
+        ELSE 'FAIL [count() with TZID]: Expected 5'
+    END)
+);
+
+-- Test 30: next() with TZID (explicit reference_time for determinism)
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('next() with TZID',
+    (SELECT CASE
+        WHEN rrule."next"(
+            'FREQ=DAILY;COUNT=5;TZID=America/New_York',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP
+        ) = '2025-01-02 10:00:00'::TIMESTAMP
+        THEN 'PASS [next() with TZID]'
+        ELSE 'FAIL [next() with TZID]: Expected 2025-01-02 10:00:00, got ' ||
+            COALESCE(rrule."next"('FREQ=DAILY;COUNT=5;TZID=America/New_York', '2025-01-01 10:00:00'::TIMESTAMP, '2025-01-02 00:00:00'::TIMESTAMP)::TEXT, 'NULL')
+    END)
+);
+
+-- Test 31: most_recent() with TZID (explicit reference_time for determinism)
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('most_recent() with TZID',
+    (SELECT CASE
+        WHEN rrule."most_recent"(
+            'FREQ=DAILY;COUNT=5;TZID=America/New_York',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-03 08:00:00'::TIMESTAMP
+        ) = '2025-01-02 10:00:00'::TIMESTAMP
+        THEN 'PASS [most_recent() with TZID]'
+        ELSE 'FAIL [most_recent() with TZID]: Expected 2025-01-02 10:00:00, got ' ||
+            COALESCE(rrule."most_recent"('FREQ=DAILY;COUNT=5;TZID=America/New_York', '2025-01-01 10:00:00'::TIMESTAMP, '2025-01-03 08:00:00'::TIMESTAMP)::TEXT, 'NULL')
+    END)
+);
+
 -- Check if all tests passed
 DO $$
 DECLARE

@@ -132,16 +132,16 @@ FROM rrule."all"(
 ) AS occurrence;
 
 -- Test 1.5: HOURLY with BYDAY filter produces only matching day occurrences
--- HOURLY;BYDAY=MO;INTERVAL=6 starting Monday 10:00 → 10:00, 16:00, 22:00 (all Monday)
+-- HOURLY;BYDAY=MO;INTERVAL=6 starting Monday 10:00 → 10:00, 16:00, 22:00 (3 per Monday)
 INSERT INTO subday_test_results (test_category, test_name, status)
 SELECT
     'HOURLY Filters',
-    'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=4 only Monday occurrences',
-    CASE WHEN COUNT(*) = 4 AND COUNT(*) = COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)
+    'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3 only Monday occurrences',
+    CASE WHEN COUNT(*) = 3 AND COUNT(*) = COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)
     THEN 'PASS'
-    ELSE 'FAIL - Expected 4 Monday occurrences, got ' || COUNT(*)::TEXT || ' total, ' || COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)::TEXT || ' Mondays' END
+    ELSE 'FAIL - Expected 3 Monday occurrences, got ' || COUNT(*)::TEXT || ' total, ' || COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)::TEXT || ' Mondays' END
 FROM rrule."all"(
-    'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=4',
+    'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3',
     '2025-01-06 10:00:00'::TIMESTAMP  -- Monday
 ) AS occurrence;
 
@@ -384,6 +384,50 @@ END;
 $$;
 
 -- ============================================================================
+-- SECTION 5: HOURLY Across DST Fall-Back (November 2, 2025)
+-- ============================================================================
+\echo ''
+\echo '--- Section 5: HOURLY Across DST Fall-Back ---'
+
+-- Test 5.1: HOURLY across November 2 fall-back (EST/EDT transition)
+-- At 2:00 AM EDT, clocks fall back to 1:00 AM EST (America/New_York).
+-- The TZ generator uses naive TIMESTAMP arithmetic (wall-clock hours).
+-- Starting at 23:00 EDT, naive hours go: 23:00, 00:00, 01:00, 02:00, 03:00.
+-- After fall-back, 01:00 maps to EST (UTC-5), so 01:00 EST = 06:00 UTC.
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+    result_count INT;
+BEGIN
+    -- Starting at 2025-11-01 23:00 EDT (03:00 UTC next day), 5 hourly occurrences:
+    -- 23:00 EDT = 03:00 UTC, 00:00 = 04:00 UTC, 01:00 EST = 06:00 UTC,
+    -- 02:00 EST = 07:00 UTC, 03:00 EST = 08:00 UTC
+    expected := ARRAY[
+        '2025-11-02 03:00:00+00'::TIMESTAMPTZ,
+        '2025-11-02 04:00:00+00'::TIMESTAMPTZ,
+        '2025-11-02 06:00:00+00'::TIMESTAMPTZ,
+        '2025-11-02 07:00:00+00'::TIMESTAMPTZ,
+        '2025-11-02 08:00:00+00'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence), COUNT(*)
+    INTO actual, result_count
+    FROM rrule."all"(
+        'FREQ=HOURLY;COUNT=5',
+        '2025-11-01 23:00:00-04'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('HOURLY DST Fall-Back',
+        'HOURLY across November 2 fall-back preserves wall-clock hours',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- ============================================================================
 -- TEST RESULTS SUMMARY
 -- ============================================================================
 \echo ''
@@ -531,6 +575,151 @@ FROM (
         (SELECT array_agg(d ORDER BY d) FROM rrule."all"('FREQ=DAILY;BYHOUR=9,9;COUNT=2', '2025-01-01 00:00:00'::TIMESTAMP) d) AS deduped,
         (SELECT array_agg(d ORDER BY d) FROM rrule."all"('FREQ=DAILY;BYHOUR=9;COUNT=2', '2025-01-01 00:00:00'::TIMESTAMP) d) AS non_deduped
 ) sub;
+
+-- ============================================================================
+-- SECTION 6: UNTIL-based Sub-Day Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 6: UNTIL-based Sub-Day Frequencies ---'
+
+-- Test 6.1: HOURLY with UNTIL boundary
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    expected TIMESTAMP[] := ARRAY[
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-01 11:00:00'::TIMESTAMP,
+        '2025-01-01 12:00:00'::TIMESTAMP,
+        '2025-01-01 13:00:00'::TIMESTAMP
+    ];
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=HOURLY;UNTIL=20250101T130000Z', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('HOURLY UNTIL', 'FREQ=HOURLY;UNTIL produces correct bounded results',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 6.2: MINUTELY with UNTIL boundary
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    expected TIMESTAMP[] := ARRAY[
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-01 10:15:00'::TIMESTAMP,
+        '2025-01-01 10:30:00'::TIMESTAMP,
+        '2025-01-01 10:45:00'::TIMESTAMP
+    ];
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=MINUTELY;INTERVAL=15;UNTIL=20250101T104500Z', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('MINUTELY UNTIL', 'FREQ=MINUTELY;INTERVAL=15;UNTIL produces correct bounded results',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 6.3: SECONDLY with UNTIL boundary
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    expected TIMESTAMP[] := ARRAY[
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-01 10:00:30'::TIMESTAMP,
+        '2025-01-01 10:01:00'::TIMESTAMP,
+        '2025-01-01 10:01:30'::TIMESTAMP
+    ];
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=SECONDLY;INTERVAL=30;UNTIL=20250101T100130Z', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('SECONDLY UNTIL', 'FREQ=SECONDLY;INTERVAL=30;UNTIL produces correct bounded results',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- ============================================================================
+-- SECTION 7: Sub-Day between()/after() API Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 7: Sub-Day between()/after() API ---'
+
+-- Test 7.1: between() for HOURLY frequency
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    expected TIMESTAMP[] := ARRAY[
+        '2025-01-01 12:00:00'::TIMESTAMP,
+        '2025-01-01 13:00:00'::TIMESTAMP,
+        '2025-01-01 14:00:00'::TIMESTAMP
+    ];
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."between"(
+        'FREQ=HOURLY;COUNT=10',
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-01 11:30:00'::TIMESTAMP,
+        '2025-01-01 14:30:00'::TIMESTAMP
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('Sub-Day between()', 'HOURLY between() returns occurrences within range',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 7.2: after() for MINUTELY frequency
+DO $$
+DECLARE
+    actual TIMESTAMP;
+    expected TIMESTAMP := '2025-01-01 10:15:00'::TIMESTAMP;
+BEGIN
+    SELECT occurrence INTO actual
+    FROM rrule."after"(
+        'FREQ=MINUTELY;INTERVAL=15;COUNT=10',
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-01 10:00:00'::TIMESTAMP
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('Sub-Day after()', 'MINUTELY after() returns next occurrence after date',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 7.3: between() for SECONDLY frequency with inc=true
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    expected TIMESTAMP[] := ARRAY[
+        '2025-01-01 10:00:30'::TIMESTAMP,
+        '2025-01-01 10:01:00'::TIMESTAMP
+    ];
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."between"(
+        'FREQ=SECONDLY;INTERVAL=30;COUNT=10',
+        '2025-01-01 10:00:00'::TIMESTAMP,
+        '2025-01-01 10:00:30'::TIMESTAMP,
+        '2025-01-01 10:01:00'::TIMESTAMP,
+        TRUE
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('Sub-Day between()', 'SECONDLY between() with inc=true includes boundaries',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
 
 \echo ''
 \echo 'Overall Summary:'
