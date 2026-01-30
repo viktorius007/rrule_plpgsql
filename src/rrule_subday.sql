@@ -212,7 +212,8 @@ DECLARE
   occurrence_count INT := 0;
   emitted_count INT := 0;
   output_limit INT;
-  original_day INT;
+  dtstart_day INT;
+  month_max_day INT;
   current_base TIMESTAMP WITH TIME ZONE;
   current TIMESTAMP WITH TIME ZONE;
   period_start TIMESTAMP WITH TIME ZONE;
@@ -237,6 +238,9 @@ BEGIN
   IF rule.freq IS NULL THEN
     RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required';
   END IF;
+
+  -- Remember dtstart day-of-month for SKIP drift prevention
+  dtstart_day := date_part('day', basedate)::INT;
 
   current_base := basedate;
 
@@ -292,23 +296,29 @@ BEGIN
           EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         END IF;
       END LOOP;
-      original_day := date_part('day', current_base)::INT;
       current_base := current_base + make_interval(months => rule.interval);
-      -- Handle implicit SKIP for month advancement without explicit BYMONTHDAY/BYDAY
-      -- PostgreSQL coerces invalid dates (e.g., Jan 31 + 1 month = Feb 28), which is BACKWARD behavior.
-      -- When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
-        IF date_part('day', current_base)::INT != original_day THEN
-          IF rule.skip = 'OMIT' THEN
-            -- Skip this month — the implicit day doesn't exist
-            period_count := period_count + 1;
-            CONTINUE;
-          ELSIF rule.skip = 'FORWARD' THEN
-            -- Move to 1st of next month
-            current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+        LOOP
+          EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
+          month_max_day := date_part('day',
+            (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
+          IF dtstart_day <= month_max_day THEN
+            current_base := date_trunc('month', current_base)
+              + make_interval(days => dtstart_day - 1)
+              + (basedate::time)::interval;
+            EXIT;
           END IF;
-          -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
-        END IF;
+          IF rule.skip = 'OMIT' THEN
+            period_count := period_count + 1;
+            current_base := current_base + make_interval(months => rule.interval);
+          ELSIF rule.skip = 'FORWARD' THEN
+            current_base := date_trunc('month', current_base) + INTERVAL '1 month'
+              + (basedate::time)::interval;
+            EXIT;
+          ELSE
+            EXIT;
+          END IF;
+        END LOOP;
       END IF;
 
     ELSIF rule.freq = 'YEARLY' THEN
@@ -325,23 +335,29 @@ BEGIN
           EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         END IF;
       END LOOP;
-      original_day := date_part('day', current_base)::INT;
       current_base := current_base + make_interval(years => rule.interval);
-      -- Handle implicit SKIP for year advancement without explicit BYMONTHDAY/BYDAY
-      -- PostgreSQL coerces invalid dates (e.g., Feb 29 + 1 year = Feb 28 in non-leap year),
-      -- which is BACKWARD behavior. When SKIP=OMIT or SKIP=FORWARD, we need to detect and handle this.
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
-        IF date_part('day', current_base)::INT != original_day THEN
-          IF rule.skip = 'OMIT' THEN
-            -- Skip this year — the implicit day doesn't exist
-            period_count := period_count + 1;
-            CONTINUE;
-          ELSIF rule.skip = 'FORWARD' THEN
-            -- Move to 1st of next month
-            current_base := date_trunc('month', current_base) + INTERVAL '1 month';
+        LOOP
+          EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
+          month_max_day := date_part('day',
+            (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
+          IF dtstart_day <= month_max_day THEN
+            current_base := date_trunc('month', current_base)
+              + make_interval(days => dtstart_day - 1)
+              + (basedate::time)::interval;
+            EXIT;
           END IF;
-          -- BACKWARD: keep the coerced date (already the PostgreSQL default behavior)
-        END IF;
+          IF rule.skip = 'OMIT' THEN
+            period_count := period_count + 1;
+            current_base := current_base + make_interval(years => rule.interval);
+          ELSIF rule.skip = 'FORWARD' THEN
+            current_base := date_trunc('month', current_base) + INTERVAL '1 month'
+              + (basedate::time)::interval;
+            EXIT;
+          ELSE
+            EXIT;
+          END IF;
+        END LOOP;
       END IF;
 
     -- ⚠️  SUB-DAY FREQUENCIES ENABLED ⚠️
