@@ -1208,6 +1208,62 @@ BEGIN
   );
 END $$;
 
+-- ============================================================================
+-- SECTION 6: BYHOUR/BYMINUTE/BYSECOND Frequency Restriction Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 6: BYHOUR/BYMINUTE/BYSECOND Frequency Restrictions ---'
+
+-- Test 6.1: BYHOUR with WEEKLY should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=WEEKLY (should be rejected)',
+    assert_rrule_rejected(
+        'BYHOUR with WEEKLY',
+        'FREQ=WEEKLY;BYHOUR=9;COUNT=3',
+        '%BYHOUR is not supported with FREQ=WEEKLY%'
+    )
+);
+
+-- Test 6.2: BYHOUR with MONTHLY should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=MONTHLY (should be rejected)',
+    assert_rrule_rejected(
+        'BYHOUR with MONTHLY',
+        'FREQ=MONTHLY;BYHOUR=9;COUNT=3',
+        '%BYHOUR is not supported with FREQ=MONTHLY%'
+    )
+);
+
+-- Test 6.3: BYHOUR with YEARLY should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=YEARLY (should be rejected)',
+    assert_rrule_rejected(
+        'BYHOUR with YEARLY',
+        'FREQ=YEARLY;BYHOUR=9;COUNT=3',
+        '%BYHOUR is not supported with FREQ=YEARLY%'
+    )
+);
+
+-- Test 6.4: BYMINUTE with MONTHLY should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYMINUTE with FREQ=MONTHLY (should be rejected)',
+    assert_rrule_rejected(
+        'BYMINUTE with MONTHLY',
+        'FREQ=MONTHLY;BYMINUTE=30;COUNT=3',
+        '%BYMINUTE is not supported with FREQ=MONTHLY%'
+    )
+);
+
+-- Test 6.5: BYSECOND with YEARLY should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYSECOND with FREQ=YEARLY (should be rejected)',
+    assert_rrule_rejected(
+        'BYSECOND with YEARLY',
+        'FREQ=YEARLY;BYSECOND=0;COUNT=3',
+        '%BYSECOND is not supported with FREQ=YEARLY%'
+    )
+);
+
 ------------------------------------------------------------------------------------------------------
 -- Check if all tests passed
 ------------------------------------------------------------------------------------------------------

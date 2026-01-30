@@ -464,6 +464,74 @@ FROM (
     ) sub
 ) result;
 
+-- ============================================================================
+-- SECTION: rrule_day_time_set() Functional Tests
+-- ============================================================================
+\echo ''
+\echo '--- rrule_day_time_set() Functional Tests ---'
+
+-- Test: BYHOUR=9,17 produces correct hours
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'rrule_day_time_set()',
+    'BYHOUR=9,17 with DAILY COUNT=6',
+    CASE WHEN actual = ARRAY['2025-01-01 09:00:00', '2025-01-01 17:00:00',
+                              '2025-01-02 09:00:00', '2025-01-02 17:00:00',
+                              '2025-01-03 09:00:00', '2025-01-03 17:00:00']::TIMESTAMP[]
+         THEN 'PASS' ELSE 'FAIL: got ' || actual::TEXT END
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual
+    FROM rrule."all"(
+        'FREQ=DAILY;BYHOUR=9,17;COUNT=6',
+        '2025-01-01 00:00:00'::TIMESTAMP
+    ) d
+) sub;
+
+-- Test: BYHOUR+BYMINUTE cross-product
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'rrule_day_time_set()',
+    'BYHOUR=9 BYMINUTE=0,30 cross-product COUNT=4',
+    CASE WHEN actual = ARRAY['2025-01-01 09:00:00', '2025-01-01 09:30:00',
+                              '2025-01-02 09:00:00', '2025-01-02 09:30:00']::TIMESTAMP[]
+         THEN 'PASS' ELSE 'FAIL: got ' || actual::TEXT END
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual
+    FROM rrule."all"(
+        'FREQ=DAILY;BYHOUR=9;BYMINUTE=0,30;COUNT=4',
+        '2025-01-01 00:00:00'::TIMESTAMP
+    ) d
+) sub;
+
+-- Test: All three levels (BYHOUR+BYMINUTE+BYSECOND)
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'rrule_day_time_set()',
+    'BYHOUR=9 BYMINUTE=15 BYSECOND=0,30 COUNT=4',
+    CASE WHEN actual = ARRAY['2025-01-01 09:15:00', '2025-01-01 09:15:30',
+                              '2025-01-02 09:15:00', '2025-01-02 09:15:30']::TIMESTAMP[]
+         THEN 'PASS' ELSE 'FAIL: got ' || actual::TEXT END
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual
+    FROM rrule."all"(
+        'FREQ=DAILY;BYHOUR=9;BYMINUTE=15;BYSECOND=0,30;COUNT=4',
+        '2025-01-01 00:00:00'::TIMESTAMP
+    ) d
+) sub;
+
+-- Test: Deduplication (BYHOUR=9,9 produces same as BYHOUR=9)
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'rrule_day_time_set()',
+    'BYHOUR deduplication (9,9 same as 9)',
+    CASE WHEN deduped = non_deduped
+         THEN 'PASS' ELSE 'FAIL: deduped=' || deduped::TEXT || ' vs non_deduped=' || non_deduped::TEXT END
+FROM (
+    SELECT
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"('FREQ=DAILY;BYHOUR=9,9;COUNT=2', '2025-01-01 00:00:00'::TIMESTAMP) d) AS deduped,
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"('FREQ=DAILY;BYHOUR=9;COUNT=2', '2025-01-01 00:00:00'::TIMESTAMP) d) AS non_deduped
+) sub;
+
 \echo ''
 \echo 'Overall Summary:'
 SELECT

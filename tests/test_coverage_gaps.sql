@@ -1393,6 +1393,191 @@ SELECT
         ))::TEXT)
     );
 
+-- ============================================================================
+-- SECTION 13: Additional Coverage Gap Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 13: Additional Coverage Gap Tests ---'
+
+-- Test 13.1: YEARLY INTERVAL=4 with leap year start (drift prevention)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY INTERVAL>1',
+    'Test 13.1: YEARLY INTERVAL=4 from leap year Feb 29',
+    assert_equals(
+        'YEARLY INTERVAL=4 leap year',
+        '{"2024-02-29 00:00:00","2028-02-29 00:00:00","2032-02-29 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=4;COUNT=3',
+            '2024-02-29 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Test 13.2: YEARLY INTERVAL=2 with BYMONTH (biennial)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY INTERVAL>1',
+    'Test 13.2: YEARLY INTERVAL=2 BYMONTH=6',
+    assert_equals(
+        'Biennial June',
+        '{"2025-06-15 00:00:00","2027-06-15 00:00:00","2029-06-15 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;BYMONTH=6;COUNT=3',
+            '2025-06-15 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Test 13.3: MONTHLY INTERVAL=2 with SKIP=BACKWARD
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY INTERVAL>1 + SKIP',
+    'Test 13.3: MONTHLY INTERVAL=2 SKIP=BACKWARD from Jan 31',
+    assert_equals(
+        'Bi-monthly SKIP=BACKWARD',
+        '{"2025-01-31 00:00:00","2025-03-31 00:00:00","2025-05-31 00:00:00","2025-07-31 00:00:00","2025-09-30 00:00:00","2025-11-30 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=6',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Test 13.4: MONTHLY INTERVAL=2 with SKIP=FORWARD
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY INTERVAL>1 + SKIP',
+    'Test 13.4: MONTHLY INTERVAL=2 SKIP=FORWARD from Jan 31',
+    assert_equals(
+        'Bi-monthly SKIP=FORWARD',
+        '{"2025-01-31 00:00:00","2025-03-31 00:00:00","2025-05-31 00:00:00","2025-07-31 00:00:00","2025-10-01 00:00:00","2025-12-31 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=6',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Test 13.5: WEEKLY + BYMONTH interaction (Mondays in January)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'WEEKLY + BYMONTH',
+    'Test 13.5: WEEKLY BYDAY=MO BYMONTH=1 (January Mondays)',
+    assert_equals(
+        'January Mondays',
+        '{"2025-01-06 00:00:00","2025-01-13 00:00:00","2025-01-20 00:00:00","2025-01-27 00:00:00"}',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=WEEKLY;BYDAY=MO;BYMONTH=1;COUNT=4',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) d)::TEXT
+    );
+
+-- Test 13.6: TIMESTAMPTZ next() with explicit timezone param
+-- Pass explicit reference_time to avoid NOW() dependency (TESTING_STANDARDS: fixed timestamps)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'TIMESTAMPTZ next()/most_recent()',
+    'Test 13.6: next() with explicit timezone parameter',
+    assert_equals(
+        'TZ next()',
+        '2025-01-02 05:00:00+00',
+        (SELECT rrule."next"(
+            'FREQ=DAILY;COUNT=5',
+            '2025-01-01 00:00:00-05'::TIMESTAMPTZ,
+            'America/New_York',
+            '2025-01-01 00:00:00-05'::TIMESTAMPTZ
+        ))::TEXT
+    );
+
+-- Test 13.7: TIMESTAMPTZ most_recent() with explicit timezone param
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'TIMESTAMPTZ next()/most_recent()',
+    'Test 13.7: most_recent() with explicit timezone parameter',
+    assert_equals(
+        'TZ most_recent()',
+        '2025-01-05 05:00:00+00',
+        (SELECT rrule."most_recent"(
+            'FREQ=DAILY;COUNT=5',
+            '2025-01-01 00:00:00-05'::TIMESTAMPTZ,
+            'America/New_York',
+            '2025-01-06 00:00:00-05'::TIMESTAMPTZ
+        ))::TEXT
+    );
+
+-- Test 13.8: FREQ=HOURLY in standard install should be rejected
+-- (Skip this test when sub-day frequencies are enabled)
+DO $$
+DECLARE
+    test_passed BOOLEAN := FALSE;
+    subday_enabled BOOLEAN := FALSE;
+BEGIN
+    -- Detect if sub-day frequencies are enabled by checking for hourly_set function
+    SELECT EXISTS(
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'rrule' AND p.proname = 'hourly_set'
+    ) INTO subday_enabled;
+
+    IF subday_enabled THEN
+        -- Sub-day is enabled, skip this test (it only applies to standard install)
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'Sub-day rejection in standard install',
+            'Test 13.8: FREQ=HOURLY rejected in standard install',
+            'PASS'
+        );
+    ELSE
+        BEGIN
+            PERFORM rrule."all"('FREQ=HOURLY;COUNT=3', '2025-01-01 00:00:00'::TIMESTAMP);
+        EXCEPTION
+            WHEN raise_exception THEN
+                IF SQLERRM LIKE '%not supported in standard installation%' OR SQLERRM LIKE '%Unsupported frequency%' THEN
+                    test_passed := TRUE;
+                END IF;
+        END;
+
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'Sub-day rejection in standard install',
+            'Test 13.8: FREQ=HOURLY rejected in standard install',
+            CASE WHEN test_passed THEN 'PASS' ELSE 'FAIL' END
+        );
+    END IF;
+END $$;
+
+-- Test 13.9: FREQ=MINUTELY in standard install should be rejected
+-- (Skip this test when sub-day frequencies are enabled)
+DO $$
+DECLARE
+    test_passed BOOLEAN := FALSE;
+    subday_enabled BOOLEAN := FALSE;
+BEGIN
+    SELECT EXISTS(
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'rrule' AND p.proname = 'minutely_set'
+    ) INTO subday_enabled;
+
+    IF subday_enabled THEN
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'Sub-day rejection in standard install',
+            'Test 13.9: FREQ=MINUTELY rejected in standard install',
+            'PASS'
+        );
+    ELSE
+        BEGIN
+            PERFORM rrule."all"('FREQ=MINUTELY;COUNT=3', '2025-01-01 00:00:00'::TIMESTAMP);
+        EXCEPTION
+            WHEN raise_exception THEN
+                IF SQLERRM LIKE '%not supported in standard installation%' OR SQLERRM LIKE '%Unsupported frequency%' THEN
+                    test_passed := TRUE;
+                END IF;
+        END;
+
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'Sub-day rejection in standard install',
+            'Test 13.9: FREQ=MINUTELY rejected in standard install',
+            CASE WHEN test_passed THEN 'PASS' ELSE 'FAIL' END
+        );
+    END IF;
+END $$;
+
 -- Fail if any tests failed
 DO $$
 DECLARE

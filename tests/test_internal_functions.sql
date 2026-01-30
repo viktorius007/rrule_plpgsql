@@ -456,6 +456,46 @@ SELECT 'yearly_set()', 'Generate days in a year with BYMONTH',
         )));
 
 -- ============================================================================
+-- SECTION 18: rrule_year_byday_set() Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 18: rrule_year_byday_set() ---'
+
+-- Test 18.1: First Monday of year (ordinal BYDAY)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_year_byday_set()', 'First Monday of year via YEARLY;BYDAY=1MO',
+    assert_true(
+        'First Monday of year',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1MO;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) d) = ARRAY['2025-01-06 00:00:00', '2026-01-05 00:00:00', '2027-01-04 00:00:00']::TIMESTAMP[]
+    );
+
+-- Test 18.2: Last Friday of year (negative ordinal)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_year_byday_set()', 'Last Friday of year via YEARLY;BYDAY=-1FR',
+    assert_true(
+        'Last Friday of year',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1FR;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) d) = ARRAY['2025-12-26 00:00:00', '2026-12-25 00:00:00', '2027-12-31 00:00:00']::TIMESTAMP[]
+    );
+
+-- Test 18.3: All Mondays of year (unqualified BYDAY, first 5)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_year_byday_set()', 'All Mondays of year (first 5)',
+    assert_true(
+        'First 5 Mondays of 2025',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=MO;COUNT=5',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) d) = ARRAY['2025-01-06 00:00:00', '2025-01-13 00:00:00', '2025-01-20 00:00:00',
+              '2025-01-27 00:00:00', '2025-02-03 00:00:00']::TIMESTAMP[]
+    );
+
+-- ============================================================================
 -- TEST RESULTS SUMMARY
 -- ============================================================================
 \echo ''
