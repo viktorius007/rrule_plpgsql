@@ -324,6 +324,83 @@ VALUES (
 );
 
 ------------------------------------------------------------------------------------------------------
+-- Category 5: Coverage Gap Tests
+------------------------------------------------------------------------------------------------------
+\echo ''
+\echo '==================================================================='
+\echo 'Category 5: Coverage Gap Tests'
+\echo '==================================================================='
+
+-- Test 5.1: BYSETPOS + WEEKLY + INTERVAL>1
+-- Verifies BYSETPOS selects first and last from each bi-weekly candidate set.
+-- BYDAY=MO,WE,FR produces 3 candidates per active week; INTERVAL=2 skips alternate weeks.
+-- Week of Jan 6 (active): MO=6, WE=8, FR=10 → BYSETPOS 1=6, -1=10
+-- Week of Jan 13 (skipped by INTERVAL=2)
+-- Week of Jan 20 (active): MO=20, WE=22, FR=24 → BYSETPOS 1=20, -1=24
+-- Week of Feb 3 (active): MO=3, WE=5, FR=7 → BYSETPOS 1=Feb 3, -1=Feb 7
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'Coverage Gaps',
+    'BYSETPOS=1,-1 with WEEKLY INTERVAL=2 BYDAY=MO,WE,FR',
+    assert_occurrences_equal(
+        'BYSETPOS + WEEKLY + INTERVAL>1',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-01-10 10:00:00'::TIMESTAMP,
+            '2025-01-20 10:00:00'::TIMESTAMP,
+            '2025-01-24 10:00:00'::TIMESTAMP,
+            '2025-02-03 10:00:00'::TIMESTAMP,
+            '2025-02-07 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;BYSETPOS=1,-1;COUNT=6', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 5.2: BYSETPOS + BYWEEKNO on YEARLY
+-- Verifies BYSETPOS operates correctly when combined with BYWEEKNO.
+-- BYWEEKNO=20 with BYDAY=MO,WE,FR produces 3 candidates in ISO week 20.
+-- BYSETPOS=1,-1 selects the first (Monday) and last (Friday) from that set.
+-- 2025 ISO wk 20: Mon May 12, Fri May 16
+-- 2026 ISO wk 20: Mon May 11, Fri May 15
+-- 2027 ISO wk 20: Mon May 17, Fri May 21
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'Coverage Gaps',
+    'BYSETPOS=1,-1 with YEARLY BYWEEKNO=20 BYDAY=MO,WE,FR',
+    assert_occurrences_equal(
+        'BYSETPOS + BYWEEKNO on YEARLY',
+        ARRAY[
+            '2025-05-12 09:00:00'::TIMESTAMP,
+            '2025-05-16 09:00:00'::TIMESTAMP,
+            '2026-05-11 09:00:00'::TIMESTAMP,
+            '2026-05-15 09:00:00'::TIMESTAMP,
+            '2027-05-17 09:00:00'::TIMESTAMP,
+            '2027-05-21 09:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO,WE,FR;BYSETPOS=1,-1;COUNT=6', '2025-01-01 09:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 5.3: BYSETPOS + DAILY frequency with BYDAY filter
+-- DAILY with BYDAY=MO,WE,FR produces one candidate per qualifying day.
+-- BYSETPOS=1 on a single-element daily set passes through unchanged.
+-- Expected: same results as without BYSETPOS — Jan 6 (Mon), Jan 8 (Wed), Jan 10 (Fri).
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'Coverage Gaps',
+    'BYSETPOS=1 with DAILY BYDAY=MO,WE,FR (single-element set passthrough)',
+    assert_occurrences_equal(
+        'BYSETPOS + DAILY with BYDAY',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-01-08 10:00:00'::TIMESTAMP,
+            '2025-01-10 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=DAILY;BYDAY=MO,WE,FR;BYSETPOS=1;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+------------------------------------------------------------------------------------------------------
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------
 \echo ''

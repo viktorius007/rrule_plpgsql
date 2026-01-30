@@ -632,7 +632,7 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('COUNT Validation', 'COUNT=-1 (should be rejected)',
     assert_rrule_rejected(
         'COUNT=-1 invalid',
-        'FREQ=DAILY;COUNT=-1;UNTIL=20250105T235959Z',
+        'FREQ=DAILY;COUNT=-1',
         '%COUNT must be a positive integer%'
     )
 );

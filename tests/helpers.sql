@@ -23,6 +23,10 @@ RETURNS TEXT AS $$
 DECLARE
     i INT;
 BEGIN
+    -- NOTE: array_agg() returns NULL when no rows match (not an empty array).
+    -- Tests expecting empty results use ARRAY[]::TIMESTAMP[], which has NULL array_length.
+    -- IS DISTINCT FROM and COALESCE handle both NULL and empty arrays: NULL/empty both → length 0/NULL.
+    -- This allows tests comparing NULL actual (no results) vs empty expected to pass correctly.
     IF array_length(expected, 1) IS DISTINCT FROM array_length(actual, 1) THEN
         RAISE EXCEPTION 'FAIL [%]: Expected % occurrences, got %',
             test_name,

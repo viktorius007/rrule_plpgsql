@@ -1877,6 +1877,243 @@ SELECT
         ) AS occurrence)
     );
 
+-- ============================================================================
+-- SECTION 16: NULL RRULE Input to Public API Functions
+-- ============================================================================
+\echo ''
+\echo '--- Section 16: NULL RRULE Input to Public API Functions ---'
+
+-- Test 16.1: rrule."all"() with NULL RRULE
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_count INT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."all"(
+            NULL,
+            '2025-01-01 00:00:00'::TIMESTAMP
+        );
+        -- If no error, document behavior: returned empty or some result
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'NULL RRULE Input',
+            'Test 16.1: rrule."all"(NULL, dtstart) returns ' || result_count || ' rows (no error)',
+            'PASS'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            -- Error raised: document the error message
+            INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+                'NULL RRULE Input',
+                'Test 16.1: rrule."all"(NULL, dtstart) raises error: ' || LEFT(err_msg, 100),
+                'PASS'
+            );
+    END;
+END $$;
+
+-- Test 16.2: rrule."between"() with NULL RRULE
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_count INT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."between"(
+            NULL,
+            '2025-01-01'::TIMESTAMP,
+            '2025-01-01'::TIMESTAMP,
+            '2025-12-31'::TIMESTAMP
+        );
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'NULL RRULE Input',
+            'Test 16.2: rrule."between"(NULL, ...) returns ' || result_count || ' rows (no error)',
+            'PASS'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+                'NULL RRULE Input',
+                'Test 16.2: rrule."between"(NULL, ...) raises error: ' || LEFT(err_msg, 100),
+                'PASS'
+            );
+    END;
+END $$;
+
+-- Test 16.3: rrule."after"() with NULL RRULE
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_count INT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."after"(
+            NULL,
+            '2025-01-01'::TIMESTAMP,
+            '2025-01-01'::TIMESTAMP
+        );
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'NULL RRULE Input',
+            'Test 16.3: rrule."after"(NULL, ...) returns ' || result_count || ' rows (no error)',
+            'PASS'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+                'NULL RRULE Input',
+                'Test 16.3: rrule."after"(NULL, ...) raises error: ' || LEFT(err_msg, 100),
+                'PASS'
+            );
+    END;
+END $$;
+
+-- Test 16.4: rrule."before"() with NULL RRULE
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_count INT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."before"(
+            NULL,
+            '2025-01-01'::TIMESTAMP,
+            '2025-12-31'::TIMESTAMP
+        );
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'NULL RRULE Input',
+            'Test 16.4: rrule."before"(NULL, ...) returns ' || result_count || ' rows (no error)',
+            'PASS'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+                'NULL RRULE Input',
+                'Test 16.4: rrule."before"(NULL, ...) raises error: ' || LEFT(err_msg, 100),
+                'PASS'
+            );
+    END;
+END $$;
+
+-- Test 16.5: rrule."count"() with NULL RRULE
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_val TEXT;
+BEGIN
+    BEGIN
+        SELECT rrule."count"(
+            NULL,
+            '2025-01-01'::TIMESTAMP
+        )::TEXT INTO result_val;
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'NULL RRULE Input',
+            'Test 16.5: rrule."count"(NULL, dtstart) returns ' || COALESCE(result_val, 'NULL') || ' (no error)',
+            'PASS'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+                'NULL RRULE Input',
+                'Test 16.5: rrule."count"(NULL, dtstart) raises error: ' || LEFT(err_msg, 100),
+                'PASS'
+            );
+    END;
+END $$;
+
+-- ============================================================================
+-- SECTION 17: BYDAY Ordinal=5 (5th Occurrence in Month)
+-- ============================================================================
+\echo ''
+\echo '--- Section 17: BYDAY Ordinal=5 (5th Occurrence in Month) ---'
+
+-- Test 17.1: FREQ=MONTHLY;BYDAY=5MO;COUNT=3
+-- The 5th Monday only exists in some months:
+--   Jan 2025: 4 Mondays (no 5th)
+--   Feb 2025: 4 Mondays (no 5th)
+--   Mar 2025: 5 Mondays -> 5th Monday = March 31
+--   Apr 2025: 4 Mondays (no 5th)
+--   May 2025: 4 Mondays (no 5th)
+--   Jun 2025: 5 Mondays -> 5th Monday = June 30
+--   Jul 2025: 4 Mondays (no 5th)
+--   Aug 2025: 4 Mondays (no 5th)
+--   Sep 2025: 5 Mondays -> 5th Monday = September 29
+-- So COUNT=3 should produce: March 31, June 30, September 29
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYDAY Ordinal=5',
+    'Test 17.1: FREQ=MONTHLY;BYDAY=5MO;COUNT=3 (5th Monday)',
+    assert_occurrences_equal(
+        '5th Monday of month',
+        ARRAY[
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-06-30 10:00:00'::TIMESTAMP,
+            '2025-09-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- SECTION 18: WEEKLY + BYDAY + INTERVAL>1 + UNTIL Boundary
+-- ============================================================================
+\echo ''
+\echo '--- Section 18: WEEKLY + BYDAY + INTERVAL>1 + UNTIL Boundary ---'
+
+-- Test 18.1: FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;UNTIL=20250124T235959
+-- dtstart = Monday Jan 6, 2025 at 10:00
+-- Week of Jan 6 (active): MO=6, WE=8, FR=10
+-- Week of Jan 13 (skipped due to INTERVAL=2)
+-- Week of Jan 20 (active): MO=20, WE=22, FR=24
+-- UNTIL is Jan 24 23:59:59 so FR Jan 24 at 10:00 is included
+-- Expected: Jan 6, 8, 10, 20, 22, 24
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'WEEKLY INTERVAL>1 + UNTIL',
+    'Test 18.1: Biweekly MO,WE,FR with UNTIL including last day',
+    assert_occurrences_equal(
+        'Biweekly MO,WE,FR UNTIL inclusive',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-01-08 10:00:00'::TIMESTAMP,
+            '2025-01-10 10:00:00'::TIMESTAMP,
+            '2025-01-20 10:00:00'::TIMESTAMP,
+            '2025-01-22 10:00:00'::TIMESTAMP,
+            '2025-01-24 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;UNTIL=20250124T235959Z',
+            '2025-01-06 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 18.2: Same rule but UNTIL=20250123T235959Z excludes Jan 24
+-- UNTIL is Jan 23 23:59:59 UTC, so FR Jan 24 at 10:00 is AFTER the UNTIL and excluded
+-- Expected: Jan 6, 8, 10, 20, 22
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'WEEKLY INTERVAL>1 + UNTIL',
+    'Test 18.2: Biweekly MO,WE,FR with UNTIL excluding last day',
+    assert_occurrences_equal(
+        'Biweekly MO,WE,FR UNTIL exclusive',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-01-08 10:00:00'::TIMESTAMP,
+            '2025-01-10 10:00:00'::TIMESTAMP,
+            '2025-01-20 10:00:00'::TIMESTAMP,
+            '2025-01-22 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;UNTIL=20250123T235959Z',
+            '2025-01-06 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE

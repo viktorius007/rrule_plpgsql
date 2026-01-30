@@ -306,6 +306,21 @@ INSERT INTO test_results VALUES (70, 'Specific counts: Daily Standup=500, Weekly
     END)
 );
 
+-- Test 7a: Verify exact next_occurrence dates per event
+INSERT INTO test_results VALUES (71, 'Specific dates: next_occurrence for each event',
+    (SELECT CASE
+        WHEN (SELECT next_occurrence FROM events WHERE title = 'Daily Standup') = '2025-02-06 09:00:00+00'::TIMESTAMPTZ
+         AND (SELECT next_occurrence FROM events WHERE title = 'Weekly Review') = '2025-02-07 15:00:00+00'::TIMESTAMPTZ
+         AND (SELECT next_occurrence FROM events WHERE title = 'Monthly Planning') = '2025-03-03 10:00:00+00'::TIMESTAMPTZ
+         AND (SELECT next_occurrence FROM events WHERE title = 'Archived Event') IS NULL
+        THEN 'PASS'
+        ELSE 'FAIL: Daily Standup=' || COALESCE((SELECT next_occurrence FROM events WHERE title = 'Daily Standup')::TEXT, 'NULL') ||
+             ' Weekly Review=' || COALESCE((SELECT next_occurrence FROM events WHERE title = 'Weekly Review')::TEXT, 'NULL') ||
+             ' Monthly Planning=' || COALESCE((SELECT next_occurrence FROM events WHERE title = 'Monthly Planning')::TEXT, 'NULL') ||
+             ' Archived Event=' || COALESCE((SELECT next_occurrence FROM events WHERE title = 'Archived Event')::TEXT, 'NULL')
+    END)
+);
+
 -- Test 8: Filtering with set operations - events on weekends
 -- Uses fixed date range for deterministic assertion (none of the test events produce weekend occurrences)
 INSERT INTO test_results VALUES (8, 'Set filtering: weekend occurrences',
@@ -322,6 +337,56 @@ INSERT INTO test_results VALUES (8, 'Set filtering: weekend occurrences',
             '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
             '2025-07-01 00:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
     WHERE EXTRACT(DOW FROM occurrence) IN (0, 6))  -- Sunday = 0, Saturday = 6
+);
+
+-- Test 8a: Verify exact weekday occurrences exist in June 2025 (confirms data is present, just not on weekends)
+INSERT INTO test_results VALUES (80, 'Specific dates: Weekly Review Fridays and Monthly Planning Monday in June 2025',
+    (SELECT CASE
+        WHEN (SELECT array_agg(occurrence ORDER BY occurrence)
+              FROM events e
+              CROSS JOIN LATERAL (
+                  SELECT occurrence FROM rrule."between"(
+                      e.rrule,
+                      e.event_start,
+                      '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+                      '2025-07-01 00:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
+              WHERE e.title = 'Weekly Review')
+             = ARRAY[
+                 '2025-06-06 15:00:00+00'::TIMESTAMPTZ,
+                 '2025-06-13 15:00:00+00'::TIMESTAMPTZ,
+                 '2025-06-20 15:00:00+00'::TIMESTAMPTZ,
+                 '2025-06-27 15:00:00+00'::TIMESTAMPTZ
+             ]
+         AND (SELECT array_agg(occurrence ORDER BY occurrence)
+              FROM events e
+              CROSS JOIN LATERAL (
+                  SELECT occurrence FROM rrule."between"(
+                      e.rrule,
+                      e.event_start,
+                      '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+                      '2025-07-01 00:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
+              WHERE e.title = 'Monthly Planning')
+             = ARRAY['2025-06-02 10:00:00+00'::TIMESTAMPTZ]
+         AND (SELECT COUNT(*)
+              FROM events e
+              CROSS JOIN LATERAL (
+                  SELECT occurrence FROM rrule."between"(
+                      e.rrule,
+                      e.event_start,
+                      '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+                      '2025-07-01 00:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
+              WHERE e.title = 'Archived Event') = 0
+        THEN 'PASS'
+        ELSE 'FAIL: Weekly Review=' || COALESCE((SELECT array_agg(occurrence ORDER BY occurrence)::TEXT
+              FROM events e
+              CROSS JOIN LATERAL (
+                  SELECT occurrence FROM rrule."between"(
+                      e.rrule,
+                      e.event_start,
+                      '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+                      '2025-07-01 00:00:00+00'::TIMESTAMPTZ ) AS occurrence ) AS occ
+              WHERE e.title = 'Weekly Review'), 'NULL')
+    END)
 );
 
 ---------------------------------------------------------------------------------------------------
