@@ -938,11 +938,14 @@ BEGIN
         '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
+    -- Before the fix for before() >1000 occurrences, this returned 2022-09-26 14:00:00+00
+    -- (the 1000th occurrence instead of the correct last one before reference_time).
+    -- The correct answer is 2025-06-14 10:00 AM EDT = 2025-06-14 14:00:00+00.
     status := assert_equal(
         'most_recent() API',
         'Returns occurrence before reference_time',
         result::TEXT,
-        '2022-09-26 14:00:00+00'
+        '2025-06-14 14:00:00+00'
     );
 
     RAISE NOTICE 'Test 10.1: most_recent() with explicit timezone % - Result: %', status, result;
@@ -1701,6 +1704,91 @@ SELECT
     SUM(CASE WHEN NOT passed THEN 1 ELSE 0 END) as failed,
     ROUND(100.0 * SUM(CASE WHEN passed THEN 1 ELSE 0 END) / COUNT(*), 1) || '%' as pass_rate
 FROM tz_api_test_results;
+
+-- ================================================================================================================
+-- SKIP=FORWARD TIME PRESERVATION TESTS (TIMESTAMPTZ API)
+-- ================================================================================================================
+
+\echo ''
+\echo '=================================================='
+\echo 'Testing SKIP=FORWARD time preservation (TIMESTAMPTZ API)'
+\echo '=================================================='
+
+-- MONTHLY SKIP=FORWARD with non-midnight dtstart should preserve time component
+INSERT INTO tz_api_test_results (test_suite, test_name, passed, actual, expected)
+SELECT
+    'SKIP=FORWARD Time',
+    'MONTHLY SKIP=FORWARD preserves time via TIMESTAMPTZ API',
+    actual_val = ARRAY['2025-03-01 14:30:00']::TIMESTAMP[],
+    actual_val::TEXT,
+    '{2025-03-01 14:30:00}'
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual_val
+    FROM (
+        SELECT (occurrence AT TIME ZONE 'America/New_York')::TIMESTAMP AS d
+        FROM rrule."between"(
+            'FREQ=MONTHLY;SKIP=FORWARD;RSCALE=GREGORIAN',
+            '2025-01-31 14:30:00-05'::TIMESTAMPTZ,
+            '2025-02-01 00:00:00-05'::TIMESTAMPTZ,
+            '2025-04-01 00:00:00-04'::TIMESTAMPTZ,
+            'America/New_York'
+        ) AS occurrence
+    ) sub
+) result;
+
+-- YEARLY SKIP=FORWARD with non-midnight dtstart should preserve time component
+INSERT INTO tz_api_test_results (test_suite, test_name, passed, actual, expected)
+SELECT
+    'SKIP=FORWARD Time',
+    'YEARLY SKIP=FORWARD preserves time via TIMESTAMPTZ API',
+    actual_val = ARRAY['2025-03-01 09:15:00']::TIMESTAMP[],
+    actual_val::TEXT,
+    '{2025-03-01 09:15:00}'
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual_val
+    FROM (
+        SELECT (occurrence AT TIME ZONE 'America/New_York')::TIMESTAMP AS d
+        FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=2;SKIP=FORWARD;RSCALE=GREGORIAN',
+            '2025-01-29 09:15:00-05'::TIMESTAMPTZ,
+            '2025-02-01 00:00:00-05'::TIMESTAMPTZ,
+            '2026-01-01 00:00:00-05'::TIMESTAMPTZ,
+            'America/New_York'
+        ) AS occurrence
+    ) sub
+) result;
+
+-- ================================================================================================================
+-- OVERLAPS BOUNDARY SEMANTICS TESTS (TIMESTAMPTZ API)
+-- ================================================================================================================
+
+\echo ''
+\echo '=================================================='
+\echo 'Testing overlaps() boundary semantics (TIMESTAMPTZ API)'
+\echo '=================================================='
+
+-- Overlap detection where occurrence falls exactly on boundary timestamp
+INSERT INTO tz_api_test_results (test_suite, test_name, passed, actual, expected)
+SELECT
+    'Overlaps Boundary',
+    'TIMESTAMPTZ overlaps() detects boundary occurrence',
+    rrule.overlaps(
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        NULL::TIMESTAMPTZ,
+        'FREQ=DAILY;COUNT=5',
+        '2025-01-03 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-05 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) = TRUE,
+    (rrule.overlaps(
+        '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+        NULL::TIMESTAMPTZ,
+        'FREQ=DAILY;COUNT=5',
+        '2025-01-03 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-05 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ))::TEXT,
+    'true';
 
 -- Fail transaction if any tests failed
 DO $$

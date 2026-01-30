@@ -1351,6 +1351,48 @@ SELECT
          ) AS occurrence)
     );
 
+-- ================================================================================================================
+-- before() CORRECTNESS FOR >1000 OCCURRENCES
+-- ================================================================================================================
+
+\echo ''
+\echo '=================================================='
+\echo 'Testing before() correctness for >1000 occurrences'
+\echo '=================================================='
+
+-- TIMESTAMP API: FREQ=DAILY from 2020-01-01, before_date 2025-01-01 (~1826 occurrences)
+-- The correct answer is 2024-12-31, not the 1000th occurrence (2022-09-27)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Correctness',
+    'Test 12.1: TIMESTAMP before() with >1000 occurrences returns correct last occurrence',
+    assert_equals(
+        'before() >1000 occurrences',
+        '2024-12-31 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))::TEXT
+    );
+
+-- TIMESTAMPTZ API: Same test with timezone
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Correctness',
+    'Test 12.2: TIMESTAMPTZ before() with >1000 occurrences returns correct last occurrence',
+    assert_equals(
+        'before() >1000 occurrences (TZ)',
+        '2024-12-31 05:00:00+00',
+        (SELECT (rrule."before"(
+            'FREQ=DAILY',
+            '2020-01-01 00:00:00-05'::TIMESTAMPTZ,
+            '2025-01-01 00:00:00-05'::TIMESTAMPTZ,
+            1,
+            'America/New_York'
+        ))::TEXT)
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE

@@ -51,7 +51,10 @@ BEGIN
     IF expected IS NOT DISTINCT FROM actual THEN
         RETURN 'PASS';
     ELSE
-        RETURN 'FAIL - Expected: ' || COALESCE(expected, 'NULL') || ', Got: ' || COALESCE(actual, 'NULL');
+        RAISE EXCEPTION 'FAIL [%]: Expected: %, Got: %',
+            test_name,
+            COALESCE(expected, 'NULL'),
+            COALESCE(actual, 'NULL');
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -65,7 +68,7 @@ BEGIN
     IF condition THEN
         RETURN 'PASS';
     ELSE
-        RETURN 'FAIL - Condition was false';
+        RAISE EXCEPTION 'FAIL [%]: Condition was false', test_name;
     END IF;
 END;
 $$ LANGUAGE plpgsql;

@@ -413,6 +413,57 @@ FROM subday_test_results
 GROUP BY test_category
 ORDER BY test_category;
 
+-- ================================================================================================================
+-- SKIP=FORWARD TIME PRESERVATION TESTS (Sub-day install TZ generator)
+-- ================================================================================================================
+
+\echo ''
+\echo '=================================================='
+\echo 'Testing SKIP=FORWARD time preservation (sub-day TZ generator)'
+\echo '=================================================='
+
+-- MONTHLY SKIP=FORWARD with non-midnight dtstart should preserve time component
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'SKIP=FORWARD Time Preservation',
+    'MONTHLY SKIP=FORWARD preserves time via TIMESTAMPTZ API (subday)',
+    CASE WHEN actual = ARRAY['2025-03-01 14:30:00']::TIMESTAMP[]
+         THEN 'PASS' ELSE 'FAIL' END
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual
+    FROM (
+        SELECT (occurrence AT TIME ZONE 'America/New_York')::TIMESTAMP AS d
+        FROM rrule."between"(
+            'FREQ=MONTHLY;SKIP=FORWARD;RSCALE=GREGORIAN',
+            '2025-01-31 14:30:00-05'::TIMESTAMPTZ,
+            '2025-02-01 00:00:00-05'::TIMESTAMPTZ,
+            '2025-04-01 00:00:00-04'::TIMESTAMPTZ,
+            'America/New_York'
+        ) AS occurrence
+    ) sub
+) result;
+
+-- YEARLY SKIP=FORWARD with non-midnight dtstart should preserve time component
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'SKIP=FORWARD Time Preservation',
+    'YEARLY SKIP=FORWARD preserves time via TIMESTAMPTZ API (subday)',
+    CASE WHEN actual = ARRAY['2025-03-01 09:15:00']::TIMESTAMP[]
+         THEN 'PASS' ELSE 'FAIL' END
+FROM (
+    SELECT array_agg(d ORDER BY d) AS actual
+    FROM (
+        SELECT (occurrence AT TIME ZONE 'America/New_York')::TIMESTAMP AS d
+        FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=2;SKIP=FORWARD;RSCALE=GREGORIAN',
+            '2025-01-29 09:15:00-05'::TIMESTAMPTZ,
+            '2025-02-01 00:00:00-05'::TIMESTAMPTZ,
+            '2026-01-01 00:00:00-05'::TIMESTAMPTZ,
+            'America/New_York'
+        ) AS occurrence
+    ) sub
+) result;
+
 \echo ''
 \echo 'Overall Summary:'
 SELECT
