@@ -1004,10 +1004,10 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'Negative Filters',
     'Negative BYYEARDAY=-1 on YEARLY (last day of year)',
-    assert_equals(
+    assert_occurrences_equal(
         'YEARLY BYYEARDAY=-1',
-        '2025-12-31 00:00:00',
-        (SELECT (array_agg(occurrence ORDER BY occurrence))[1]::TEXT FROM rrule."all"(
+        ARRAY['2025-12-31'::TIMESTAMP, '2026-12-31'::TIMESTAMP, '2027-12-31'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
           'FREQ=YEARLY;BYYEARDAY=-1;COUNT=3',
           '2025-01-01'::TIMESTAMP
         ) AS occurrence)
@@ -1019,13 +1019,13 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'Negative Filters',
     'Negative BYYEARDAY=-31 on YEARLY',
-    assert_equals(
+    assert_occurrences_equal(
         'YEARLY BYYEARDAY=-31',
-        '3',
-        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+        ARRAY['2025-12-01'::TIMESTAMP, '2026-12-01'::TIMESTAMP, '2027-12-01'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
           'FREQ=YEARLY;BYYEARDAY=-31;COUNT=3',
           '2025-01-01'::TIMESTAMP
-        ))
+        ) AS occurrence)
     );
 
 -- Test 8.3: Multiple negative BYYEARDAY values on YEARLY
@@ -1084,10 +1084,10 @@ INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'Negative Filters',
     'Negative BYMONTHDAY=-1 on MONTHLY returns correct dates',
-    assert_equals(
+    assert_occurrences_equal(
         'MONTHLY BYMONTHDAY=-1 dates',
-        '2025-01-31 00:00:00',
-        (SELECT (array_agg(occurrence ORDER BY occurrence))[1]::TEXT FROM rrule."all"(
+        ARRAY['2025-01-31'::TIMESTAMP, '2025-02-28'::TIMESTAMP, '2025-03-31'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
           'FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=3',
           '2025-01-01'::TIMESTAMP
         ) AS occurrence)
@@ -1321,15 +1321,27 @@ SELECT
     );
 
 -- Test 11.5: BYDAY trailing comma does not produce phantom Sunday
+-- Ground truth: FREQ=WEEKLY;BYDAY=MO,TU;COUNT=2 starting Monday Jan 6 = Mon Jan 6 + Tue Jan 7
+-- Both the clean and trailing-comma variants must match this expected array.
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'Review-Driven Gaps',
-    'Test 11.5: BYDAY trailing comma no phantom Sunday',
-    assert_equals(
-        'BYDAY trailing comma',
-        (SELECT array_agg(occurrence ORDER BY occurrence)::TEXT
-         FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,TU;COUNT=2', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence),
-        (SELECT array_agg(occurrence ORDER BY occurrence)::TEXT
+    'Test 11.5a: BYDAY=MO,TU matches expected array',
+    assert_occurrences_equal(
+        'BYDAY clean variant',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP, '2025-01-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,TU;COUNT=2', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Review-Driven Gaps',
+    'Test 11.5b: BYDAY=MO,TU, (trailing comma) matches expected array',
+    assert_occurrences_equal(
+        'BYDAY trailing comma variant',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP, '2025-01-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
          FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,TU,;COUNT=2', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
     );
 
@@ -1880,146 +1892,129 @@ SELECT
 -- ============================================================================
 -- SECTION 16: NULL RRULE Input to Public API Functions
 -- ============================================================================
+-- NULL RRULE must raise "FREQ is required" error per RFC 5545 validation.
+-- The STRICT modifier on internal functions previously caused NULL to silently
+-- return empty results. Public API functions now guard against NULL explicitly.
+-- ============================================================================
 \echo ''
 \echo '--- Section 16: NULL RRULE Input to Public API Functions ---'
 
--- Test 16.1: rrule."all"() with NULL RRULE
+-- Test 16.1: rrule."all"(NULL, dtstart) raises FREQ required error
 DO $$
 DECLARE
     err_msg TEXT;
     result_count INT;
 BEGIN
     BEGIN
-        SELECT COUNT(*) INTO result_count FROM rrule."all"(
-            NULL,
-            '2025-01-01 00:00:00'::TIMESTAMP
-        );
-        -- If no error, document behavior: returned empty or some result
+        SELECT COUNT(*) INTO result_count FROM rrule."all"(NULL, '2025-01-01 00:00:00'::TIMESTAMP);
         INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
             'NULL RRULE Input',
-            'Test 16.1: rrule."all"(NULL, dtstart) returns ' || result_count || ' rows (no error)',
-            'PASS'
+            'Test 16.1: rrule."all"(NULL, dtstart) raises error',
+            'FAIL: expected exception but got ' || result_count || ' results'
         );
     EXCEPTION
         WHEN OTHERS THEN
             GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
-            -- Error raised: document the error message
             INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
                 'NULL RRULE Input',
-                'Test 16.1: rrule."all"(NULL, dtstart) raises error: ' || LEFT(err_msg, 100),
-                'PASS'
+                'Test 16.1: rrule."all"(NULL, dtstart) raises error',
+                CASE WHEN err_msg LIKE '%FREQ%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
             );
     END;
 END $$;
 
--- Test 16.2: rrule."between"() with NULL RRULE
+-- Test 16.2: rrule."between"(NULL, ...) raises FREQ required error
 DO $$
 DECLARE
     err_msg TEXT;
     result_count INT;
 BEGIN
     BEGIN
-        SELECT COUNT(*) INTO result_count FROM rrule."between"(
-            NULL,
-            '2025-01-01'::TIMESTAMP,
-            '2025-01-01'::TIMESTAMP,
-            '2025-12-31'::TIMESTAMP
-        );
+        SELECT COUNT(*) INTO result_count FROM rrule."between"(NULL, '2025-01-01'::TIMESTAMP, '2025-01-01'::TIMESTAMP, '2025-12-31'::TIMESTAMP);
         INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
             'NULL RRULE Input',
-            'Test 16.2: rrule."between"(NULL, ...) returns ' || result_count || ' rows (no error)',
-            'PASS'
+            'Test 16.2: rrule."between"(NULL, ...) raises error',
+            'FAIL: expected exception but got ' || result_count || ' results'
         );
     EXCEPTION
         WHEN OTHERS THEN
             GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
             INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
                 'NULL RRULE Input',
-                'Test 16.2: rrule."between"(NULL, ...) raises error: ' || LEFT(err_msg, 100),
-                'PASS'
+                'Test 16.2: rrule."between"(NULL, ...) raises error',
+                CASE WHEN err_msg LIKE '%FREQ%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
             );
     END;
 END $$;
 
--- Test 16.3: rrule."after"() with NULL RRULE
+-- Test 16.3: rrule."after"(NULL, ...) raises FREQ required error
 DO $$
 DECLARE
     err_msg TEXT;
     result_count INT;
 BEGIN
     BEGIN
-        SELECT COUNT(*) INTO result_count FROM rrule."after"(
-            NULL,
-            '2025-01-01'::TIMESTAMP,
-            '2025-01-01'::TIMESTAMP
-        );
+        SELECT COUNT(*) INTO result_count FROM rrule."after"(NULL, '2025-01-01'::TIMESTAMP, '2025-01-01'::TIMESTAMP);
         INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
             'NULL RRULE Input',
-            'Test 16.3: rrule."after"(NULL, ...) returns ' || result_count || ' rows (no error)',
-            'PASS'
+            'Test 16.3: rrule."after"(NULL, ...) raises error',
+            'FAIL: expected exception but got ' || result_count || ' results'
         );
     EXCEPTION
         WHEN OTHERS THEN
             GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
             INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
                 'NULL RRULE Input',
-                'Test 16.3: rrule."after"(NULL, ...) raises error: ' || LEFT(err_msg, 100),
-                'PASS'
+                'Test 16.3: rrule."after"(NULL, ...) raises error',
+                CASE WHEN err_msg LIKE '%FREQ%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
             );
     END;
 END $$;
 
--- Test 16.4: rrule."before"() with NULL RRULE
+-- Test 16.4: rrule."before"(NULL, ...) raises FREQ required error
 DO $$
 DECLARE
     err_msg TEXT;
     result_count INT;
 BEGIN
     BEGIN
-        SELECT COUNT(*) INTO result_count FROM rrule."before"(
-            NULL,
-            '2025-01-01'::TIMESTAMP,
-            '2025-12-31'::TIMESTAMP
-        );
+        SELECT COUNT(*) INTO result_count FROM rrule."before"(NULL, '2025-01-01'::TIMESTAMP, '2025-12-31'::TIMESTAMP);
         INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
             'NULL RRULE Input',
-            'Test 16.4: rrule."before"(NULL, ...) returns ' || result_count || ' rows (no error)',
-            'PASS'
+            'Test 16.4: rrule."before"(NULL, ...) raises error',
+            'FAIL: expected exception but got ' || result_count || ' results'
         );
     EXCEPTION
         WHEN OTHERS THEN
             GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
             INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
                 'NULL RRULE Input',
-                'Test 16.4: rrule."before"(NULL, ...) raises error: ' || LEFT(err_msg, 100),
-                'PASS'
+                'Test 16.4: rrule."before"(NULL, ...) raises error',
+                CASE WHEN err_msg LIKE '%FREQ%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
             );
     END;
 END $$;
 
--- Test 16.5: rrule."count"() with NULL RRULE
+-- Test 16.5: rrule."count"(NULL, dtstart) raises FREQ required error
 DO $$
 DECLARE
     err_msg TEXT;
     result_val TEXT;
 BEGIN
     BEGIN
-        SELECT rrule."count"(
-            NULL,
-            '2025-01-01'::TIMESTAMP
-        )::TEXT INTO result_val;
+        SELECT rrule."count"(NULL, '2025-01-01'::TIMESTAMP)::TEXT INTO result_val;
         INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
             'NULL RRULE Input',
-            'Test 16.5: rrule."count"(NULL, dtstart) returns ' || COALESCE(result_val, 'NULL') || ' (no error)',
-            'PASS'
+            'Test 16.5: rrule."count"(NULL, dtstart) raises error',
+            'FAIL: expected exception but got ' || COALESCE(result_val, 'NULL')
         );
     EXCEPTION
         WHEN OTHERS THEN
             GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
             INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
                 'NULL RRULE Input',
-                'Test 16.5: rrule."count"(NULL, dtstart) raises error: ' || LEFT(err_msg, 100),
-                'PASS'
+                'Test 16.5: rrule."count"(NULL, dtstart) raises error',
+                CASE WHEN err_msg LIKE '%FREQ%required%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
             );
     END;
 END $$;
@@ -2112,6 +2107,99 @@ SELECT
             'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;UNTIL=20250123T235959Z',
             '2025-01-06 10:00:00'::TIMESTAMP
         ) AS occurrence)
+    );
+
+-- ============================================================================
+-- SECTION 19: Additional Coverage Gap Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 19: Additional Coverage Gap Tests ---'
+
+-- Test 19.1: Mixed ordinal + non-ordinal BYDAY
+-- FREQ=MONTHLY;BYDAY=1MO,FR;COUNT=6 starting 2025-01-01 10:00:00
+-- "1st Monday AND every Friday of each month"
+-- January 2025: 1st Monday = Jan 6; Fridays = Jan 3, 10, 17, 24, 31
+-- Sorted: Jan 3, 6, 10, 17, 24, 31
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Additional Coverage',
+    'Test 19.1: Mixed ordinal + non-ordinal BYDAY (1MO,FR)',
+    assert_occurrences_equal(
+        'Mixed BYDAY 1MO,FR',
+        ARRAY[
+            '2025-01-03 10:00:00'::TIMESTAMP,
+            '2025-01-06 10:00:00'::TIMESTAMP,
+            '2025-01-10 10:00:00'::TIMESTAMP,
+            '2025-01-17 10:00:00'::TIMESTAMP,
+            '2025-01-24 10:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1MO,FR;COUNT=6',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 19.2: BYMONTHDAY mixing positive and negative
+-- FREQ=MONTHLY;BYMONTHDAY=1,-1;COUNT=6 starting 2025-01-01 10:00:00
+-- "1st and last day of each month"
+-- Jan: 1, 31; Feb: 1, 28; Mar: 1, 31
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Additional Coverage',
+    'Test 19.2: BYMONTHDAY positive and negative (1,-1)',
+    assert_occurrences_equal(
+        'BYMONTHDAY 1,-1',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-02-01 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=1,-1;COUNT=6',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 19.3: Empty string RRULE input raises exception (FREQ is required)
+DO $$
+DECLARE
+    err_msg TEXT;
+    result_count INT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."all"(
+            '',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        );
+        -- Empty string should raise an error (FREQ is required)
+        INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+            'Additional Coverage',
+            'Test 19.3: Empty string RRULE raises error',
+            'FAIL: expected exception but got ' || result_count || ' results'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO coverage_gap_results (test_category, test_name, status) VALUES (
+                'Additional Coverage',
+                'Test 19.3: Empty string RRULE raises error',
+                'PASS'
+            );
+    END;
+END $$;
+
+-- Test 19.4: rrule."version"() returns a non-empty TEXT string
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Additional Coverage',
+    'Test 19.4: rrule."version"() returns non-empty string',
+    assert_true(
+        'version() non-empty',
+        LENGTH(rrule."version"()) > 0
     );
 
 -- Fail if any tests failed

@@ -87,7 +87,7 @@ SET next_billing_date = (
         subscriptions.subscription_start,
         COALESCE(subscriptions.last_billed_at, subscriptions.subscription_start),
         1
-    ) LIMIT 1
+    )
 )
 WHERE status = 'active';
 
@@ -687,7 +687,7 @@ ORDER BY test_id;
 SELECT
     COUNT(*) AS total_tests,
     COUNT(*) FILTER (WHERE status = 'PASS') AS passed,
-    COUNT(*) FILTER (WHERE status = 'FAIL') AS failed,
+    COUNT(*) FILTER (WHERE status != 'PASS') AS failed,
     ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'PASS') / COUNT(*), 1) AS pass_rate
 FROM test_results;
 
@@ -700,7 +700,7 @@ DO $$
 DECLARE
     failed_count INT;
 BEGIN
-    SELECT COUNT(*) INTO failed_count FROM test_results WHERE status = 'FAIL';
+    SELECT COUNT(*) INTO failed_count FROM test_results WHERE status != 'PASS';
     IF failed_count > 0 THEN
         RAISE EXCEPTION '% test(s) failed! See results above.', failed_count;
     END IF;
