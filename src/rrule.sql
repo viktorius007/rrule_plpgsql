@@ -164,6 +164,27 @@ BEGIN
   result.byminute   := string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ',');
   result.byhour     := string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ',');
 
+  -- Deduplicate BYHOUR, BYMINUTE, BYSECOND arrays to prevent duplicate timestamp generation
+  -- (e.g., BYHOUR=9,9,10 should not emit hour 9 twice in rrule_day_time_set)
+  IF result.byhour IS NOT NULL THEN
+    SELECT array_agg(val ORDER BY idx) INTO result.byhour
+    FROM (SELECT DISTINCT ON (val) val, idx
+          FROM unnest(result.byhour) WITH ORDINALITY AS t(val, idx)
+          ORDER BY val, idx) sub;
+  END IF;
+  IF result.byminute IS NOT NULL THEN
+    SELECT array_agg(val ORDER BY idx) INTO result.byminute
+    FROM (SELECT DISTINCT ON (val) val, idx
+          FROM unnest(result.byminute) WITH ORDINALITY AS t(val, idx)
+          ORDER BY val, idx) sub;
+  END IF;
+  IF result.bysecond IS NOT NULL THEN
+    SELECT array_agg(val ORDER BY idx) INTO result.bysecond
+    FROM (SELECT DISTINCT ON (val) val, idx
+          FROM unnest(result.bysecond) WITH ORDINALITY AS t(val, idx)
+          ORDER BY val, idx) sub;
+  END IF;
+
   -- ========================================================================
   -- BYxxx PARSE-FAILURE DETECTION
   -- ========================================================================
@@ -481,8 +502,8 @@ BEGIN
     first_dow := date_part( 'dow', each_day );
 
     -- Coerce each_day to be the first 'dow' of the month
-    each_day := each_day - ( first_dow::text || 'days')::interval
-                        + ( dow::text || 'days')::interval
+    each_day := each_day - make_interval(days => first_dow)
+                        + make_interval(days => dow)
                         + CASE WHEN dow < first_dow THEN '1 week'::interval ELSE '0s'::interval END;
 
     IF length(dayrule) > 2 THEN
@@ -492,7 +513,7 @@ BEGIN
         RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
       ELSIF index > 0 THEN
         -- The simplest case, such as 2MO for the second monday
-        each_day := each_day + ((index - 1)::text || ' weeks')::interval;
+        each_day := each_day + make_interval(weeks => index - 1);
       ELSE
         each_day := each_day + '5 weeks'::interval;
         WHILE date_part('month', each_day) != this_month LOOP
@@ -501,7 +522,7 @@ BEGIN
         -- Note that since index is negative, (-2 + 1) == -1, for example
         index := index + 1;
         IF index < 0 THEN
-          each_day := each_day + (index::text || ' weeks')::interval ;
+          each_day := each_day + make_interval(weeks => index);
         END IF;
       END IF;
 
@@ -575,8 +596,8 @@ BEGIN
     first_dow := date_part('dow', each_day);
 
     -- Coerce each_day to be the first 'dow' of the year
-    each_day := each_day - ( first_dow::text || 'days')::interval
-                        + ( dow::text || 'days')::interval
+    each_day := each_day - make_interval(days => first_dow)
+                        + make_interval(days => dow)
                         + CASE WHEN dow < first_dow THEN '1 week'::interval ELSE '0s'::interval END;
 
     IF length(dayrule) > 2 THEN
@@ -586,7 +607,7 @@ BEGIN
         RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
       ELSIF index > 0 THEN
         -- Nth weekday of year
-        each_day := each_day + ((index - 1)::text || ' weeks')::interval;
+        each_day := each_day + make_interval(weeks => index - 1);
       ELSE
         -- Negative ordinals: count from end of year
         -- Find last occurrence of this weekday
@@ -596,7 +617,7 @@ BEGIN
         -- Note: index is negative, so (-2 + 1) == -1
         index := index + 1;
         IF index < 0 THEN
-          each_day := each_day + (index::text || ' weeks')::interval;
+          each_day := each_day + make_interval(weeks => index);
         END IF;
       END IF;
 
@@ -797,7 +818,7 @@ BEGIN
     -- Guard: skip if this day_offset was already emitted (e.g. BYDAY=MO,MO)
     IF NOT (day_offset = ANY(seen_offsets)) THEN
       seen_offsets := array_append(seen_offsets, day_offset);
-      RETURN NEXT our_day + (day_offset::text || ' days')::interval;
+      RETURN NEXT our_day + make_interval(days => day_offset);
       result_count := result_count + 1;
 
       -- Early exit: stop once we've generated enough results
@@ -1186,14 +1207,15 @@ BEGIN
   END IF;
 
   -- Apply frequency-specific safety multipliers for sparse filter protection
+  -- LEAST(..., 2147483647) guards against INT4 overflow when effective_max is large
   RETURN CASE frequency
-    WHEN 'DAILY'    THEN effective_max * 40   -- Sparse: BYMONTHDAY filters (1/31 days match)
-    WHEN 'WEEKLY'   THEN effective_max * 10   -- Sparse: monthly-pattern filters
-    WHEN 'HOURLY'   THEN effective_max * 2    -- Moderate: time-of-day filters
+    WHEN 'DAILY'    THEN LEAST(effective_max * 40, 2147483647)   -- Sparse: BYMONTHDAY filters (1/31 days match)
+    WHEN 'WEEKLY'   THEN LEAST(effective_max * 10, 2147483647)   -- Sparse: monthly-pattern filters
+    WHEN 'HOURLY'   THEN LEAST(effective_max * 2, 2147483647)    -- Moderate: time-of-day filters
     WHEN 'MINUTELY' THEN LEAST(effective_max, 1440)  -- DoS protection: max 1 day
     WHEN 'SECONDLY' THEN LEAST(effective_max, 3600)  -- DoS protection: max 1 hour
-    WHEN 'MONTHLY'  THEN GREATEST(effective_max * 20, 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years
-    WHEN 'YEARLY'   THEN effective_max * 10   -- Sparse: BYYEARDAY/BYWEEKNO/BYDAY filters
+    WHEN 'MONTHLY'  THEN GREATEST(LEAST(effective_max * 20, 2147483647), 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years
+    WHEN 'YEARLY'   THEN LEAST(effective_max * 10, 2147483647)   -- Sparse: BYYEARDAY/BYWEEKNO/BYDAY filters
     ELSE effective_max                         -- Fallback: no multiplier
   END;
 END;
@@ -1286,18 +1308,6 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Deduplicate input arrays to prevent duplicate timestamps
-  -- (e.g., BYHOUR=9,9,10 should not emit hour 9 twice)
-  IF rule.byhour IS NOT NULL THEN
-    SELECT array_agg(DISTINCT val ORDER BY val) INTO rule.byhour FROM unnest(rule.byhour) val;
-  END IF;
-  IF rule.byminute IS NOT NULL THEN
-    SELECT array_agg(DISTINCT val ORDER BY val) INTO rule.byminute FROM unnest(rule.byminute) val;
-  END IF;
-  IF rule.bysecond IS NOT NULL THEN
-    SELECT array_agg(DISTINCT val ORDER BY val) INTO rule.bysecond FROM unnest(rule.bysecond) val;
-  END IF;
-
   day_start := date_trunc('day', base_time);
 
   -- Generate all combinations of hour/minute/second
@@ -1335,9 +1345,7 @@ BEGIN
         END IF;
 
         -- Build occurrence timestamp
-        occurrence := day_start + (hour::text || ' hours')::interval
-                                + (minute::text || ' minutes')::interval
-                                + (second::text || ' seconds')::interval;
+        occurrence := day_start + make_interval(hours => hour, mins => minute, secs => second);
 
         RETURN NEXT occurrence;
         result_count := result_count + 1;
@@ -1574,8 +1582,8 @@ BEGIN
       IF rr.bymonthday IS NULL AND rr.byday IS NULL THEN
         -- No month-level filters: keep DTSTART day-of-month/time
         current_base := date_trunc('year', after_ts)
-                        + ((rr.bymonth[i] - 1)::text || ' months')::interval
-                        + ((date_part('day', after_ts) - 1)::text || ' days')::interval
+                        + make_interval(months => rr.bymonth[i] - 1)
+                        + make_interval(days => date_part('day', after_ts)::INT - 1)
                         + (after_ts::time)::interval;
         IF date_part('month', current_base) = rr.bymonth[i] THEN
           -- Day exists in the target month — emit directly
@@ -1585,14 +1593,14 @@ BEGIN
           IF rr.skip = 'BACKWARD' THEN
             -- Use last day of the target month
             current_base := date_trunc('year', after_ts)
-                            + ((rr.bymonth[i])::text || ' months')::interval
+                            + make_interval(months => rr.bymonth[i])
                             - INTERVAL '1 day'
                             + (after_ts::time)::interval;
             RETURN NEXT current_base;
           ELSIF rr.skip = 'FORWARD' THEN
             -- Use first day of the next month
             current_base := date_trunc('year', after_ts)
-                            + ((rr.bymonth[i])::text || ' months')::interval
+                            + make_interval(months => rr.bymonth[i])
                             + (after_ts::time)::interval;
             RETURN NEXT current_base;
           END IF;
@@ -1601,7 +1609,7 @@ BEGIN
       ELSE
         -- Month-level filters present: generate within the month (day-of-month comes from filters)
         current_base := date_trunc('year', after_ts)
-                        + ((rr.bymonth[i] - 1)::text || ' months')::interval
+                        + make_interval(months => rr.bymonth[i] - 1)
                         + (after_ts::time)::interval;
         RETURN QUERY SELECT r FROM rrule.monthly_set(current_base, rr, max_results) r;
       END IF;
@@ -1656,7 +1664,7 @@ BEGIN
     IF yearday > 0 THEN
       -- Positive index: 1 = Jan 1, 100 = April 9/10, 365/366 = Dec 31
       IF yearday <= days_in_year THEN
-        occurrence := year_start + ((yearday - 1)::text || ' days')::interval;
+        occurrence := year_start + make_interval(days => yearday - 1);
         RETURN NEXT occurrence;
         result_count := result_count + 1;
         EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
@@ -1667,7 +1675,7 @@ BEGIN
       -- Negative index: -1 = Dec 31, -2 = Dec 30, etc.
       -- Convert to positive: -1 in 365-day year = day 365
       IF abs(yearday) <= days_in_year THEN
-        occurrence := year_end + ((yearday + 1)::text || ' days')::interval;
+        occurrence := year_end + make_interval(days => yearday + 1);
         RETURN NEXT occurrence;
         result_count := result_count + 1;
         EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
@@ -1851,7 +1859,7 @@ BEGIN
       SELECT r
       FROM generate_series(1, 12) m
       CROSS JOIN LATERAL rrule.monthly_set(
-        date_trunc('year', after_ts) + ((m - 1)::text || ' months')::interval + (after_ts::time)::interval,
+        date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval,
         rr,
         max_results
       ) r
@@ -1976,12 +1984,13 @@ BEGIN
                                                       CASE WHEN rule.bysetpos IS NULL
                                                            THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
                                                            ELSE NULL END) w WHERE w >= min_in_period LOOP
+        -- Time boundary checks apply regardless of BYxxx filters
+        EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         IF rrule.test_byyearday_rule(current, rule.byyearday)
                AND rrule.test_bymonthday_rule(current, rule.bymonthday)
                AND rrule.test_bymonth_rule(current, rule.bymonth)
         THEN
-          EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
-          EXIT WHEN current > maxdate;
           occurrence_count := occurrence_count + 1;
           EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
           IF current >= mindate THEN
@@ -2110,7 +2119,7 @@ BEGIN
     period_count := period_count + 1;
     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
     EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
-    EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+    EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
   END LOOP;
 
   -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
@@ -2617,13 +2626,14 @@ BEGIN
                          ELSE NULL END) w
                 WHERE w::TIMESTAMP >= min_in_period
             LOOP
+                -- Time boundary checks apply regardless of BYxxx filters
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN current > maxdate;
                 -- Apply filters
                 IF rrule.test_byyearday_rule(current::TIMESTAMPTZ, rule.byyearday)
                    AND rrule.test_bymonthday_rule(current::TIMESTAMPTZ, rule.bymonthday)
                    AND rrule.test_bymonth_rule(current::TIMESTAMPTZ, rule.bymonth)
                 THEN
-                    EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
-                    EXIT WHEN current > maxdate;
                     occurrence_count := occurrence_count + 1;
                     EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
                     IF current >= mindate THEN
@@ -2737,7 +2747,7 @@ BEGIN
         period_count := period_count + 1;
         EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
-        EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+        EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
     END LOOP;
 
     -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)

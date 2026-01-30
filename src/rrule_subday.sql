@@ -265,12 +265,13 @@ BEGIN
       period_start := rrule.get_week_start(current_base, rule.wkst) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT w FROM rrule.weekly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) w WHERE w >= min_in_period LOOP
+        -- Time boundary checks apply regardless of BYxxx filters
+        EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+        EXIT WHEN current > maxdate;
         IF rrule.test_byyearday_rule(current, rule.byyearday)
                AND rrule.test_bymonthday_rule(current, rule.bymonthday)
                AND rrule.test_bymonth_rule(current, rule.bymonth)
         THEN
-          EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
-          EXIT WHEN current > maxdate;
           occurrence_count := occurrence_count + 1;
           EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
           IF current >= mindate THEN
@@ -414,13 +415,12 @@ BEGIN
       current_base := current_base + make_interval(secs => rule.interval);
 
     ELSE
-      RAISE NOTICE 'A frequency of "%" is not handled', rule.freq;
-      RETURN;
+      RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY, HOURLY, MINUTELY, SECONDLY', rule.freq;
     END IF;
     period_count := period_count + 1;
     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
     EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
-    EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+    EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
   END LOOP;
 
   -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
