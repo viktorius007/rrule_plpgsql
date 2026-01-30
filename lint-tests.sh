@@ -318,6 +318,41 @@ check_min_is_not_null() {
   report_rule_result "No MIN(...) IS NOT NULL loose assertions (Rule 8)" "$count"
 }
 
+# Rule 8: No Unicode emoji in test files (use ASCII [PASS]/[FAIL] instead)
+check_no_emoji() {
+  local count=0
+  for file in tests/test_*.sql; do
+    while IFS= read -r line_info; do
+      local lineno="${line_info%%:*}"
+      report_violation "$file" "$lineno" "Unicode emoji found — use ASCII [PASS]/[FAIL] instead"
+      count=$((count + 1))
+    done < <(grep -n '[✓✗✅❌✔✘]' "$file" 2>/dev/null || true)
+  done
+  report_rule_result "No Unicode emoji in test files (Rule 8)" "$count"
+}
+
+# Rule 8: COUNT(*)::TEXT assertion anti-pattern (advisory)
+# Non-zero count-only assertions should use exact date arrays.
+# Zero-count assertions (expected='0') and relative comparisons are acceptable.
+check_count_text_antipattern() {
+  local count=0
+  for file in tests/test_*.sql; do
+    while IFS= read -r line_info; do
+      local lineno="${line_info%%:*}"
+      echo -e "  ${YELLOW}⚠${NC} ${file}:${lineno} — COUNT(*)::TEXT assertion — consider using exact date array assertion"
+      count=$((count + 1))
+    done < <(grep -n '.' "$file" | filter_comments | grep -E 'COUNT\(\*\)::TEXT' || true)
+  done
+  # Advisory rule: report count but always pass
+  if [ "$count" -eq 0 ]; then
+    echo -e "${GREEN}✓${NC} No COUNT(*)::TEXT anti-pattern in tests (Rule 8, advisory)"
+  else
+    echo -e "${YELLOW}⚠${NC} COUNT(*)::TEXT assertions in tests (Rule 8, advisory) — ${count} warning(s)"
+  fi
+  PASS_COUNT=$((PASS_COUNT + 1))
+  echo ""
+}
+
 # Rule 8: No inline CASE PASS/FAIL assertions in unit test files (advisory)
 # Unit tests should use shared assertion helpers (assert_equals, assert_true, etc.)
 # Advisory: reports warnings but does not fail the linter. Only checked in unit test
@@ -347,6 +382,34 @@ check_inline_case_assertions() {
   echo ""
 }
 
+# Rule 1: parse_rrule_parts rejects duplicate FREQ
+# Verify that the source code contains the duplicate FREQ check
+check_duplicate_freq_rejection() {
+  local count=0
+  local file="src/rrule.sql"
+  if [ -f "$file" ]; then
+    if ! grep -q 'FREQ=.*FREQ=' "$file"; then
+      report_violation "$file" "1" "Missing duplicate FREQ rejection in parse_rrule_parts()"
+      count=$((count + 1))
+    fi
+  fi
+  report_rule_result "Source rejects duplicate FREQ parameters (Rule 1)" "$count"
+}
+
+# Rule 5: Public API functions check for NULL dtstart
+# Verify that the source code contains NULL dtstart validation
+check_null_dtstart_validation() {
+  local count=0
+  local file="src/rrule.sql"
+  if [ -f "$file" ]; then
+    if ! grep -q 'dtstart IS NULL' "$file"; then
+      report_violation "$file" "1" "Missing NULL dtstart validation in public API functions"
+      count=$((count + 1))
+    fi
+  fi
+  report_rule_result "Source validates NULL dtstart in public API (Rule 5)" "$count"
+}
+
 # --- Main ---
 
 main() {
@@ -361,6 +424,8 @@ main() {
   check_schema_qualification
   check_when_others_without_message_check
   check_min_is_not_null
+  check_no_emoji
+  check_count_text_antipattern
   check_inline_case_assertions
 
   echo -e "${BLUE}Source file checks (src/*.sql)${NC}"
@@ -369,6 +434,8 @@ main() {
   check_immutable_usage
   check_no_subday_in_standard_install
   check_inc_default_false
+  check_duplicate_freq_rejection
+  check_null_dtstart_validation
 
   echo -e "${BLUE}========================================${NC}"
   echo -e "${BLUE}SUMMARY${NC}"
