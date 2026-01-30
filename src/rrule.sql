@@ -2299,13 +2299,14 @@ BEGIN
     after_utc := after_date AT TIME ZONE 'UTC';
     maxdate_utc := dtstart_utc + INTERVAL '10 years';
 
+    -- max_count=2: after() needs at most the boundary occurrence + next one
     SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP INTO next_occurrence
     FROM rrule.rrule_event_instances_range(
         dtstart_utc,
         rrule_string,
         after_utc,
         maxdate_utc,
-        1000
+        2
     ) d
     WHERE CASE
         WHEN inc THEN (d AT TIME ZONE 'UTC')::TIMESTAMP >= after_date
@@ -2995,8 +2996,9 @@ BEGIN
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_before := before_date AT TIME ZONE tz_name;
 
-    -- Generate all occurrences up to before_date and collect them
-    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
+    -- Generate occurrences up to before_date, keeping only the last N in a sliding window.
+    -- This caps memory at O(count) instead of O(N) for rules with many occurrences.
+    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
     results := ARRAY[]::TIMESTAMPTZ[];
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
@@ -3017,11 +3019,15 @@ BEGIN
             END IF;
         END IF;
         results := array_append(results, naive_occurrence AT TIME ZONE tz_name);
+        -- Trim to last N elements to cap memory usage
+        IF array_length(results, 1) > count THEN
+            results := results[array_length(results, 1) - count + 1 : array_length(results, 1)];
+        END IF;
     END LOOP;
 
-    -- Return the last N occurrences (handle NULL array_length when results is empty)
+    -- Return all collected results (already trimmed to at most count elements)
     IF array_length(results, 1) IS NOT NULL THEN
-        FOR idx IN GREATEST(1, array_length(results, 1) - count + 1) .. array_length(results, 1) LOOP
+        FOR idx IN 1 .. array_length(results, 1) LOOP
             RETURN NEXT results[idx];
         END LOOP;
     END IF;
