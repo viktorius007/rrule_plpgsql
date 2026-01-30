@@ -133,17 +133,24 @@ FROM rrule."all"(
 
 -- Test 1.5: HOURLY with BYDAY filter produces only matching day occurrences
 -- HOURLY;BYDAY=MO;INTERVAL=6 starting Monday 10:00 → 10:00, 16:00, 22:00 (3 per Monday)
-INSERT INTO subday_test_results (test_category, test_name, status)
-SELECT
-    'HOURLY Filters',
-    'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3 only Monday occurrences',
-    CASE WHEN COUNT(*) = 3 AND COUNT(*) = COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)
-    THEN 'PASS'
-    ELSE 'FAIL - Expected 3 Monday occurrences, got ' || COUNT(*)::TEXT || ' total, ' || COUNT(*) FILTER (WHERE EXTRACT(DOW FROM occurrence) = 1)::TEXT || ' Mondays' END
-FROM rrule."all"(
-    'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3',
-    '2025-01-06 10:00:00'::TIMESTAMP  -- Monday
-) AS occurrence;
+DO $$
+DECLARE
+    actual TIMESTAMP[];
+    expected TIMESTAMP[] := ARRAY[
+        '2025-01-06 10:00:00'::TIMESTAMP,
+        '2025-01-06 16:00:00'::TIMESTAMP,
+        '2025-01-06 22:00:00'::TIMESTAMP
+    ];
+BEGIN
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"('FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3', '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('HOURLY Filters', 'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3 only Monday occurrences',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || actual::TEXT END);
+END;
+$$;
 
 -- ============================================================================
 -- SECTION 2: MINUTELY Frequency Tests

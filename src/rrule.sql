@@ -103,8 +103,19 @@ BEGIN
   END IF;
 
   result.freq       := substring(repeatrule from 'FREQ=([A-Z]+)(;|$)');
+
+  -- Check for negative COUNT value in raw RRULE string before parsing
+  IF repeatrule ~* 'COUNT=-' THEN
+    RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer';
+  END IF;
   result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+
+  -- Check for negative INTERVAL value in raw RRULE string before parsing
+  IF repeatrule ~* 'INTERVAL=-' THEN
+    RAISE EXCEPTION 'Invalid RRULE: INTERVAL must be a positive integer';
+  END IF;
   result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
+
   result.wkst       := substring(repeatrule from 'WKST=(MO|TU|WE|TH|FR|SA|SU)(;|$)');
   -- Validate WKST: if WKST= was specified but didn't match a valid day, reject it
   IF result.wkst IS NULL AND repeatrule ~ 'WKST=' THEN

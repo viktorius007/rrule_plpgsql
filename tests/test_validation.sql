@@ -626,15 +626,14 @@ VALUES ('COUNT Validation', 'COUNT=0 (should be rejected)',
     )
 );
 
--- Test 3.0a: COUNT=-1 (negative COUNT silently treated as no COUNT due to regex parser)
--- The parser regex captures digits only, so COUNT=-1 doesn't match and COUNT is NULL.
--- This documents current behavior: negative COUNT is silently ignored (no validation error).
+-- Test 3.0a: COUNT=-1 (negative COUNT is now rejected)
+-- The parser now explicitly checks for negative COUNT values and raises an error.
 INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('COUNT Validation', 'COUNT=-1 (silently ignored by parser)',
-    assert_rrule_accepted(
-        'COUNT=-1 silently ignored',
+VALUES ('COUNT Validation', 'COUNT=-1 (should be rejected)',
+    assert_rrule_rejected(
+        'COUNT=-1 invalid',
         'FREQ=DAILY;COUNT=-1;UNTIL=20250105T235959Z',
-        5
+        '%COUNT must be a positive integer%'
     )
 );
 
@@ -1293,14 +1292,13 @@ VALUES ('Empty/Malformed RRULE', 'Empty string (should be rejected)',
 );
 
 -- Test 9.2: Negative INTERVAL value
--- Note: The parser regex captures digits only, so INTERVAL=-1 silently parses as INTERVAL=1.
--- This test documents current behavior (silently accepted, treated as positive).
+-- The parser now explicitly checks for negative INTERVAL values and raises an error.
 INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('INTERVAL Validation', 'INTERVAL=-1 (silently treated as INTERVAL=1)',
-    assert_rrule_accepted(
-        'INTERVAL=-1 silently accepted',
+VALUES ('INTERVAL Validation', 'INTERVAL=-1 (should be rejected)',
+    assert_rrule_rejected(
+        'INTERVAL=-1 invalid',
         'FREQ=DAILY;INTERVAL=-1;COUNT=3',
-        3
+        '%INTERVAL must be a positive integer%'
     )
 );
 

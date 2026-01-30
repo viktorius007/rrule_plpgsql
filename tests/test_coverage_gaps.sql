@@ -416,6 +416,8 @@ SELECT
     );
 
 -- Test 2.5: between() with boundary-exclusive default (inc=false)
+-- Both boundary timestamps (Jan 2 10:00 and Jan 3 10:00) are exact occurrence times,
+-- and inc=false excludes boundary matches, so 0 occurrences are returned.
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'between() Edge Cases',
@@ -1768,6 +1770,112 @@ SELECT
 -- because the 6-param version (src/rrule.sql:3156) has DEFAULT NULL for timezone,
 -- making the signatures ambiguous. Tests 14.8/14.9 above cover the NULL-timezone
 -- path which exercises the TIMESTAMP generator via the 6-param dispatch.
+
+-- ============================================================================
+-- SECTION 15: BYHOUR/BYMINUTE/BYSECOND with DAILY frequency (standard install)
+-- ============================================================================
+\echo ''
+\echo '--- Section 15: BYHOUR/BYMINUTE/BYSECOND with DAILY (standard install) ---'
+
+-- Test 15.1: FREQ=DAILY;BYHOUR=9;COUNT=3
+-- BYHOUR with DAILY expands each day to include an occurrence at hour 9
+-- (preserves minute/second from dtstart)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYHOUR/BYMINUTE/BYSECOND with DAILY',
+    'Test 15.1: FREQ=DAILY;BYHOUR=9;COUNT=3',
+    assert_occurrences_equal(
+        'DAILY BYHOUR=9',
+        ARRAY[
+            '2025-01-01 09:00:00'::TIMESTAMP,
+            '2025-01-02 09:00:00'::TIMESTAMP,
+            '2025-01-03 09:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;BYHOUR=9;COUNT=3',
+            '2025-01-01 09:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 15.2: FREQ=DAILY;BYHOUR=9,17;COUNT=4
+-- Multiple BYHOUR values expand each day to include occurrences at each specified hour
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYHOUR/BYMINUTE/BYSECOND with DAILY',
+    'Test 15.2: FREQ=DAILY;BYHOUR=9,17;COUNT=4',
+    assert_occurrences_equal(
+        'DAILY BYHOUR=9,17',
+        ARRAY[
+            '2025-01-01 09:00:00'::TIMESTAMP,
+            '2025-01-01 17:00:00'::TIMESTAMP,
+            '2025-01-02 09:00:00'::TIMESTAMP,
+            '2025-01-02 17:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;BYHOUR=9,17;COUNT=4',
+            '2025-01-01 09:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 15.3: FREQ=DAILY;BYMINUTE=30;COUNT=3
+-- BYMINUTE with DAILY expands each day to include an occurrence at minute 30
+-- (preserves hour/second from dtstart)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYHOUR/BYMINUTE/BYSECOND with DAILY',
+    'Test 15.3: FREQ=DAILY;BYMINUTE=30;COUNT=3',
+    assert_occurrences_equal(
+        'DAILY BYMINUTE=30',
+        ARRAY[
+            '2025-01-01 00:30:00'::TIMESTAMP,
+            '2025-01-02 00:30:00'::TIMESTAMP,
+            '2025-01-03 00:30:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;BYMINUTE=30;COUNT=3',
+            '2025-01-01 00:30:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 15.4: FREQ=DAILY;BYSECOND=0;COUNT=3
+-- BYSECOND with DAILY expands each day to include an occurrence at second 0
+-- (preserves hour/minute from dtstart)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYHOUR/BYMINUTE/BYSECOND with DAILY',
+    'Test 15.4: FREQ=DAILY;BYSECOND=0;COUNT=3',
+    assert_occurrences_equal(
+        'DAILY BYSECOND=0',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;BYSECOND=0;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 15.5: FREQ=DAILY;BYHOUR=9;BYMINUTE=0,30;COUNT=4
+-- Combining BYHOUR and BYMINUTE expands each day to all combinations
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYHOUR/BYMINUTE/BYSECOND with DAILY',
+    'Test 15.5: FREQ=DAILY;BYHOUR=9;BYMINUTE=0,30;COUNT=4',
+    assert_occurrences_equal(
+        'DAILY BYHOUR+BYMINUTE',
+        ARRAY[
+            '2025-01-01 09:00:00'::TIMESTAMP,
+            '2025-01-01 09:30:00'::TIMESTAMP,
+            '2025-01-02 09:00:00'::TIMESTAMP,
+            '2025-01-02 09:30:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;BYHOUR=9;BYMINUTE=0,30;COUNT=4',
+            '2025-01-01 09:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
 
 -- Fail if any tests failed
 DO $$
