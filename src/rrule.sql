@@ -2201,6 +2201,11 @@ DECLARE
     maxdate_utc TIMESTAMPTZ;
     tzid TEXT;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     max_count := 1000;
 
     -- Extract TZID from rrule string
@@ -2257,6 +2262,11 @@ DECLARE
     end_utc TIMESTAMPTZ;
     tzid TEXT;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     max_count := 1000;
 
     -- Extract TZID from rrule string
@@ -2309,6 +2319,11 @@ DECLARE
     maxdate_utc TIMESTAMPTZ;
     tzid TEXT;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     -- Extract TZID from rrule string
     tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
 
@@ -2361,6 +2376,11 @@ DECLARE
     maxdate_utc TIMESTAMPTZ;
     tzid TEXT;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     -- Extract TZID from rrule string
     tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
 
@@ -2485,6 +2505,11 @@ DECLARE
 BEGIN
     IF dtstart IS NULL THEN
         RETURN NULL;
+    END IF;
+
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
     END IF;
 
     base_date := dtstart;
@@ -2817,6 +2842,11 @@ DECLARE
     wall_clock_end TIMESTAMP;
     naive_occurrence TIMESTAMP;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
@@ -2872,6 +2902,11 @@ DECLARE
     wall_clock_range_end TIMESTAMP;
     naive_occurrence TIMESTAMP;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
@@ -2937,6 +2972,11 @@ DECLARE
     naive_occurrence TIMESTAMP;
     occurrence_count INT := 0;
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
@@ -3006,6 +3046,11 @@ DECLARE
     naive_occurrence TIMESTAMP;
     results TIMESTAMPTZ[];
 BEGIN
+    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
