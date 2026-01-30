@@ -2,7 +2,7 @@
 #
 # Automated Test Runner for rrule_plpgsql
 #
-# Runs all 12 test suites and reports results.
+# Runs all 13 test suites and reports results.
 # Tests both standard and sub-day installations to ensure complete coverage.
 #
 # Usage:
