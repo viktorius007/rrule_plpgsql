@@ -34,6 +34,7 @@ SET search_path = public;
 
 BEGIN;
 
+\i tests/helpers.sql
 
 -- Test results table
 CREATE TEMP TABLE coverage_gap_results (
@@ -42,21 +43,6 @@ CREATE TEMP TABLE coverage_gap_results (
     test_name TEXT,
     status TEXT
 );
-
--- Helper function for assertions
-CREATE OR REPLACE FUNCTION assert_equals(
-    test_name TEXT,
-    expected TEXT,
-    actual TEXT
-) RETURNS TEXT AS $$
-BEGIN
-    IF expected IS NOT DISTINCT FROM actual THEN
-        RETURN 'PASS';
-    ELSE
-        RETURN 'FAIL - Expected: ' || COALESCE(expected, 'NULL') || ', Got: ' || COALESCE(actual, 'NULL');
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
 
 \echo ''
 \echo '==================================================================='

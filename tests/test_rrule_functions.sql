@@ -41,36 +41,7 @@ SET search_path = public;
 
 BEGIN;
 
-
--- Helper function to compare expected vs actual occurrences
-CREATE OR REPLACE FUNCTION assert_occurrences_equal(
-    test_name TEXT,
-    expected TIMESTAMP[],
-    actual TIMESTAMP[]
-)
-RETURNS TEXT AS $$
-DECLARE
-    i INT;
-BEGIN
-    -- Check array lengths match
-    IF array_length(expected, 1) IS DISTINCT FROM array_length(actual, 1) THEN
-        RAISE EXCEPTION 'FAIL [%]: Expected % occurrences, got %',
-            test_name,
-            COALESCE(array_length(expected, 1), 0),
-            COALESCE(array_length(actual, 1), 0);
-    END IF;
-
-    -- Check each element matches
-    FOR i IN 1..COALESCE(array_length(expected, 1), 0) LOOP
-        IF expected[i] IS DISTINCT FROM actual[i] THEN
-            RAISE EXCEPTION 'FAIL [%]: Occurrence #% differs. Expected %, got %',
-                test_name, i, expected[i], actual[i];
-        END IF;
-    END LOOP;
-
-    RETURN 'PASS [' || test_name || ']';
-END;
-$$ LANGUAGE plpgsql;
+\i tests/helpers.sql
 
 -- Test results tracking
 CREATE TEMP TABLE test_results (
