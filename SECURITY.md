@@ -241,7 +241,7 @@ The installed functions:
 - ❌ **CANNOT:** Make network calls (no external connections)
 - ❌ **CANNOT:** Execute arbitrary SQL (no `EXECUTE` statements)
 
-All functions are marked `IMMUTABLE` or `STABLE` - they're pure computation.
+Functions use a three-tier volatility classification: public API functions (e.g., `"all"`, `"between"`) are marked `VOLATILE` because they use cursors or `SET timezone`; internal computation functions are `STABLE`; and pure-computation helpers (e.g., `weekday_to_number`, `byweekno_matches`) are `IMMUTABLE`. See [DECISIONS.md](DECISIONS.md) for details.
 
 ---
 
@@ -355,7 +355,7 @@ When we publish with `npm publish --provenance`:
 - Zero dependencies (minimal attack surface)
 - Auditable (small, readable codebase)
 - No network calls or data access
-- Pure computation (IMMUTABLE functions)
+- Pure computation (three-tier volatility: VOLATILE for public API, STABLE for internal, IMMUTABLE for helpers)
 
 **Best practices:**
 1. Review the SQL before running (seriously, it's readable!)

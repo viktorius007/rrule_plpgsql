@@ -268,6 +268,8 @@ SELECT * FROM rrule."between"(
 
 ### `rrule."after"(rrule, dtstart, after_date, count, timezone, inc DEFAULT false) -> SETOF TIMESTAMPTZ`
 
+> **API Difference:** The TIMESTAMPTZ `after()` differs from the TIMESTAMP version: it accepts a `count INT` parameter and returns `SETOF TIMESTAMPTZ` (multiple results), whereas the TIMESTAMP version returns a single `TIMESTAMP`. The same applies to `before()` below.
+
 Returns N occurrences after a specific date with DST handling.
 
 **Parameters:**
