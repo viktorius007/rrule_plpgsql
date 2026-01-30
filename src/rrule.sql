@@ -960,10 +960,13 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Check if timezone exists in PostgreSQL's timezone database
-  IF tz NOT IN (SELECT name FROM pg_timezone_names) THEN
-    RAISE EXCEPTION 'Invalid timezone: "%". Must be a valid IANA timezone identifier (e.g., America/New_York, Europe/London, Asia/Tokyo, UTC). Use: SELECT name FROM pg_timezone_names ORDER BY name; to see all valid timezones.', tz;
-  END IF;
+  -- Validate timezone by attempting to use it; this avoids scanning pg_timezone_names
+  BEGIN
+    PERFORM '2000-01-01'::TIMESTAMP AT TIME ZONE tz;
+  EXCEPTION
+    WHEN invalid_parameter_value THEN
+      RAISE EXCEPTION 'Invalid timezone: "%". Must be a valid IANA timezone identifier (e.g., America/New_York, Europe/London, Asia/Tokyo, UTC). Use: SELECT name FROM pg_timezone_names ORDER BY name; to see all valid timezones.', tz;
+  END;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
