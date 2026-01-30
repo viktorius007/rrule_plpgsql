@@ -56,17 +56,17 @@ CREATE TEMPORARY TABLE tz_api_test_results (
 -- instead of the hard-fail pattern (RAISE EXCEPTION) used in other test files. This allows all tests
 -- within a suite to execute even if earlier tests fail, collecting all failures for the end-of-file
 -- summary. The final DO block raises EXCEPTION if any failures occurred, ensuring CI still catches them.
-CREATE OR REPLACE FUNCTION assert_equal(test_suite TEXT, test_name TEXT, actual TEXT, expected TEXT)
+CREATE OR REPLACE FUNCTION assert_equal_soft(test_suite TEXT, test_name TEXT, actual TEXT, expected TEXT)
 RETURNS TEXT AS $$
 BEGIN
     INSERT INTO tz_api_test_results VALUES (test_suite, test_name, actual IS NOT DISTINCT FROM expected, actual, expected);
     IF actual IS NOT DISTINCT FROM expected THEN
-        RETURN '✓';
+        RETURN '[PASS]';
     ELSE
         RAISE WARNING 'Test failed: %', test_name;
         RAISE WARNING 'Expected: %', expected;
         RAISE WARNING 'Actual:   %', actual;
-        RETURN '✗';
+        RETURN '[FAIL]';
     END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -733,7 +733,7 @@ BEGIN
         'America/New_York'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'count() API',
         'Explicit timezone parameter',
         result::TEXT,
@@ -757,7 +757,7 @@ BEGIN
         NULL  -- Should use TZID from RRULE
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'count() API',
         'TZID in RRULE (NULL timezone param)',
         result::TEXT,
@@ -781,7 +781,7 @@ BEGIN
         'America/New_York'  -- Override TZID
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'count() API',
         'Timezone param overrides TZID',
         result::TEXT,
@@ -805,7 +805,7 @@ BEGIN
         NULL  -- No explicit timezone → should use UTC
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'count() API',
         'Defaults to UTC when no timezone',
         result::TEXT,
@@ -839,7 +839,7 @@ BEGIN
         '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'next() API',
         'Returns next daily occurrence after reference_time',
         result::TEXT,
@@ -863,7 +863,7 @@ BEGIN
         '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'next() API',
         'TZID in RRULE returns future occurrence',
         result::TEXT,
@@ -887,7 +887,7 @@ BEGIN
         '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'next() API',
         'Timezone param override works',
         result::TEXT,
@@ -910,7 +910,7 @@ BEGIN
         'UTC'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'next() API',
         'Returns NULL when COUNT exhausted',
         COALESCE(result::TEXT, 'NULL'),
@@ -947,7 +947,7 @@ BEGIN
     -- Before the fix for before() >1000 occurrences, this returned 2022-09-26 14:00:00+00
     -- (the 1000th occurrence instead of the correct last one before reference_time).
     -- The correct answer is 2025-06-14 10:00 AM EDT = 2025-06-14 14:00:00+00.
-    status := assert_equal(
+    status := assert_equal_soft(
         'most_recent() API',
         'Returns occurrence before reference_time',
         result::TEXT,
@@ -971,7 +971,7 @@ BEGIN
         '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'most_recent() API',
         'TZID in RRULE returns past occurrence',
         result::TEXT,
@@ -995,7 +995,7 @@ BEGIN
         '2025-06-15 12:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'most_recent() API',
         'Timezone param override works',
         result::TEXT,
@@ -1019,7 +1019,7 @@ BEGIN
         '2025-01-01 00:00:00+00'::TIMESTAMPTZ
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'most_recent() API',
         'Returns NULL when dtstart is in future',
         COALESCE(result::TEXT, 'NULL'),
@@ -1055,7 +1055,7 @@ BEGIN
         'America/New_York'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'rrule."overlaps"() API',
         'Returns TRUE when event overlaps range',
         result::TEXT,
@@ -1081,7 +1081,7 @@ BEGIN
         'America/New_York'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'rrule."overlaps"() API',
         'Returns FALSE when no overlap',
         CASE WHEN result THEN 'true' ELSE 'false' END,
@@ -1107,7 +1107,7 @@ BEGIN
         NULL
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'rrule."overlaps"() API',
         'TZID in RRULE works correctly',
         result::TEXT,
@@ -1133,7 +1133,7 @@ BEGIN
         'America/New_York'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'rrule."overlaps"() API',
         'Timezone param overrides TZID',
         result::TEXT,
@@ -1159,7 +1159,7 @@ BEGIN
         'America/New_York'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'rrule."overlaps"() API',
         'Handles DST transitions correctly',
         result::TEXT,
@@ -1185,7 +1185,7 @@ BEGIN
         'America/New_York'
     ) INTO result;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'rrule."overlaps"() API',
         'Handles NULL RRULE (single event)',
         result::TEXT,
@@ -1222,7 +1222,7 @@ BEGIN
         error_raised := TRUE;
     END;
 
-    status := assert_equal(
+    status := assert_equal_soft(
         'Timezone Validation',
         'Invalid timezone raises exception',
         error_raised::TEXT,
@@ -1726,7 +1726,7 @@ $$;
 SELECT
     test_suite,
     test_name,
-    CASE WHEN passed THEN '✓ PASS' ELSE '✗ FAIL' END as status
+    CASE WHEN passed THEN '[PASS]' ELSE '[FAIL]' END as status
 FROM tz_api_test_results
 ORDER BY
     CASE test_suite

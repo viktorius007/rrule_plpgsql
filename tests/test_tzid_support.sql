@@ -16,7 +16,7 @@
  * Usage:
  *   psql -d your_database -f test_tzid_support.sql
  *
- * Expected output: All tests should pass with "✓" markers
+ * Expected output: All tests should pass with "PASS" markers
  */
 
 \set ON_ERROR_STOP on
@@ -445,18 +445,15 @@ VALUES ('TZID with INTERVAL',
 -- Test 20: after() with TZID
 INSERT INTO tzid_test_results (test_name, status)
 VALUES ('after() with TZID',
-    (SELECT CASE
-        WHEN result = '2025-03-09 10:00:00'::TIMESTAMP
-        THEN 'PASS [after() with TZID]'
-        ELSE 'FAIL [after() with TZID]: Expected 2025-03-09 10:00:00, got ' || result::TEXT
-    END
-    FROM (
-        SELECT rrule."after"(
+    assert_equals(
+        'after() with TZID',
+        '2025-03-09 10:00:00',
+        (SELECT rrule."after"(
             'FREQ=DAILY;COUNT=10;TZID=America/New_York',
             '2025-03-08 10:00:00'::TIMESTAMP,
             '2025-03-08 12:00:00'::TIMESTAMP
-        ) AS result
-    ) sub)
+        )::TEXT)
+    )
 );
 
 \echo ''
@@ -556,8 +553,8 @@ FROM tzid_test_results;
 SELECT
     test_number,
     CASE
-        WHEN status LIKE 'PASS%' THEN '✓ ' || test_name
-        ELSE '✗ ' || test_name || ' - ' || status
+        WHEN status LIKE 'PASS%' THEN '[PASS] ' || test_name
+        ELSE '[FAIL] ' || test_name || ' - ' || status
     END AS result
 FROM tzid_test_results
 ORDER BY test_number;
@@ -654,61 +651,56 @@ VALUES ('between() with TZID',
 -- Test 28: before() with TZID
 INSERT INTO tzid_test_results (test_name, status)
 VALUES ('before() with TZID',
-    (SELECT CASE
-        WHEN result = '2025-01-02 10:00:00'::TIMESTAMP
-        THEN 'PASS [before() with TZID]'
-        ELSE 'FAIL [before() with TZID]: Expected 2025-01-02 10:00:00, got ' || result::TEXT
-    END
-    FROM (
-        SELECT rrule."before"(
+    assert_equals(
+        'before() with TZID',
+        '2025-01-02 10:00:00',
+        (SELECT rrule."before"(
             'FREQ=DAILY;COUNT=5;TZID=America/New_York',
             '2025-01-01 10:00:00'::TIMESTAMP,
             '2025-01-03 00:00:00'::TIMESTAMP
-        ) AS result
-    ) sub)
+        )::TEXT)
+    )
 );
 
 -- Test 29: count() with TZID
 INSERT INTO tzid_test_results (test_name, status)
 VALUES ('count() with TZID',
-    (SELECT CASE
-        WHEN rrule."count"(
+    assert_equals(
+        'count() with TZID',
+        '5',
+        (SELECT rrule."count"(
             'FREQ=DAILY;COUNT=5;TZID=America/New_York',
             '2025-01-01 10:00:00'::TIMESTAMP
-        ) = 5
-        THEN 'PASS [count() with TZID]'
-        ELSE 'FAIL [count() with TZID]: Expected 5'
-    END)
+        )::TEXT)
+    )
 );
 
 -- Test 30: next() with TZID (explicit reference_time for determinism)
 INSERT INTO tzid_test_results (test_name, status)
 VALUES ('next() with TZID',
-    (SELECT CASE
-        WHEN rrule."next"(
+    assert_equals(
+        'next() with TZID',
+        '2025-01-02 10:00:00',
+        (SELECT rrule."next"(
             'FREQ=DAILY;COUNT=5;TZID=America/New_York',
             '2025-01-01 10:00:00'::TIMESTAMP,
             '2025-01-02 00:00:00'::TIMESTAMP
-        ) = '2025-01-02 10:00:00'::TIMESTAMP
-        THEN 'PASS [next() with TZID]'
-        ELSE 'FAIL [next() with TZID]: Expected 2025-01-02 10:00:00, got ' ||
-            COALESCE(rrule."next"('FREQ=DAILY;COUNT=5;TZID=America/New_York', '2025-01-01 10:00:00'::TIMESTAMP, '2025-01-02 00:00:00'::TIMESTAMP)::TEXT, 'NULL')
-    END)
+        )::TEXT)
+    )
 );
 
 -- Test 31: most_recent() with TZID (explicit reference_time for determinism)
 INSERT INTO tzid_test_results (test_name, status)
 VALUES ('most_recent() with TZID',
-    (SELECT CASE
-        WHEN rrule."most_recent"(
+    assert_equals(
+        'most_recent() with TZID',
+        '2025-01-02 10:00:00',
+        (SELECT rrule."most_recent"(
             'FREQ=DAILY;COUNT=5;TZID=America/New_York',
             '2025-01-01 10:00:00'::TIMESTAMP,
             '2025-01-03 08:00:00'::TIMESTAMP
-        ) = '2025-01-02 10:00:00'::TIMESTAMP
-        THEN 'PASS [most_recent() with TZID]'
-        ELSE 'FAIL [most_recent() with TZID]: Expected 2025-01-02 10:00:00, got ' ||
-            COALESCE(rrule."most_recent"('FREQ=DAILY;COUNT=5;TZID=America/New_York', '2025-01-01 10:00:00'::TIMESTAMP, '2025-01-03 08:00:00'::TIMESTAMP)::TEXT, 'NULL')
-    END)
+        )::TEXT)
+    )
 );
 
 -- Check if all tests passed

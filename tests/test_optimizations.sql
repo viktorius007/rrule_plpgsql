@@ -464,8 +464,8 @@ SELECT
     test_category,
     test_name,
     CASE
-        WHEN status LIKE 'PASS%' THEN '✓ ' || test_name
-        ELSE '✗ ' || test_name || ' - ' || status
+        WHEN status LIKE 'PASS%' THEN '[PASS] ' || test_name
+        ELSE '[FAIL] ' || test_name || ' - ' || status
     END AS result
 FROM optimization_test_results
 ORDER BY test_category, test_name;

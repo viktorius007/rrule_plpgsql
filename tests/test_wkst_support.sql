@@ -579,6 +579,75 @@ VALUES ('BYWEEKNO=-1 finds last week of year',
     )
 );
 
+-- ============================================================================
+-- SECTION 9: WKST Differentiation with INTERVAL=2 (Saturday dtstart)
+-- These tests verify WKST produces different results when INTERVAL>1
+-- ============================================================================
+\echo ''
+\echo '--- Section 9: WKST Differentiation with INTERVAL=2 ---'
+
+-- Test: WKST=SU vs WKST=SA with INTERVAL=2 on Saturday dtstart
+-- dtstart = Saturday Jan 4, 2025 at 10:00
+-- BYDAY=WE; INTERVAL=2
+--
+-- WKST=SU: Jan 4 in week Sun Dec 29-Sat Jan 4 (active). WE=Jan 1 (before dtstart).
+--   Skip Sun Jan 5-Sat Jan 11. Active Sun Jan 12-Sat Jan 18: WE=Jan 15.
+--   Skip Jan 19-25. Active Jan 26-Feb 1: WE=Jan 29.
+--   Skip Feb 2-8. Active Feb 9-15: WE=Feb 12.
+INSERT INTO wkst_test_results (test_name, status)
+SELECT
+    'Test 9.1: WKST=SU INTERVAL=2 BYDAY=WE (Saturday dtstart)',
+    assert_occurrences_equal(
+        'WKST=SU biweekly WE sat-dtstart',
+        ARRAY[
+            '2025-01-15 10:00:00'::TIMESTAMP,
+            '2025-01-29 10:00:00'::TIMESTAMP,
+            '2025-02-12 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE;WKST=SU;COUNT=3',
+            '2025-01-04 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 9.2: Same rule with WKST=SA — different results
+-- WKST=SA: Jan 4 starts a new week Sat Jan 4-Fri Jan 10 (active). WE=Jan 8.
+--   Skip Sat Jan 11-Fri Jan 17. Active Sat Jan 18-Fri Jan 24: WE=Jan 22.
+--   Skip Jan 25-31. Active Sat Feb 1-Fri Feb 7: WE=Feb 5.
+INSERT INTO wkst_test_results (test_name, status)
+SELECT
+    'Test 9.2: WKST=SA INTERVAL=2 BYDAY=WE (Saturday dtstart)',
+    assert_occurrences_equal(
+        'WKST=SA biweekly WE sat-dtstart',
+        ARRAY[
+            '2025-01-08 10:00:00'::TIMESTAMP,
+            '2025-01-22 10:00:00'::TIMESTAMP,
+            '2025-02-05 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE;WKST=SA;COUNT=3',
+            '2025-01-04 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 9.3: Verify WKST=SU and WKST=SA produce DIFFERENT date sets
+-- This is the critical assertion: same RRULE params except WKST yields different results
+INSERT INTO wkst_test_results (test_name, status)
+SELECT
+    'Test 9.3: WKST=SU vs WKST=SA produce different results',
+    assert_true(
+        'WKST differentiation',
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE;WKST=SU;COUNT=3',
+            '2025-01-04 10:00:00'::TIMESTAMP
+        ) d)
+        IS DISTINCT FROM
+        (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE;WKST=SA;COUNT=3',
+            '2025-01-04 10:00:00'::TIMESTAMP
+        ) d)
+    );
+
 \echo ''
 \echo '==================================================================='
 \echo 'Test Results Summary'
