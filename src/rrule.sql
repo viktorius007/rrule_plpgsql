@@ -2587,8 +2587,8 @@ BEGIN
     base_date := dtstart;
     duration := COALESCE(dtend, dtstart) - dtstart;
 
-    adjusted_maxdate := COALESCE(maxdate, current_date + '10 years'::interval);
-    adjusted_mindate := COALESCE(mindate, current_date - '10 years'::interval);
+    adjusted_maxdate := COALESCE(maxdate, dtstart + '10 years'::interval);
+    adjusted_mindate := COALESCE(mindate, dtstart - '10 years'::interval);
 
     -- Expand search window to account for event duration
     IF duration > INTERVAL '0' THEN
@@ -3393,8 +3393,8 @@ BEGIN
     duration := COALESCE(dtend, dtstart) - dtstart;
 
     -- Adjust date range to account for event duration
-    adjusted_mindate := COALESCE(mindate, CURRENT_TIMESTAMP - INTERVAL '10 years');
-    adjusted_maxdate := COALESCE(maxdate, CURRENT_TIMESTAMP + INTERVAL '10 years');
+    adjusted_mindate := COALESCE(mindate, dtstart - INTERVAL '10 years');
+    adjusted_maxdate := COALESCE(maxdate, dtstart + INTERVAL '10 years');
 
     IF duration > INTERVAL '0' THEN
         adjusted_mindate := adjusted_mindate - duration;
