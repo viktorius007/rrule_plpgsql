@@ -217,9 +217,9 @@ DECLARE
   current TIMESTAMP WITH TIME ZONE;
   period_start TIMESTAMP WITH TIME ZONE;
   min_in_period TIMESTAMP WITH TIME ZONE;
-  rule rrule.rrule_parts;
+  rule rrule.rrule_parts%ROWTYPE;
 BEGIN
-  rule := rrule.parse_rrule_parts(basedate, repeatrule);
+  SELECT * INTO rule FROM rrule.parse_rrule_parts(basedate, repeatrule);
 
   -- Output cap: respect both API limit and RRULE COUNT
   output_limit := max_count;

@@ -95,10 +95,13 @@ All BYSETPOS tests use the TIMESTAMP API. No tests verify BYSETPOS behavior thro
 **Category:** Dual-Path Consistency
 **Severity Assessment:** Low
 **Reports:** 1
+**Status:** RESOLVED (fix/finding-5-subday-type-decl)
 
 The subday TIMESTAMP generator declares `rule rrule.rrule_parts;` (no %ROWTYPE) and uses `:=` assignment, while the other 3 generators use `rule rrule.rrule_parts%ROWTYPE;` with `SELECT * INTO`. This works because `rrule_parts` is a TYPE, but the inconsistency creates maintenance confusion.
 
 **Location:** `src/rrule_subday.sql` line 220 (declaration) and line 222 (assignment).
+
+**Resolution:** Normalized to `rule rrule.rrule_parts%ROWTYPE;` with `SELECT * INTO rule FROM rrule.parse_rrule_parts(...)` to match the other 3 generators.
 
 ---
 

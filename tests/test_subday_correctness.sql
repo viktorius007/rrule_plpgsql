@@ -1015,4 +1015,37 @@ BEGIN
     END IF;
 END $$;
 
+-- ============================================================================
+-- SECTION 11: TIMESTAMP Generator Type Declaration Regression Test
+-- Verifies the subday TIMESTAMP generator works after normalizing
+-- its variable declaration to use %ROWTYPE + SELECT * INTO (Finding #5).
+-- ============================================================================
+\echo ''
+\echo '--- Section 11: TIMESTAMP Generator Type Declaration Regression ---'
+
+-- Test 11.1: Simple HOURLY rule through TIMESTAMP API (subday generator)
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('TIMESTAMP Generator', 'HOURLY;INTERVAL=2;COUNT=4 via TIMESTAMP API after %ROWTYPE normalization',
+    assert_occurrences_equal(
+        'HOURLY;INTERVAL=2;COUNT=4 via TIMESTAMP API after %ROWTYPE normalization',
+        ARRAY[
+            '2025-06-15 08:00:00'::TIMESTAMP,
+            '2025-06-15 10:00:00'::TIMESTAMP,
+            '2025-06-15 12:00:00'::TIMESTAMP,
+            '2025-06-15 14:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=HOURLY;INTERVAL=2;COUNT=4', '2025-06-15 08:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+\echo ''
+\echo 'Overall Summary (with Section 11):'
+SELECT
+    COUNT(*) AS total_tests,
+    COUNT(*) FILTER (WHERE status LIKE 'PASS%') AS passed,
+    COUNT(*) FILTER (WHERE status NOT LIKE 'PASS%') AS failed,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status LIKE 'PASS%') / COUNT(*), 1) || '%' AS pass_rate
+FROM subday_test_results;
+
 ROLLBACK;
