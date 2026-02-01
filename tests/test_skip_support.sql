@@ -553,6 +553,43 @@ VALUES ('YEARLY BYMONTH=2 SKIP=FORWARD day 30 overflow',
 
 \echo ''
 \echo '==================================================================='
+\echo 'TEST GROUP: SKIP=FORWARD + UNTIL boundary (NULL check consistency)'
+\echo '==================================================================='
+
+-- Test: SKIP=FORWARD MONTHLY with UNTIL that falls before forwarded date
+-- BYMONTHDAY=31 starting Jan 31. Feb has no 31st, FORWARD => Mar 1.
+-- UNTIL=2025-02-28 should stop before the forwarded Mar 1 date.
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=FORWARD MONTHLY + UNTIL boundary',
+    assert_occurrences_equal(
+        'SKIP=FORWARD MONTHLY UNTIL boundary',
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=FORWARD;RSCALE=GREGORIAN;UNTIL=20250228T100000Z',
+            '2025-01-31 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=FORWARD YEARLY with UNTIL that falls before forwarded date
+-- BYMONTH=2 starting Jan 30. Feb has no 30th in 2025, FORWARD => Mar 1 2025.
+-- UNTIL=2025-02-28 should stop before the forwarded Mar 1 date.
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=FORWARD YEARLY + UNTIL boundary',
+    assert_occurrences_equal(
+        'SKIP=FORWARD YEARLY UNTIL boundary',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT COALESCE(array_agg(occurrence ORDER BY occurrence), ARRAY[]::TIMESTAMP[]) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30;SKIP=FORWARD;RSCALE=GREGORIAN;UNTIL=20250228T100000Z',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+\echo ''
+\echo '==================================================================='
 \echo 'Test Results Summary'
 \echo '==================================================================='
 

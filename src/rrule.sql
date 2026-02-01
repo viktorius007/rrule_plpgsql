@@ -2061,7 +2061,7 @@ BEGIN
             -- from the ORIGINAL month by interval so each period is correctly spaced.
             current := date_trunc('month', current_base) + INTERVAL '1 month'
               + (basedate::time)::interval;
-            EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+            EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
             EXIT WHEN current > maxdate;
             occurrence_count := occurrence_count + 1;
             IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
@@ -2133,7 +2133,7 @@ BEGIN
             -- to the next year at dtstart month+day so each year gets its own period.
             current := date_trunc('month', current_base) + INTERVAL '1 month'
               + (basedate::time)::interval;
-            EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+            EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
             EXIT WHEN current > maxdate;
             occurrence_count := occurrence_count + 1;
             IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
@@ -2800,7 +2800,7 @@ BEGIN
                 ELSIF rule.skip = 'FORWARD' THEN
                   current := (date_trunc('month', current_base) + INTERVAL '1 month'
                     + (basedate::time)::interval)::TIMESTAMP;
-                  EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                  EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                   EXIT WHEN current > maxdate;
                   occurrence_count := occurrence_count + 1;
                   IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
@@ -2870,7 +2870,7 @@ BEGIN
                 ELSIF rule.skip = 'FORWARD' THEN
                   current := (date_trunc('month', current_base) + INTERVAL '1 month'
                     + (basedate::time)::interval)::TIMESTAMP;
-                  EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                  EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                   EXIT WHEN current > maxdate;
                   occurrence_count := occurrence_count + 1;
                   IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
