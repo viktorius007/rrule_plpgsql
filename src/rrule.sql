@@ -525,9 +525,7 @@ BEGIN
     IF length(dayrule) > 2 THEN
       index := (substring(dayrule from '^[+-]?[0-9]+'))::int;
 
-      IF index = 0 THEN
-        RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
-      ELSIF index > 0 THEN
+      IF index > 0 THEN
         -- The simplest case, such as 2MO for the second monday
         each_day := each_day + make_interval(weeks => index - 1);
       ELSE
@@ -619,9 +617,7 @@ BEGIN
     IF length(dayrule) > 2 THEN
       index := (substring(dayrule from '^[+-]?[0-9]+'))::int;
 
-      IF index = 0 THEN
-        RAISE NOTICE 'Ignored invalid BYDAY rule part "%".', dayrule;
-      ELSIF index > 0 THEN
+      IF index > 0 THEN
         -- Nth weekday of year
         each_day := each_day + make_interval(weeks => index - 1);
       ELSE
@@ -717,12 +713,6 @@ BEGIN
         result_count := result_count + 1;
         EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
       END IF;
-      CONTINUE;
-    END IF;
-
-    -- Skip zero (invalid in RFC 5545)
-    IF requested_day = 0 THEN
-      RAISE NOTICE 'Ignored invalid BYMONTHDAY part "0".';
       CONTINUE;
     END IF;
 
@@ -1697,10 +1687,6 @@ BEGIN
         EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
       END IF;
       -- If abs(yearday) > days_in_year, skip it
-
-    ELSE
-      -- yearday == 0 is invalid per RFC 5545, skip it
-      RAISE NOTICE 'Invalid BYYEARDAY value: 0 (must be 1-366 or -1 to -366)';
     END IF;
   END LOOP;
 
