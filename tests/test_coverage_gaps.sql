@@ -6177,6 +6177,140 @@ SELECT
         ))::TEXT
     );
 
+-- ============================================================================
+-- Section 32: API Limits and Boundary Tests
+-- Tests for public API caps, edge cases in before()/count()/version(),
+-- and MONTHLY behavior when dtstart day does not exist in all months.
+-- ============================================================================
+\echo ''
+\echo '--- Section 32: API Limits and Boundary Tests ---'
+
+-- Test 32.1: Daily no COUNT/UNTIL hits 1000-occurrence cap
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Limits',
+    'Test 32.1: DAILY no COUNT/UNTIL caps at 1000 occurrences',
+    assert_equals(
+        'DAILY 1000-occurrence cap',
+        '1000',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=DAILY',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ))
+    );
+
+-- Test 32.2: Yearly COUNT=20 capped by 10-year window (returns only 10)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Limits',
+    'Test 32.2: YEARLY COUNT=20 capped by 10-year window',
+    assert_equals(
+        'YEARLY COUNT=20 10-year cap',
+        '10',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=YEARLY;COUNT=20',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ))
+    );
+
+-- Test 32.3: before() inc=TRUE at exact occurrence boundary
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Boundary',
+    'Test 32.3: before() inc=TRUE returns occurrence at exact boundary',
+    assert_equals(
+        'before inc=TRUE exact boundary',
+        '2025-01-03 10:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=5',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP,
+            TRUE
+        ))::TEXT
+    );
+
+-- Test 32.4: before() inc=FALSE at dtstart returns NULL (nothing strictly before)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Boundary',
+    'Test 32.4: before() inc=FALSE at dtstart returns NULL',
+    assert_equals(
+        'before inc=FALSE at dtstart',
+        'NULL',
+        COALESCE(
+            (SELECT rrule."before"(
+                'FREQ=DAILY;COUNT=5',
+                '2025-01-01 10:00:00'::TIMESTAMP,
+                '2025-01-01 10:00:00'::TIMESTAMP,
+                FALSE
+            ))::TEXT,
+            'NULL'
+        )
+    );
+
+-- Test 32.5: count() with COUNT=1 returns exactly 1
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Boundary',
+    'Test 32.5: count() with COUNT=1 returns 1',
+    assert_equals(
+        'count with COUNT=1',
+        '1',
+        (SELECT rrule."count"(
+            'FREQ=DAILY;COUNT=1',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ))::TEXT
+    );
+
+-- Test 32.6: before() COUNT=1 inc=TRUE at dtstart returns dtstart
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Boundary',
+    'Test 32.6: before() COUNT=1 inc=TRUE at dtstart returns dtstart',
+    assert_equals(
+        'before COUNT=1 inc=TRUE at dtstart',
+        '2025-01-01 10:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=1',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            TRUE
+        ))::TEXT
+    );
+
+-- Test 32.7: version() returns current version string
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Metadata',
+    'Test 32.7: version() returns version string',
+    assert_equals(
+        'version function',
+        '1.1.1',
+        (SELECT rrule."version"())
+    );
+
+-- Test 32.8: Monthly COUNT=6 with dtstart day=30 skips months without 30th
+-- Feb has no 30th, so it is skipped. Result: Jan, Mar, Apr, May, Jun, Jul.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY Day Skip',
+    'Test 32.8: MONTHLY COUNT=6 dtstart day=30 skips Feb',
+    assert_occurrences_equal(
+        'MONTHLY day=30 skips short months',
+        ARRAY[
+            '2025-01-30 10:00:00'::TIMESTAMP,
+            '2025-03-30 10:00:00'::TIMESTAMP,
+            '2025-04-30 10:00:00'::TIMESTAMP,
+            '2025-05-30 10:00:00'::TIMESTAMP,
+            '2025-06-30 10:00:00'::TIMESTAMP,
+            '2025-07-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;COUNT=6',
+            '2025-01-30 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE

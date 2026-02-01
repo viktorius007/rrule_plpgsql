@@ -1329,6 +1329,52 @@ VALUES ('INTERVAL Validation', 'INTERVAL=-1 (should be rejected)',
     )
 );
 
+-- ============================================================================
+-- SECTION 10: Additional Error Rejection Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 10: Additional Error Rejection Tests ---'
+
+-- Test 10.1: Invalid SKIP value should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('SKIP Validation', 'SKIP=INVALID (should be rejected)',
+    assert_rrule_rejected(
+        'SKIP=INVALID rejected',
+        'FREQ=MONTHLY;SKIP=INVALID;BYMONTHDAY=31;COUNT=3',
+        '%Invalid SKIP value. SKIP must be one of: OMIT, BACKWARD, FORWARD%'
+    )
+);
+
+-- Test 10.2: Unsupported frequency BIWEEKLY should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Frequency Validation', 'FREQ=BIWEEKLY (should be rejected)',
+    assert_rrule_rejected(
+        'FREQ=BIWEEKLY rejected',
+        'FREQ=BIWEEKLY;COUNT=3',
+        '%Unsupported frequency: BIWEEKLY. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY%'
+    )
+);
+
+-- Test 10.3: HOURLY not supported in standard installation
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Frequency Validation', 'FREQ=HOURLY standard install (should be rejected)',
+    assert_rrule_rejected(
+        'FREQ=HOURLY standard rejected',
+        'FREQ=HOURLY;COUNT=3',
+        '%not supported in standard installation%'
+    )
+);
+
+-- Test 10.4: Unsupported RSCALE value should be rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('RSCALE Validation', 'RSCALE=HEBREW (should be rejected)',
+    assert_rrule_rejected(
+        'RSCALE=HEBREW rejected',
+        'FREQ=MONTHLY;RSCALE=HEBREW;COUNT=3',
+        '%Unsupported RSCALE value%Only GREGORIAN calendar is currently supported%'
+    )
+);
+
 ------------------------------------------------------------------------------------------------------
 -- Check if all tests passed
 ------------------------------------------------------------------------------------------------------

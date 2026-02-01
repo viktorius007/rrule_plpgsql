@@ -2196,6 +2196,106 @@ BEGIN
 END;
 $$;
 
+-- ================================================================================================================
+-- TEST SUITE 20: TIMESTAMPTZ API NULL Input Handling
+-- ================================================================================================================
+\echo ''
+\echo '=================================================='
+\echo 'TEST SUITE 20: TIMESTAMPTZ API NULL Input Handling'
+\echo '=================================================='
+\echo ''
+
+-- Test 20.1: NULL dtstart raises descriptive error via TIMESTAMPTZ API
+DO $$
+DECLARE
+    err_msg TEXT;
+BEGIN
+    BEGIN
+        PERFORM * FROM rrule."all"(
+            'FREQ=DAILY;COUNT=3',
+            NULL::TIMESTAMPTZ,
+            'America/New_York'
+        );
+        -- Should not reach here
+        INSERT INTO tz_api_test_results VALUES (
+            'NULL Input TZ',
+            'NULL dtstart raises error via TIMESTAMPTZ API',
+            FALSE,
+            'No exception raised',
+            'Exception: dtstart is required and cannot be NULL'
+        );
+    EXCEPTION WHEN OTHERS THEN
+        err_msg := SQLERRM;
+        INSERT INTO tz_api_test_results VALUES (
+            'NULL Input TZ',
+            'NULL dtstart raises error via TIMESTAMPTZ API',
+            err_msg = 'dtstart is required and cannot be NULL',
+            err_msg,
+            'dtstart is required and cannot be NULL'
+        );
+    END;
+END;
+$$;
+
+-- Test 20.2: NULL timezone falls back to UTC via TIMESTAMPTZ API
+-- When timezone is NULL, the function uses UTC as fallback rather than raising an error.
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    result_count INT;
+    expected_count INT := 3;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=DAILY;COUNT=3',
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        NULL
+    ) ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'NULL Input TZ',
+        'NULL timezone falls back to UTC (no error)',
+        result_count = expected_count,
+        result_count::TEXT || ' occurrences returned',
+        expected_count::TEXT || ' occurrences returned'
+    );
+END;
+$$;
+
+-- Test 20.3: MINUTELY via TIMESTAMPTZ API raises sub-day disabled error (standard install)
+-- In sub-day install: MINUTELY works, test passes. In standard install: error must mention install_with_subday.
+DO $$
+DECLARE
+    err_msg TEXT;
+BEGIN
+    BEGIN
+        PERFORM * FROM rrule."all"(
+            'FREQ=MINUTELY;COUNT=3',
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            'America/New_York'
+        );
+        -- Sub-day installation: MINUTELY works, this is expected
+        INSERT INTO tz_api_test_results VALUES (
+            'NULL Input TZ',
+            'FREQ=MINUTELY via TZ API (sub-day enabled or error expected)',
+            TRUE,
+            'MINUTELY succeeded (sub-day installation)',
+            'MINUTELY succeeds in sub-day install OR error mentions install_with_subday'
+        );
+    EXCEPTION WHEN OTHERS THEN
+        err_msg := SQLERRM;
+        -- Standard installation: error must be helpful
+        INSERT INTO tz_api_test_results VALUES (
+            'NULL Input TZ',
+            'FREQ=MINUTELY via TZ API (sub-day enabled or error expected)',
+            err_msg LIKE '%install_with_subday%',
+            err_msg,
+            'MINUTELY succeeds in sub-day install OR error mentions install_with_subday'
+        );
+    END;
+END;
+$$;
+
 -- Fail transaction if any tests failed
 DO $$
 DECLARE

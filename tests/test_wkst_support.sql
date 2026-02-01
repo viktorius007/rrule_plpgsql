@@ -648,6 +648,51 @@ SELECT
         ) d)
     );
 
+-- =====================================================================
+-- Section 10: Negative BYWEEKNO Edge Cases
+-- =====================================================================
+-- BYWEEKNO=-53 only resolves in 53-week ISO years (e.g. 2015, 2020).
+-- In those years, -53 maps to week 1. Whether a given day of week 1
+-- falls in the current year depends on the weekday:
+-- ISO week 1 of 2015: Mon Dec 29 2014 - Sun Jan 4 2015
+-- ISO week 1 of 2020: Mon Dec 30 2019 - Sun Jan 5 2020
+-- So BYDAY=MO targets a date in the prior calendar year (filtered out),
+-- while BYDAY=TH targets a date within the current year (included).
+
+-- Test 10.1: BYWEEKNO=-53 with BYDAY=TH — hits Thu of week 1 in 53-week years
+-- 2015 week 1 Thu = 2015-01-01, 2020 week 1 Thu = 2020-01-02
+-- Years with only 52 ISO weeks are skipped (no week -53).
+INSERT INTO wkst_test_results (test_name, status)
+SELECT
+    'Test 10.1: BYWEEKNO=-53 BYDAY=TH in 53-week years',
+    assert_occurrences_equal(
+        'BYWEEKNO=-53 BYDAY=TH 53-week years',
+        ARRAY[
+            '2015-01-01 10:00:00'::TIMESTAMP,
+            '2020-01-02 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYWEEKNO=-53;BYDAY=TH;COUNT=2',
+            '2015-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 10.2: BYWEEKNO=-53 with BYDAY=MO — empty result
+-- Monday of week 1 falls in the prior calendar year (Dec 29 2014 / Dec 30 2019),
+-- so it is outside the YEARLY candidate range and filtered out.
+-- With no valid candidates in any year, the result set is empty.
+INSERT INTO wkst_test_results (test_name, status)
+SELECT
+    'Test 10.2: BYWEEKNO=-53 BYDAY=MO produces empty result',
+    assert_occurrences_equal(
+        'BYWEEKNO=-53 BYDAY=MO empty',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYWEEKNO=-53;BYDAY=MO;COUNT=2',
+            '2015-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
 \echo ''
 \echo '==================================================================='
 \echo 'Test Results Summary'

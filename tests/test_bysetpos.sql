@@ -401,6 +401,38 @@ VALUES (
 );
 
 ------------------------------------------------------------------------------------------------------
+-- Category 6: YEARLY + BYMONTH + BYDAY + BYSETPOS
+------------------------------------------------------------------------------------------------------
+\echo ''
+\echo '==================================================================='
+\echo 'Category 6: YEARLY + BYMONTH + BYDAY + BYSETPOS'
+\echo '==================================================================='
+
+-- Test 6.1: First and last weekday of January each year
+-- FREQ=YEARLY;BYMONTH=1 restricts to January; BYDAY=MO,TU,WE,TH,FR expands to all weekdays;
+-- BYSETPOS=1,-1 selects first and last weekday from the January set.
+-- 2025 Jan: first weekday = Wed Jan 1, last weekday = Fri Jan 31
+-- 2026 Jan: first weekday = Thu Jan 1, last weekday = Fri Jan 30
+-- 2027 Jan: first weekday = Fri Jan 1, last weekday = Fri Jan 29
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'YEARLY+BYMONTH+BYDAY+BYSETPOS',
+    'BYSETPOS=1,-1 first and last weekday of January',
+    assert_occurrences_equal(
+        'First and last weekday of January each year',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2026-01-01 00:00:00'::TIMESTAMP,
+            '2026-01-30 00:00:00'::TIMESTAMP,
+            '2027-01-01 00:00:00'::TIMESTAMP,
+            '2027-01-29 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTH=1;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1;COUNT=6', '2025-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+------------------------------------------------------------------------------------------------------
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------
 \echo ''

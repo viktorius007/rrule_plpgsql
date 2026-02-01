@@ -15,6 +15,7 @@
  * 6. BYMONTH rules
  * 7. Complex combinations
  * 8. Edge cases (leap years, month boundaries)
+ * 9. Advanced BYxxx combinations (BYMONTH+BYDAY, BYYEARDAY, BYDAY+BYMONTHDAY)
  *
  * Usage:
  *   psql -d your_database -f test_rrule_functions.sql
@@ -341,6 +342,75 @@ INSERT INTO test_results VALUES (18, 'after() helper',
             '2025-01-01 10:00:00'::TIMESTAMP,
             '2025-01-01 12:00:00'::TIMESTAMP
         )::TEXT)
+    ));
+
+-- ============================================================================
+-- TEST GROUP 9: Advanced BYxxx Combinations
+-- ============================================================================
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 9: Advanced BYxxx Combinations'
+\echo '==================================================================='
+
+-- Test 19: WEEKLY+BYDAY+BYMONTH (weekly MO/FR occurrences restricted to January)
+INSERT INTO test_results VALUES (19, 'WEEKLY with BYDAY=MO,FR and BYMONTH=1',
+    assert_occurrences_equal(
+        'WEEKLY with BYDAY=MO,FR and BYMONTH=1',
+        ARRAY[
+            '2025-01-03 10:00:00'::TIMESTAMP,  -- Friday
+            '2025-01-06 10:00:00'::TIMESTAMP,  -- Monday
+            '2025-01-10 10:00:00'::TIMESTAMP,  -- Friday
+            '2025-01-13 10:00:00'::TIMESTAMP,  -- Monday
+            '2025-01-17 10:00:00'::TIMESTAMP,  -- Friday
+            '2025-01-20 10:00:00'::TIMESTAMP,  -- Monday
+            '2025-01-24 10:00:00'::TIMESTAMP,  -- Friday
+            '2025-01-27 10:00:00'::TIMESTAMP,  -- Monday
+            '2025-01-31 10:00:00'::TIMESTAMP,  -- Friday
+            '2026-01-05 10:00:00'::TIMESTAMP   -- Monday (next January)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,FR;BYMONTH=1;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 20: BYDAY with non-BYDAY dtstart (dtstart is Wednesday, rule is MO+FR)
+-- dtstart itself is excluded because it does not match BYDAY
+INSERT INTO test_results VALUES (20, 'WEEKLY BYDAY=MO,FR with Wednesday dtstart',
+    assert_occurrences_equal(
+        'WEEKLY BYDAY=MO,FR with Wednesday dtstart',
+        ARRAY[
+            '2025-01-10 10:00:00'::TIMESTAMP,  -- Friday
+            '2025-01-13 10:00:00'::TIMESTAMP,  -- Monday
+            '2025-01-17 10:00:00'::TIMESTAMP,  -- Friday
+            '2025-01-20 10:00:00'::TIMESTAMP   -- Monday
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,FR;COUNT=4', '2025-01-08 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 21: Negative BYYEARDAY (-1 = last day of each year)
+INSERT INTO test_results VALUES (21, 'YEARLY with BYYEARDAY=-1 (last day of year)',
+    assert_occurrences_equal(
+        'YEARLY with BYYEARDAY=-1 (last day of year)',
+        ARRAY[
+            '2025-12-31 10:00:00'::TIMESTAMP,
+            '2026-12-31 10:00:00'::TIMESTAMP,
+            '2027-12-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYYEARDAY=-1;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 22: BYDAY+BYMONTHDAY intersection (Mondays that fall on 1st/8th/15th/22nd/29th)
+INSERT INTO test_results VALUES (22, 'MONTHLY BYDAY=MO + BYMONTHDAY=1,8,15,22,29',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=MO + BYMONTHDAY=1,8,15,22,29',
+        ARRAY[
+            '2025-09-01 10:00:00'::TIMESTAMP,  -- Mon Sep 1
+            '2025-09-08 10:00:00'::TIMESTAMP,  -- Mon Sep 8
+            '2025-09-15 10:00:00'::TIMESTAMP,  -- Mon Sep 15
+            '2025-09-22 10:00:00'::TIMESTAMP,  -- Mon Sep 22
+            '2025-09-29 10:00:00'::TIMESTAMP,  -- Mon Sep 29
+            '2025-12-01 10:00:00'::TIMESTAMP   -- Mon Dec 1
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYMONTHDAY=1,8,15,22,29;COUNT=6', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
