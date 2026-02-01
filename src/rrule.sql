@@ -2051,6 +2051,8 @@ BEGIN
                   date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
               + (basedate::time)::interval;
             EXIT WHEN period_count >= period_limit;
+            EXIT WHEN current_base > maxdate;
+            EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
           ELSIF rule.skip = 'FORWARD' THEN
             -- Emit the FORWARD date (1st of next month) inline, then advance
             -- from the ORIGINAL month by interval so each period is correctly spaced.
@@ -2123,6 +2125,8 @@ BEGIN
                     - INTERVAL '1 day'))::INT) - 1)
               + (basedate::time)::interval;
             EXIT WHEN period_count >= period_limit;
+            EXIT WHEN current_base > maxdate;
+            EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
           ELSIF rule.skip = 'FORWARD' THEN
             -- Emit the FORWARD date (1st of next month) inline, then advance
             -- to the next year at dtstart month+day so each year gets its own period.
@@ -2792,6 +2796,8 @@ BEGIN
                         date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
                     + (basedate::time)::interval;
                   EXIT WHEN period_count >= period_limit;
+                  EXIT WHEN current_base > maxdate;
+                  EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
                 ELSIF rule.skip = 'FORWARD' THEN
                   current := (date_trunc('month', current_base) + INTERVAL '1 month'
                     + (basedate::time)::interval)::TIMESTAMP;
@@ -2862,6 +2868,8 @@ BEGIN
                           - INTERVAL '1 day'))::INT) - 1)
                     + (basedate::time)::interval;
                   EXIT WHEN period_count >= period_limit;
+                  EXIT WHEN current_base > maxdate;
+                  EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
                 ELSIF rule.skip = 'FORWARD' THEN
                   current := (date_trunc('month', current_base) + INTERVAL '1 month'
                     + (basedate::time)::interval)::TIMESTAMP;

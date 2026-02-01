@@ -553,6 +553,129 @@ VALUES ('YEARLY BYMONTH=2 SKIP=FORWARD day 30 overflow',
 
 \echo ''
 \echo '==================================================================='
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP: SKIP=OMIT maxdate/UNTIL boundary checks'
+\echo '==================================================================='
+
+-- Test: SKIP=OMIT MONTHLY with UNTIL that falls within omitted range
+-- BYMONTHDAY=31 starting Jan 31 2024 with INTERVAL=1.
+-- Feb, Apr have no 31st => omitted. UNTIL=2024-04-15.
+-- Expected: Jan 31, Mar 31
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=OMIT MONTHLY + UNTIL boundary',
+    assert_occurrences_equal(
+        'SKIP=OMIT MONTHLY UNTIL boundary',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-03-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=OMIT;RSCALE=GREGORIAN;UNTIL=20240415T100000Z',
+            '2024-01-31 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=OMIT MONTHLY with narrow maxdate window via between()
+-- BYMONTHDAY=31 starting Jan 31 2024. Window ends Mar 1 2024.
+-- Feb has no 31st => omitted. Mar 31 > maxdate. Only Jan 31 fits.
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=OMIT MONTHLY + narrow maxdate',
+    assert_occurrences_equal(
+        'SKIP=OMIT MONTHLY narrow maxdate',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=OMIT;RSCALE=GREGORIAN',
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-01-01 00:00:00'::TIMESTAMP,
+            '2024-03-01 00:00:00'::TIMESTAMP,
+            true
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=OMIT MONTHLY with INTERVAL=2 and UNTIL
+-- BYMONTHDAY=31 starting Jan 31 2024, INTERVAL=2.
+-- Months: Jan(31), Mar(31), May(31), Jul(31), Sep(no 31, omit->Nov(no 31, omit->Jan 2025))
+-- UNTIL=2024-08-15: Expected Jan 31, Mar 31, May 31, Jul 31
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=OMIT MONTHLY INTERVAL=2 + UNTIL',
+    assert_occurrences_equal(
+        'SKIP=OMIT MONTHLY INTERVAL=2 UNTIL',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-03-31 10:00:00'::TIMESTAMP,
+            '2024-05-31 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=31;SKIP=OMIT;RSCALE=GREGORIAN;UNTIL=20240815T100000Z',
+            '2024-01-31 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=OMIT YEARLY with UNTIL on Feb 29 (leap day)
+-- Start Feb 29 2024 (leap year), INTERVAL=1.
+-- 2025-2027 have no Feb 29 => omitted. UNTIL=2025-06-01.
+-- Expected: only 2024-02-29
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=OMIT YEARLY leap day + UNTIL',
+    assert_occurrences_equal(
+        'SKIP=OMIT YEARLY leap day UNTIL',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=OMIT;RSCALE=GREGORIAN;UNTIL=20250601T100000Z',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=OMIT YEARLY with INTERVAL=4 and UNTIL (leap day)
+-- Start Feb 29 2024, INTERVAL=4. Next: 2028 (leap), 2032 (> UNTIL).
+-- UNTIL=2030-01-01. Expected: 2024-02-29, 2028-02-29
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=OMIT YEARLY INTERVAL=4 leap day + UNTIL',
+    assert_occurrences_equal(
+        'SKIP=OMIT YEARLY INTERVAL=4 leap day UNTIL',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=4;SKIP=OMIT;RSCALE=GREGORIAN;UNTIL=20300101T100000Z',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=OMIT MONTHLY INTERVAL=3 + narrow between() window
+-- BYMONTHDAY=31, INTERVAL=3 starting Jan 31 2024.
+-- Months: Jan(31), Apr(no 31, omit->Jul), Jul(31), Oct(31)...
+-- Window: 2024-01-01 to 2024-08-01. Expected: Jan 31, Jul 31
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('SKIP=OMIT MONTHLY INTERVAL=3 + narrow maxdate',
+    assert_occurrences_equal(
+        'SKIP=OMIT MONTHLY INTERVAL=3 narrow maxdate',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=31;SKIP=OMIT;RSCALE=GREGORIAN',
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-01-01 00:00:00'::TIMESTAMP,
+            '2024-08-01 00:00:00'::TIMESTAMP,
+            true
+        ) AS occurrence)
+    )
+);
 \echo 'Test Results Summary'
 \echo '==================================================================='
 

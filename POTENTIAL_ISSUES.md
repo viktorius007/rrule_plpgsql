@@ -13,6 +13,7 @@ Each issue includes: description, category, severity assessment, agent analysis 
 **Category:** Edge Cases & Boundary Conditions
 **Severity Assessment:** Medium-High
 **Reports:** 1
+**Status:** Resolved in commit 24b9a1c
 
 The SKIP=OMIT inner loop in MONTHLY/YEARLY branches advances `current_base` by INTERVAL repeatedly but only checks `period_count >= period_limit`. It does NOT check `current_base >= maxdate` or `rule.until`, meaning the loop can advance far beyond the requested date range before exiting. The SKIP=FORWARD branch does check these boundaries.
 
