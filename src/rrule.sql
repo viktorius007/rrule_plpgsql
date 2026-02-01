@@ -266,6 +266,11 @@ BEGIN
     RAISE EXCEPTION 'Invalid RRULE: INTERVAL must be a positive integer (>= 1). Current INTERVAL=%.  RFC 5545 Section 3.3.10: "INTERVAL rule part contains a positive integer"', result.interval;
   END IF;
 
+  -- Validation 2b2: INTERVAL upper bound to prevent make_interval() overflow
+  IF result.interval > 10000 THEN
+    RAISE EXCEPTION 'Invalid RRULE: INTERVAL must not exceed 10000. Current INTERVAL=%. Large INTERVAL values risk overflow in date arithmetic.', result.interval;
+  END IF;
+
   -- Validation 2c: COUNT must be a positive integer (RFC 5545)
   IF result.count IS NOT NULL AND result.count <= 0 THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer, got %', result.count;
