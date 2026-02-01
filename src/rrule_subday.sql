@@ -213,7 +213,6 @@ DECLARE
   emitted_count INT := 0;
   output_limit INT;
   dtstart_day INT;
-  month_max_day INT;
   current_base TIMESTAMP WITH TIME ZONE;
   current TIMESTAMP WITH TIME ZONE;
   period_start TIMESTAMP WITH TIME ZONE;
@@ -299,24 +298,40 @@ BEGIN
       END LOOP;
       current_base := current_base + make_interval(months => rule.interval);
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+        -- Restore dtstart day-of-month to prevent cumulative drift from FORWARD
+        current_base := date_trunc('month', current_base)
+          + make_interval(days => LEAST(dtstart_day,
+              date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
+          + (basedate::time)::interval;
         LOOP
           EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-          month_max_day := date_part('day',
-            (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
-          IF dtstart_day <= month_max_day THEN
-            current_base := date_trunc('month', current_base)
-              + make_interval(days => dtstart_day - 1)
-              + (basedate::time)::interval;
-            EXIT;
-          END IF;
           IF rule.skip = 'OMIT' THEN
             period_count := period_count + 1;
             current_base := current_base + make_interval(months => rule.interval);
+            current_base := date_trunc('month', current_base)
+              + make_interval(days => LEAST(dtstart_day,
+                  date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
+              + (basedate::time)::interval;
             EXIT WHEN period_count >= period_limit;
           ELSIF rule.skip = 'FORWARD' THEN
-            current_base := date_trunc('month', current_base) + INTERVAL '1 month'
+            current := date_trunc('month', current_base) + INTERVAL '1 month'
               + (basedate::time)::interval;
-            EXIT;
+            EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+            EXIT WHEN current > maxdate;
+            occurrence_count := occurrence_count + 1;
+            IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
+              EXIT;
+            END IF;
+            IF current >= mindate THEN
+              RETURN NEXT current;
+              emitted_count := emitted_count + 1;
+              EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+            END IF;
+            current_base := current_base + make_interval(months => rule.interval);
+            current_base := date_trunc('month', current_base)
+              + make_interval(days => LEAST(dtstart_day,
+                  date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
+              + (basedate::time)::interval;
           ELSE
             EXIT;
           END IF;
@@ -339,24 +354,49 @@ BEGIN
       END LOOP;
       current_base := current_base + make_interval(years => rule.interval);
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+        -- Restore dtstart month+day to prevent cumulative drift from FORWARD
+        current_base := date_trunc('year', current_base)
+          + make_interval(months => date_part('month', basedate)::INT - 1)
+          + make_interval(days => LEAST(dtstart_day,
+              date_part('day', (date_trunc('year', current_base)
+                + make_interval(months => date_part('month', basedate)::INT)
+                - INTERVAL '1 day'))::INT) - 1)
+          + (basedate::time)::interval;
         LOOP
           EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-          month_max_day := date_part('day',
-            (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
-          IF dtstart_day <= month_max_day THEN
-            current_base := date_trunc('month', current_base)
-              + make_interval(days => dtstart_day - 1)
-              + (basedate::time)::interval;
-            EXIT;
-          END IF;
           IF rule.skip = 'OMIT' THEN
             period_count := period_count + 1;
             current_base := current_base + make_interval(years => rule.interval);
+            current_base := date_trunc('year', current_base)
+              + make_interval(months => date_part('month', basedate)::INT - 1)
+              + make_interval(days => LEAST(dtstart_day,
+                  date_part('day', (date_trunc('year', current_base)
+                    + make_interval(months => date_part('month', basedate)::INT)
+                    - INTERVAL '1 day'))::INT) - 1)
+              + (basedate::time)::interval;
             EXIT WHEN period_count >= period_limit;
           ELSIF rule.skip = 'FORWARD' THEN
-            current_base := date_trunc('month', current_base) + INTERVAL '1 month'
+            current := date_trunc('month', current_base) + INTERVAL '1 month'
               + (basedate::time)::interval;
-            EXIT;
+            EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
+            EXIT WHEN current > maxdate;
+            occurrence_count := occurrence_count + 1;
+            IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
+              EXIT;
+            END IF;
+            IF current >= mindate THEN
+              RETURN NEXT current;
+              emitted_count := emitted_count + 1;
+              EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+            END IF;
+            current_base := current_base + make_interval(years => rule.interval);
+            current_base := date_trunc('year', current_base)
+              + make_interval(months => date_part('month', basedate)::INT - 1)
+              + make_interval(days => LEAST(dtstart_day,
+                  date_part('day', (date_trunc('year', current_base)
+                    + make_interval(months => date_part('month', basedate)::INT)
+                    - INTERVAL '1 day'))::INT) - 1)
+              + (basedate::time)::interval;
           ELSE
             EXIT;
           END IF;
@@ -452,7 +492,6 @@ DECLARE
     emitted_count INT := 0;
     output_limit INT;
     dtstart_day INT;
-    month_max_day INT;
     current_base TIMESTAMP;
     current TIMESTAMP;
     period_start TIMESTAMP;
@@ -554,24 +593,40 @@ BEGIN
             END LOOP;
             current_base := current_base + make_interval(months => rule.interval);
             IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+              -- Restore dtstart day-of-month to prevent cumulative drift from FORWARD
+              current_base := date_trunc('month', current_base)
+                + make_interval(days => LEAST(dtstart_day,
+                    date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
+                + (basedate::time)::interval;
               LOOP
                 EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-                month_max_day := date_part('day',
-                  (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
-                IF dtstart_day <= month_max_day THEN
-                  current_base := date_trunc('month', current_base)
-                    + make_interval(days => dtstart_day - 1)
-                    + (basedate::time)::interval;
-                  EXIT;
-                END IF;
                 IF rule.skip = 'OMIT' THEN
                   period_count := period_count + 1;
                   current_base := current_base + make_interval(months => rule.interval);
+                  current_base := date_trunc('month', current_base)
+                    + make_interval(days => LEAST(dtstart_day,
+                        date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
+                    + (basedate::time)::interval;
                   EXIT WHEN period_count >= period_limit;
                 ELSIF rule.skip = 'FORWARD' THEN
-                  current_base := date_trunc('month', current_base) + INTERVAL '1 month'
+                  current := (date_trunc('month', current_base) + INTERVAL '1 month'
+                    + (basedate::time)::interval)::TIMESTAMP;
+                  EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                  EXIT WHEN current > maxdate;
+                  occurrence_count := occurrence_count + 1;
+                  IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
+                    EXIT;
+                  END IF;
+                  IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                  END IF;
+                  current_base := current_base + make_interval(months => rule.interval);
+                  current_base := date_trunc('month', current_base)
+                    + make_interval(days => LEAST(dtstart_day,
+                        date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
                     + (basedate::time)::interval;
-                  EXIT;
                 ELSE
                   EXIT;
                 END IF;
@@ -602,24 +657,49 @@ BEGIN
             END LOOP;
             current_base := current_base + make_interval(years => rule.interval);
             IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
+              -- Restore dtstart month+day to prevent cumulative drift from FORWARD
+              current_base := date_trunc('year', current_base)
+                + make_interval(months => date_part('month', basedate)::INT - 1)
+                + make_interval(days => LEAST(dtstart_day,
+                    date_part('day', (date_trunc('year', current_base)
+                      + make_interval(months => date_part('month', basedate)::INT)
+                      - INTERVAL '1 day'))::INT) - 1)
+                + (basedate::time)::interval;
               LOOP
                 EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-                month_max_day := date_part('day',
-                  (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT;
-                IF dtstart_day <= month_max_day THEN
-                  current_base := date_trunc('month', current_base)
-                    + make_interval(days => dtstart_day - 1)
-                    + (basedate::time)::interval;
-                  EXIT;
-                END IF;
                 IF rule.skip = 'OMIT' THEN
                   period_count := period_count + 1;
                   current_base := current_base + make_interval(years => rule.interval);
+                  current_base := date_trunc('year', current_base)
+                    + make_interval(months => date_part('month', basedate)::INT - 1)
+                    + make_interval(days => LEAST(dtstart_day,
+                        date_part('day', (date_trunc('year', current_base)
+                          + make_interval(months => date_part('month', basedate)::INT)
+                          - INTERVAL '1 day'))::INT) - 1)
+                    + (basedate::time)::interval;
                   EXIT WHEN period_count >= period_limit;
                 ELSIF rule.skip = 'FORWARD' THEN
-                  current_base := date_trunc('month', current_base) + INTERVAL '1 month'
+                  current := (date_trunc('month', current_base) + INTERVAL '1 month'
+                    + (basedate::time)::interval)::TIMESTAMP;
+                  EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                  EXIT WHEN current > maxdate;
+                  occurrence_count := occurrence_count + 1;
+                  IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
+                    EXIT;
+                  END IF;
+                  IF current >= mindate THEN
+                    RETURN NEXT current;
+                    emitted_count := emitted_count + 1;
+                    EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
+                  END IF;
+                  current_base := current_base + make_interval(years => rule.interval);
+                  current_base := date_trunc('year', current_base)
+                    + make_interval(months => date_part('month', basedate)::INT - 1)
+                    + make_interval(days => LEAST(dtstart_day,
+                        date_part('day', (date_trunc('year', current_base)
+                          + make_interval(months => date_part('month', basedate)::INT)
+                          - INTERVAL '1 day'))::INT) - 1)
                     + (basedate::time)::interval;
-                  EXIT;
                 ELSE
                   EXIT;
                 END IF;
