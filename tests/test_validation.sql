@@ -1397,6 +1397,82 @@ VALUES ('RSCALE Validation', 'RSCALE=HEBREW (should be rejected)',
     )
 );
 
+-- ============================================================================
+-- SECTION 11: INTERVAL Upper Bound Validation
+-- ============================================================================
+\echo ''
+\echo '--- Section 11: INTERVAL Upper Bound Validation ---'
+
+-- Test 11.1: INTERVAL=10000 at boundary (should be accepted)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=10000 (boundary, should be accepted)',
+    assert_rrule_accepted(
+        'INTERVAL=10000 accepted',
+        'FREQ=DAILY;INTERVAL=10000;COUNT=3',
+        1
+    )
+);
+
+-- Test 11.2: INTERVAL=10001 exceeds cap (should be rejected)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=10001 (should be rejected)',
+    assert_rrule_rejected(
+        'INTERVAL=10001 rejected',
+        'FREQ=DAILY;INTERVAL=10001;COUNT=3',
+        '%INTERVAL must not exceed 10000%'
+    )
+);
+
+-- Test 11.3: INTERVAL=1 regression check (should be accepted)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=1 (regression, should be accepted)',
+    assert_rrule_accepted(
+        'INTERVAL=1 regression',
+        'FREQ=DAILY;INTERVAL=1;COUNT=5',
+        5
+    )
+);
+
+-- Test 11.4: INTERVAL=10000 with WEEKLY (should be accepted)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=10000 WEEKLY (should be accepted)',
+    assert_rrule_accepted(
+        'INTERVAL=10000 WEEKLY accepted',
+        'FREQ=WEEKLY;INTERVAL=10000;COUNT=2',
+        1
+    )
+);
+
+-- Test 11.5: INTERVAL=10000 with MONTHLY (should be accepted)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=10000 MONTHLY (should be accepted)',
+    assert_rrule_accepted(
+        'INTERVAL=10000 MONTHLY accepted',
+        'FREQ=MONTHLY;INTERVAL=10000;COUNT=2',
+        1
+    )
+);
+
+-- Test 11.6: INTERVAL=10000 with YEARLY (should be accepted)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=10000 YEARLY (should be accepted)',
+    assert_rrule_accepted(
+        'INTERVAL=10000 YEARLY accepted',
+        'FREQ=YEARLY;INTERVAL=10000;COUNT=2',
+        1
+    )
+);
+
+-- Test 11.7: Very large INTERVAL (should be rejected)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('INTERVAL Upper Bound', 'INTERVAL=999999 (should be rejected)',
+    assert_rrule_rejected(
+        'INTERVAL=999999 rejected',
+        'FREQ=YEARLY;INTERVAL=999999;COUNT=1',
+        '%INTERVAL must not exceed 10000%'
+    )
+);
+
 ------------------------------------------------------------------------------------------------------
 -- Check if all tests passed
 ------------------------------------------------------------------------------------------------------
