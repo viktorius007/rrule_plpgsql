@@ -1215,13 +1215,13 @@ BEGIN
   -- Apply frequency-specific safety multipliers for sparse filter protection
   -- LEAST(..., 2147483647) guards against INT4 overflow when effective_max is large
   RETURN CASE frequency
-    WHEN 'DAILY'    THEN LEAST(effective_max * 40, 2147483647)   -- Sparse: BYMONTHDAY filters (1/31 days match)
-    WHEN 'WEEKLY'   THEN LEAST(effective_max * 10, 2147483647)   -- Sparse: monthly-pattern filters
-    WHEN 'HOURLY'   THEN LEAST(effective_max * 2, 2147483647)    -- Moderate: time-of-day filters
+    WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 40, 2147483647)::INT   -- Sparse: BYMONTHDAY filters (1/31 days match)
+    WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 10, 2147483647)::INT   -- Sparse: monthly-pattern filters
+    WHEN 'HOURLY'   THEN LEAST(effective_max::BIGINT * 2, 2147483647)::INT    -- Moderate: time-of-day filters
     WHEN 'MINUTELY' THEN LEAST(effective_max, 1440)  -- DoS protection: max 1 day
     WHEN 'SECONDLY' THEN LEAST(effective_max, 3600)  -- DoS protection: max 1 hour
-    WHEN 'MONTHLY'  THEN GREATEST(LEAST(effective_max * 20, 2147483647), 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years
-    WHEN 'YEARLY'   THEN LEAST(effective_max * 10, 2147483647)   -- Sparse: BYYEARDAY/BYWEEKNO/BYDAY filters
+    WHEN 'MONTHLY'  THEN GREATEST(LEAST(effective_max::BIGINT * 20, 2147483647)::INT, 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years
+    WHEN 'YEARLY'   THEN LEAST(effective_max::BIGINT * 10, 2147483647)::INT   -- Sparse: BYYEARDAY/BYWEEKNO/BYDAY filters
     ELSE effective_max                         -- Fallback: no multiplier
   END;
 END;
