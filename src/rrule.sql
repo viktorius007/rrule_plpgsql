@@ -2436,6 +2436,8 @@ DECLARE
     before_utc TIMESTAMPTZ;
     maxdate_utc TIMESTAMPTZ;
     tzid TEXT;
+    scan_count BIGINT;
+    has_bound BOOLEAN;
 BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
     IF rrule_string IS NULL THEN
@@ -2452,6 +2454,9 @@ BEGIN
     -- Validate TZID if provided (using centralized validation helper)
     PERFORM rrule.validate_timezone(tzid);
 
+    -- Check if the rule has a natural bound (COUNT or UNTIL)
+    has_bound := (rrule_string ~* '(^|;)COUNT=' OR rrule_string ~* '(^|;)UNTIL=');
+
     -- Optimized: call range function with before_date as maxdate
     -- This avoids scanning beyond the boundary (up to 10 years)
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
@@ -2459,15 +2464,15 @@ BEGIN
     -- Add 1 day buffer when inc=true so the range function generates the boundary period
     maxdate_utc := before_utc + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END;
 
-    -- Remove the 1000 cap so maxdate is the effective bound.
-    -- before_date already caps the range, and the 10-year window / period_limit
-    -- in the generator prevent unbounded iteration.
+    -- before() must scan all occurrences up to before_date to find the last one,
+    -- so we pass a large output_limit to avoid truncation by the generator.
     -- Note: rrule_event_instances_range is STRICT (NULL returns no rows), so we
     -- pass 50000000 which is large enough to be uncapped yet safe from integer
     -- overflow in calculate_safe_iteration_limit (max multiplier 40x = 2B < INT_MAX).
-    SELECT occurrence INTO previous_occurrence
+    SELECT occurrence, cnt INTO previous_occurrence, scan_count
     FROM (
-        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence
+        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence,
+               COUNT(*) OVER () AS cnt
         FROM rrule.rrule_event_instances_range(
             dtstart_utc,
             rrule_string,
@@ -2482,6 +2487,12 @@ BEGIN
     END
     ORDER BY occurrence DESC
     LIMIT 1;
+
+    -- Warn when before() scanned many occurrences on an unbounded rule,
+    -- matching the safety warning that all() and between() emit at 1000.
+    IF NOT has_bound AND scan_count IS NOT NULL AND scan_count > 1000 THEN
+        RAISE WARNING 'rrule: before() scanned % occurrences to find the last match. The recurrence rule has no COUNT or UNTIL and produced many results. Consider adding bounds to the rule.', scan_count;
+    END IF;
 
     RETURN previous_occurrence;
 END;
@@ -3175,6 +3186,8 @@ DECLARE
     wall_clock_before TIMESTAMP;
     naive_occurrence TIMESTAMP;
     results TIMESTAMPTZ[];
+    scan_count BIGINT := 0;
+    has_bound BOOLEAN;
 BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
     IF rrule_string IS NULL THEN
@@ -3195,6 +3208,9 @@ BEGIN
     -- Validate timezone (using centralized validation helper)
     PERFORM rrule.validate_timezone(tz_name);
 
+    -- Check if the rule has a natural bound (COUNT or UNTIL)
+    has_bound := (rrule_string ~* '(^|;)COUNT=' OR rrule_string ~* '(^|;)UNTIL=');
+
     -- Validate count
     IF count IS NOT NULL AND count <= 0 THEN
       RETURN;
@@ -3210,7 +3226,7 @@ BEGIN
     -- Generate occurrences up to before_date, keeping only the last N in a sliding window.
     -- This caps memory at O(count) instead of O(N) for rules with many occurrences.
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
-    -- Remove the 1000 cap so maxdate is the effective bound (fixes correctness for >1000 occurrences).
+    -- before() must scan all occurrences to find the last N, so we pass a large output_limit.
     -- Use 50000000 (safe from integer overflow in calculate_safe_iteration_limit's 40x multiplier).
     results := ARRAY[]::TIMESTAMPTZ[];
     FOR naive_occurrence IN
@@ -3222,6 +3238,7 @@ BEGIN
             50000000
         )
     LOOP
+        scan_count := scan_count + 1;
         IF inc THEN
             IF naive_occurrence > wall_clock_before THEN
                 CONTINUE;
@@ -3237,6 +3254,12 @@ BEGIN
             results := results[array_length(results, 1) - count + 1 : array_length(results, 1)];
         END IF;
     END LOOP;
+
+    -- Warn when before() scanned many occurrences on an unbounded rule,
+    -- matching the safety warning that all() and between() emit at 1000.
+    IF NOT has_bound AND scan_count > 1000 THEN
+        RAISE WARNING 'rrule: before() scanned % occurrences to find the last match. The recurrence rule has no COUNT or UNTIL and produced many results. Consider adding bounds to the rule.', scan_count;
+    END IF;
 
     -- Return all collected results (already trimmed to at most count elements)
     IF array_length(results, 1) IS NOT NULL THEN

@@ -6372,6 +6372,110 @@ SELECT
         ))
     );
 
+-- ============================================================================
+-- SECTION 34: before() Safety Warning Tests
+-- ============================================================================
+\echo ''
+\echo '=================================================='
+\echo 'Testing before() safety warning for unbounded rules'
+\echo '=================================================='
+
+-- Test 34.1: TIMESTAMP before() with unbounded rule scanning >1000 occurrences
+-- FREQ=DAILY from 2020-01-01 before 2025-01-01 = ~1826 occurrences (no COUNT/UNTIL)
+-- Should return 2024-12-31 AND emit a warning
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Warning',
+    'Test 34.1: TIMESTAMP before() unbounded rule >1000 occurrences returns correct result',
+    assert_equals(
+        'before() unbounded >1000',
+        '2024-12-31 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))::TEXT
+    );
+
+-- Test 34.2: TIMESTAMP before() with bounded rule (COUNT) - no warning
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Warning',
+    'Test 34.2: TIMESTAMP before() bounded rule (COUNT=500) returns correct result',
+    assert_equals(
+        'before() bounded COUNT=500',
+        '2021-05-14 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=500',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))::TEXT
+    );
+
+-- Test 34.3: TIMESTAMP before() with bounded rule (UNTIL) - no warning
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Warning',
+    'Test 34.3: TIMESTAMP before() bounded rule (UNTIL) returns correct result',
+    assert_equals(
+        'before() bounded UNTIL',
+        '2021-06-30 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;UNTIL=20210630T235959Z',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))::TEXT
+    );
+
+-- Test 34.4: TIMESTAMPTZ before() with unbounded rule scanning >1000 occurrences
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Warning',
+    'Test 34.4: TIMESTAMPTZ before() unbounded rule >1000 occurrences returns correct result',
+    assert_equals(
+        'before() TZ unbounded >1000',
+        '2024-12-31 05:00:00+00',
+        (SELECT (rrule."before"(
+            'FREQ=DAILY',
+            '2020-01-01 00:00:00-05'::TIMESTAMPTZ,
+            '2025-01-01 00:00:00-05'::TIMESTAMPTZ,
+            1,
+            'America/New_York'
+        ))::TEXT)
+    );
+
+-- Test 34.5: TIMESTAMPTZ before() with bounded rule - no warning
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Warning',
+    'Test 34.5: TIMESTAMPTZ before() bounded rule (COUNT=100) returns correct result',
+    assert_equals(
+        'before() TZ bounded COUNT=100',
+        '2020-04-09 04:00:00+00',
+        (SELECT (rrule."before"(
+            'FREQ=DAILY;COUNT=100',
+            '2020-01-01 00:00:00-05'::TIMESTAMPTZ,
+            '2025-01-01 00:00:00-05'::TIMESTAMPTZ,
+            1,
+            'America/New_York'
+        ))::TEXT)
+    );
+
+-- Test 34.6: TIMESTAMP before() with small unbounded rule (<= 1000) - no warning
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() Warning',
+    'Test 34.6: TIMESTAMP before() unbounded rule <=1000 occurrences returns correct result',
+    assert_equals(
+        'before() unbounded <=1000',
+        '2024-12-25 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=WEEKLY',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))::TEXT
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE
