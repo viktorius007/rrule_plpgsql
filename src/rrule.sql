@@ -1834,18 +1834,24 @@ BEGIN
   -- See DECISIONS.md #5.
   IF rule.bymonth IS NOT NULL THEN
     -- BYMONTH primary
+    -- Pass NULL max_results when post-filters may reject candidates
     OPEN curse SCROLL FOR
       SELECT r
-      FROM rrule.rrule_yearly_bymonth_set(after_ts, rr, max_results) r
+      FROM rrule.rrule_yearly_bymonth_set(after_ts, rr,
+        CASE WHEN rule.byweekno IS NOT NULL OR rule.byyearday IS NOT NULL
+             THEN NULL ELSE max_results END) r
       WHERE (rule.byweekno IS NULL OR rrule.byweekno_matches_for_year(r, year_start, rule.wkst, rule.byweekno))
         AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
       ORDER BY 1;
 
   ELSIF rule.byweekno IS NOT NULL THEN
     -- BYWEEKNO primary
+    -- Pass NULL max_results when post-filters may reject candidates
     OPEN curse SCROLL FOR
       SELECT r
-      FROM rrule.rrule_yearly_byweekno_set(after_ts, rule, max_results) r
+      FROM rrule.rrule_yearly_byweekno_set(after_ts, rule,
+        CASE WHEN rule.byyearday IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
+             THEN NULL ELSE max_results END) r
       WHERE (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
         AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
         AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
@@ -1853,9 +1859,12 @@ BEGIN
 
   ELSIF rule.byyearday IS NOT NULL THEN
     -- BYYEARDAY primary (pass rule, not rr, because rr has byyearday nulled out)
+    -- Pass NULL max_results when post-filters may reject candidates
     OPEN curse SCROLL FOR
       SELECT r
-      FROM rrule.rrule_yearly_byyearday_set(after_ts, rule, max_results) r
+      FROM rrule.rrule_yearly_byyearday_set(after_ts, rule,
+        CASE WHEN rule.bymonth IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
+             THEN NULL ELSE max_results END) r
       WHERE (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
         AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
         AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
