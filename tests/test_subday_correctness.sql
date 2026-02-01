@@ -447,13 +447,14 @@ ORDER BY test_category;
 \echo '=================================================='
 
 -- MONTHLY SKIP=FORWARD with non-midnight dtstart should preserve time component
+-- Feb FORWARD→Mar 1, Mar restores to 31st (no drift). Both within range.
 INSERT INTO subday_test_results (test_category, test_name, status)
 SELECT
     'SKIP=FORWARD Time Preservation',
     'MONTHLY SKIP=FORWARD preserves time via TIMESTAMPTZ API (subday)',
     assert_occurrences_equal(
         'MONTHLY SKIP=FORWARD preserves time via TIMESTAMPTZ API (subday)',
-        ARRAY['2025-03-01 14:30:00']::TIMESTAMP[],
+        ARRAY['2025-03-01 14:30:00','2025-03-31 14:30:00']::TIMESTAMP[],
         actual
     )
 FROM (

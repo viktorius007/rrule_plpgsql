@@ -1779,13 +1779,14 @@ FROM tz_api_test_results;
 \echo '=================================================='
 
 -- MONTHLY SKIP=FORWARD with non-midnight dtstart should preserve time component
+-- Feb FORWARD→Mar 1, Mar restores to 31st (no drift). Both within range.
 INSERT INTO tz_api_test_results (test_suite, test_name, passed, actual, expected)
 SELECT
     'SKIP=FORWARD Time',
     'MONTHLY SKIP=FORWARD preserves time via TIMESTAMPTZ API',
-    actual_val = ARRAY['2025-03-01 14:30:00']::TIMESTAMP[],
+    actual_val = ARRAY['2025-03-01 14:30:00','2025-03-31 14:30:00']::TIMESTAMP[],
     actual_val::TEXT,
-    '{2025-03-01 14:30:00}'
+    '{2025-03-01 14:30:00,2025-03-31 14:30:00}'
 FROM (
     SELECT array_agg(d ORDER BY d) AS actual_val
     FROM (
@@ -1853,6 +1854,162 @@ SELECT
         'America/New_York'
     ))::TEXT,
     'true';
+
+-- ================================================================================================================
+-- TEST SUITE 17: YEARLY SKIP Drift Prevention (TIMESTAMPTZ API)
+-- ================================================================================================================
+\echo ''
+\echo '=================================================='
+\echo 'TEST SUITE 17: YEARLY SKIP Drift Prevention (TIMESTAMPTZ API)'
+\echo '=================================================='
+\echo ''
+
+-- Test 17.1: YEARLY SKIP=FORWARD from leap day via TIMESTAMPTZ API
+-- Each year re-attempts Feb 29. Non-leap years forward to Mar 1.
+-- Leap year 2028 restores to Feb 29 — no cumulative drift.
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2024-02-29 10:00:00 EST',
+        '2025-03-01 10:00:00 EST',
+        '2026-03-01 10:00:00 EST',
+        '2027-03-01 10:00:00 EST',
+        '2028-02-29 10:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=YEARLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=5',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'YEARLY SKIP Drift TZ',
+        'YEARLY SKIP=FORWARD from Feb 29 preserves wall-clock (TZ)',
+        result_count = 5 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '5 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- Test 17.2: YEARLY SKIP=OMIT from leap day via TIMESTAMPTZ API
+-- Mirrors Gap 2: only leap years produce results (3 within 10-year window)
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2024-02-29 10:00:00 EST',
+        '2028-02-29 10:00:00 EST',
+        '2032-02-29 10:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=YEARLY;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=5',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'YEARLY SKIP Drift TZ',
+        'YEARLY SKIP=OMIT from Feb 29 returns only leap years (TZ)',
+        result_count = 3 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '3 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- ================================================================================================================
+-- TEST SUITE 18: MONTHLY SKIP Drift Prevention (TIMESTAMPTZ API)
+-- ================================================================================================================
+\echo ''
+\echo '=================================================='
+\echo 'TEST SUITE 18: MONTHLY SKIP Drift Prevention (TIMESTAMPTZ API)'
+\echo '=================================================='
+\echo ''
+
+-- Test 18.1: MONTHLY INTERVAL=3 SKIP=OMIT from Jan 31 via TIMESTAMPTZ API
+-- Mirrors Gap 4: OMIT advances by rule.interval months
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2025-01-31 10:00:00 EST',
+        '2025-07-31 10:00:00 EDT',
+        '2025-10-31 10:00:00 EDT',
+        '2026-01-31 10:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=MONTHLY;INTERVAL=3;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=4',
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY SKIP Drift TZ',
+        'MONTHLY INTERVAL=3 SKIP=OMIT from Jan 31 (TZ)',
+        result_count = 4 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '4 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- Test 18.2: MONTHLY SKIP=FORWARD from Jan 31 via TIMESTAMPTZ API
+-- Each month re-attempts day 31. Feb forwards to Mar 1 (can't hold 31).
+-- Mar restores to 31. Apr forwards to May 1 (can't hold 31). No cumulative drift.
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2025-01-31 10:00:00 EST',
+        '2025-03-01 10:00:00 EST',
+        '2025-03-31 10:00:00 EDT',
+        '2025-05-01 10:00:00 EDT'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=MONTHLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=4',
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY SKIP Drift TZ',
+        'MONTHLY SKIP=FORWARD from Jan 31 (TZ)',
+        result_count = 4 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '4 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
 
 -- Fail transaction if any tests failed
 DO $$

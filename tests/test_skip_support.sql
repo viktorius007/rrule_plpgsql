@@ -391,10 +391,9 @@ VALUES ('MONTHLY SKIP=OMIT drift prevention (Jan 31)',
 );
 
 -- Test 18: MONTHLY SKIP=FORWARD drift prevention (Jan 31 start, no BYMONTHDAY)
--- Without BYMONTHDAY, SKIP=FORWARD advances the current date by one month.
--- When the resulting day doesn't exist (e.g., Feb 31), it forwards to the 1st
--- of the following month. Subsequent iterations advance from that forwarded
--- date, not from dtstart's original day.
+-- Each month attempts dtstart_day (31). When it doesn't exist (Feb, Apr, Jun),
+-- SKIP=FORWARD advances to the 1st of the following month. Months that CAN hold
+-- day 31 (Mar, May, Jul) restore to the 31st — no cumulative drift.
 INSERT INTO skip_test_results (test_name, status)
 VALUES ('MONTHLY SKIP=FORWARD drift prevention (Jan 31)',
     assert_occurrences_equal(
@@ -402,12 +401,33 @@ VALUES ('MONTHLY SKIP=FORWARD drift prevention (Jan 31)',
         ARRAY[
             '2025-01-31 10:00:00'::TIMESTAMP,
             '2025-03-01 10:00:00'::TIMESTAMP,
-            '2025-05-01 10:00:00'::TIMESTAMP,
-            '2025-07-01 10:00:00'::TIMESTAMP
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-05-01 10:00:00'::TIMESTAMP
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;SKIP=FORWARD;COUNT=4',
             '2025-01-31 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 19: YEARLY SKIP=FORWARD drift prevention (Feb 29 leap year start)
+-- Each year re-attempts Feb 29. Non-leap years forward to Mar 1.
+-- Leap years (2028) restore to Feb 29 — no cumulative drift.
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY SKIP=FORWARD drift prevention (Feb 29)',
+    assert_occurrences_equal(
+        'YEARLY FORWARD drift',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP,
+            '2026-03-01 10:00:00'::TIMESTAMP,
+            '2027-03-01 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=FORWARD;COUNT=5',
+            '2024-02-29 10:00:00'::TIMESTAMP
         ) AS occurrence)
     )
 );

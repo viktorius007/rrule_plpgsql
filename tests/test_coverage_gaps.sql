@@ -1569,13 +1569,14 @@ SELECT
     );
 
 -- Test 13.4: MONTHLY INTERVAL=2 with SKIP=FORWARD
+-- Periods: Jan, Mar, May, Jul, Sep (FORWARD→Oct 1), Nov (FORWARD→Dec 1)
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'MONTHLY INTERVAL>1 + SKIP',
     'Test 13.4: MONTHLY INTERVAL=2 SKIP=FORWARD from Jan 31',
     assert_equals(
         'Bi-monthly SKIP=FORWARD',
-        '{"2025-01-31 00:00:00","2025-03-31 00:00:00","2025-05-31 00:00:00","2025-07-31 00:00:00","2025-10-01 00:00:00","2025-12-31 00:00:00"}',
+        '{"2025-01-31 00:00:00","2025-03-31 00:00:00","2025-05-31 00:00:00","2025-07-31 00:00:00","2025-10-01 00:00:00","2025-12-01 00:00:00"}',
         (SELECT array_agg(d ORDER BY d) FROM rrule."all"(
             'FREQ=MONTHLY;INTERVAL=2;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=6',
             '2025-01-31 00:00:00'::TIMESTAMP
@@ -2588,6 +2589,3448 @@ SELECT
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=MONTHLY;BYDAY=1MO,3FR;COUNT=6',
             '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- SECTION 24: Code Path Coverage Gap Tests
+-- Tests targeting untested branches identified by cross-referencing
+-- src/rrule.sql code paths against existing test suites.
+-- ============================================================================
+\echo ''
+\echo '--- Section 24: Code Path Coverage Gap Tests ---'
+
+-- ============================================================================
+-- 24.1: YEARLY SKIP=FORWARD drift prevention (no BYMONTHDAY/BYDAY)
+-- Code: rrule.sql:2099-2106 — Feb 29 dtstart + FORWARD could produce wrong month
+-- ============================================================================
+
+-- Test 24.1a: YEARLY SKIP=FORWARD from leap day
+-- 2024 leap, 2025-2027 non-leap (forward to Mar 1), 2028 leap (restores to Feb 29)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY SKIP Drift',
+    'Test 24.1a: YEARLY SKIP=FORWARD from Feb 29 dtstart',
+    assert_occurrences_equal(
+        'YEARLY SKIP=FORWARD leap drift',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP,
+            '2026-03-01 10:00:00'::TIMESTAMP,
+            '2027-03-01 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=5',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.2: YEARLY SKIP=OMIT drift prevention (no BYMONTHDAY/BYDAY)
+-- Code: rrule.sql:2099-2102 — only leap years produce results
+-- ============================================================================
+
+-- Test 24.2a: YEARLY SKIP=OMIT from leap day — only leap years
+-- COUNT=5 but only 3 leap years within 10-year window (2024, 2028, 2032)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY SKIP Drift',
+    'Test 24.2a: YEARLY SKIP=OMIT from Feb 29 (leap years only)',
+    assert_occurrences_equal(
+        'YEARLY SKIP=OMIT leap only',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP,
+            '2032-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=5',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 24.2b: YEARLY INTERVAL=2 SKIP=OMIT from leap day
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY SKIP Drift',
+    'Test 24.2b: YEARLY INTERVAL=2 SKIP=OMIT from Feb 29',
+    assert_occurrences_equal(
+        'YEARLY INTERVAL=2 SKIP=OMIT',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP,
+            '2032-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=3',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.3: SKIP=FORWARD deduplication in rrule_month_bymonthday_set()
+-- Code: rrule.sql:773-777 — multiple overflow values map to same date
+-- ============================================================================
+
+-- Test 24.3: MONTHLY BYMONTHDAY=29,30,31 SKIP=FORWARD — Feb overflow dedup
+-- In Feb 2025 (28 days): 29,30,31 all overflow to Mar 1 — deduplication produces single Mar 1.
+-- This tests the seen_dates dedup logic in rrule_month_bymonthday_set (lines 773-777).
+-- Jan: 29,30,31. Feb: all 3 overflow -> Mar 1 (deduped). Mar: 29,30,31. Apr: 29,30, May 1 (30 overflow).
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'SKIP FORWARD Dedup',
+    'Test 24.3: MONTHLY BYMONTHDAY=29,30,31 SKIP=FORWARD dedup in Feb',
+    assert_occurrences_equal(
+        'SKIP FORWARD dedup Feb',
+        ARRAY[
+            '2025-01-29 00:00:00'::TIMESTAMP,
+            '2025-01-30 00:00:00'::TIMESTAMP,
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-29 00:00:00'::TIMESTAMP,
+            '2025-03-30 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-04-29 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=29,30,31;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=8',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.4: MONTHLY SKIP=OMIT with INTERVAL>1
+-- Code: rrule.sql:2054-2058 — OMIT advances by rule.interval months
+-- ============================================================================
+
+-- Test 24.4a: MONTHLY INTERVAL=3 SKIP=OMIT from Jan 31
+-- Jan 31 ok, Apr 30<31 OMIT, Jul 31 ok, Oct 31 ok, 2026-Jan 31 ok
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY SKIP OMIT INTERVAL',
+    'Test 24.4a: MONTHLY INTERVAL=3 SKIP=OMIT from Jan 31',
+    assert_occurrences_equal(
+        'MONTHLY INTERVAL=3 SKIP=OMIT',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP,
+            '2025-10-31 00:00:00'::TIMESTAMP,
+            '2026-01-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=3;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=4',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 24.4b: MONTHLY INTERVAL=2 SKIP=OMIT from Jan 31 (all months have 31 days)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY SKIP OMIT INTERVAL',
+    'Test 24.4b: MONTHLY INTERVAL=2 SKIP=OMIT from Jan 31 (all 31-day months)',
+    assert_occurrences_equal(
+        'MONTHLY INTERVAL=2 SKIP=OMIT all-31',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=4',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.5: YEARLY + BYMONTH + BYYEARDAY intersection filter
+-- Code: rrule.sql:1841 — intersection semantics untested
+-- ============================================================================
+
+-- Test 24.5: YEARLY BYMONTH=4 BYYEARDAY=100 intersection
+-- Day 100 of 2025 = Apr 10. BYMONTH=4 generates Apr 1 (dtstart day=1).
+-- BYYEARDAY=100 filter on Apr 1 -> no match. Verifies the intersection filter
+-- correctly rejects non-matching BYYEARDAY when BYMONTH is primary.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.5: YEARLY BYMONTH=4 BYYEARDAY=100 intersection (no match)',
+    assert_equals(
+        'BYMONTH+BYYEARDAY intersection empty',
+        '0',
+        (SELECT COUNT(*)::TEXT FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=4;BYYEARDAY=100',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2027-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ))
+    );
+
+-- ============================================================================
+-- 24.6: YEARLY + BYMONTH + BYWEEKNO intersection filter
+-- Code: rrule.sql:1840 — week-year boundary could exclude valid dates
+-- ============================================================================
+
+-- Test 24.6: YEARLY BYMONTH=1 BYWEEKNO=2 BYDAY=MO,FR
+-- ISO week 2 of 2025: Jan 6-12. Mon Jan 6, Fri Jan 10.
+-- ISO week 2 of 2026: Jan 5-11. Mon Jan 5, Fri Jan 9.
+-- Use between() to avoid COUNT semantics affecting result count.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.6: YEARLY BYMONTH=1 BYWEEKNO=2 BYDAY=MO,FR',
+    assert_occurrences_equal(
+        'BYMONTH+BYWEEKNO+BYDAY intersection',
+        ARRAY[
+            '2025-01-06 00:00:00'::TIMESTAMP,
+            '2025-01-10 00:00:00'::TIMESTAMP,
+            '2026-01-05 00:00:00'::TIMESTAMP,
+            '2026-01-09 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=1;BYWEEKNO=2;BYDAY=MO,FR',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2026-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.7: YEARLY + BYWEEKNO + BYYEARDAY intersection filter
+-- Code: rrule.sql:1849 — rare combination, filter logic untested
+-- ============================================================================
+
+-- Test 24.7: YEARLY BYWEEKNO=1 BYDAY=MO,TU,WE,TH,FR BYYEARDAY=1,2,3
+-- ISO week 1 of 2025: Dec 30 2024 - Jan 5 2025. Yeardays 1-3 = Jan 1-3.
+-- Weekdays in ISO week 1 AND yearday 1-3: Jan 1 (Wed), Jan 2 (Thu), Jan 3 (Fri)
+-- 2026: ISO wk1 includes Jan 1 (Thu) and Jan 2 (Fri). Both are yeardays 1-2.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.7: YEARLY BYWEEKNO=1 BYDAY=weekdays BYYEARDAY=1,2,3',
+    assert_occurrences_equal(
+        'BYWEEKNO+BYDAY+BYYEARDAY intersection',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP,
+            '2026-01-01 00:00:00'::TIMESTAMP,
+            '2026-01-02 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR;BYYEARDAY=1,2,3;COUNT=5',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.8: YEARLY + BYWEEKNO + BYMONTHDAY intersection filter
+-- Code: rrule.sql:1850 — test_bymonthday_rule untested in this context
+-- ============================================================================
+
+-- Test 24.8: YEARLY BYWEEKNO=1 BYDAY=MO,TU,WE,TH,FR BYMONTHDAY=1
+-- ISO week 1 weekdays filtered to 1st of month.
+-- 2025: Jan 1 (Wed, ISO wk1). 2026: Jan 1 (Thu, ISO wk1).
+-- 2027-2028: Jan 1 not in ISO wk1. 2029: Jan 1 (Mon, ISO wk1). 2030: Jan 1 (Tue, ISO wk1).
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.8: YEARLY BYWEEKNO=1 BYDAY=weekdays BYMONTHDAY=1',
+    assert_occurrences_equal(
+        'BYWEEKNO+BYDAY+BYMONTHDAY intersection',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2026-01-01 00:00:00'::TIMESTAMP,
+            '2029-01-01 00:00:00'::TIMESTAMP,
+            '2030-01-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR;BYMONTHDAY=1',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2030-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.9: YEARLY generate_series(1,12) with BYDAY+BYMONTHDAY (no BYMONTH)
+-- Code: rrule.sql:1872-1882 — INTERSECT via monthly_set untested from yearly
+-- ============================================================================
+
+-- Test 24.9: YEARLY BYDAY=MO BYMONTHDAY=13 — "Monday the 13th"
+-- 2025: Check all 12 months for Monday the 13th.
+-- Jan 13 = Mon, Oct 13 = Mon. Other 13ths are not Monday.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY generate_series Path',
+    'Test 24.9: YEARLY BYDAY=MO BYMONTHDAY=13 (Monday the 13th)',
+    assert_occurrences_equal(
+        'Monday the 13th',
+        ARRAY[
+            '2025-01-13 00:00:00'::TIMESTAMP,
+            '2025-10-13 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=YEARLY;BYDAY=MO;BYMONTHDAY=13',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.10: YEARLY BYMONTH SKIP=FORWARD with day-31 dtstart (day overflow)
+-- Code: rrule_yearly_bymonth_set:1616-1621
+-- ============================================================================
+
+-- Test 24.10: YEARLY BYMONTH=2,4 SKIP=FORWARD from Jan 31
+-- Feb 31 overflows -> Mar 1, Apr 31 overflows -> May 1
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYMONTH SKIP Overflow',
+    'Test 24.10: YEARLY BYMONTH=2,4 SKIP=FORWARD day 31 overflow',
+    assert_occurrences_equal(
+        'YEARLY BYMONTH SKIP=FORWARD overflow',
+        ARRAY[
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-05-01 00:00:00'::TIMESTAMP,
+            '2026-03-01 00:00:00'::TIMESTAMP,
+            '2026-05-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=2,4;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=4',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.11: YEARLY BYMONTH SKIP=OMIT with dtstart overflow
+-- Code: rrule_yearly_bymonth_set:1622-1623
+-- ============================================================================
+
+-- Test 24.11: YEARLY BYMONTH=1,2,3 SKIP=OMIT from Jan 31
+-- Jan 31 ok, Feb 31 OMIT (skip), Mar 31 ok
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYMONTH SKIP Overflow',
+    'Test 24.11: YEARLY BYMONTH=1,2,3 SKIP=OMIT day 31 overflow',
+    assert_occurrences_equal(
+        'YEARLY BYMONTH SKIP=OMIT overflow',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2026-01-31 00:00:00'::TIMESTAMP,
+            '2026-03-31 00:00:00'::TIMESTAMP,
+            '2027-01-31 00:00:00'::TIMESTAMP,
+            '2027-03-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=1,2,3;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=6',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.12: Year-scope BYDAY with negative ordinals beyond -1
+-- Code: rrule_year_byday_set:628-637 — off-by-one in week subtraction
+-- ============================================================================
+
+-- Test 24.12a: YEARLY BYDAY=-3FR — 3rd-to-last Friday of each year
+-- 2025: Last Friday = Dec 26. -2 = Dec 19. -3 = Dec 12.
+-- 2026: Last Friday = Dec 25. -2 = Dec 18. -3 = Dec 11.
+-- 2027: Last Friday = Dec 31. -2 = Dec 24. -3 = Dec 17.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Deep Negative',
+    'Test 24.12a: YEARLY BYDAY=-3FR (3rd-to-last Friday)',
+    assert_occurrences_equal(
+        'BYDAY=-3FR',
+        ARRAY[
+            '2025-12-12 00:00:00'::TIMESTAMP,
+            '2026-12-11 00:00:00'::TIMESTAMP,
+            '2027-12-17 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3FR;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 24.12b: YEARLY BYDAY=-2MO — 2nd-to-last Monday of each year
+-- 2025: Last Monday = Dec 29. -2 = Dec 22.
+-- 2026: Last Monday = Dec 28. -2 = Dec 21.
+-- 2027: Last Monday = Dec 27. -2 = Dec 20.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Deep Negative',
+    'Test 24.12b: YEARLY BYDAY=-2MO (2nd-to-last Monday)',
+    assert_occurrences_equal(
+        'BYDAY=-2MO',
+        ARRAY[
+            '2025-12-22 00:00:00'::TIMESTAMP,
+            '2026-12-21 00:00:00'::TIMESTAMP,
+            '2027-12-20 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2MO;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.13: BYMONTH deduplication (BYMONTH=3,3) in yearly_bymonth_set
+-- Code: rrule.sql:1595-1597 — duplicate months double results
+-- ============================================================================
+
+-- Test 24.13: YEARLY BYMONTH=3,3 — duplicate should not double results
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTH Dedup',
+    'Test 24.13: YEARLY BYMONTH=3,3 does not double results',
+    assert_occurrences_equal(
+        'BYMONTH=3,3 dedup',
+        ARRAY[
+            '2025-03-15 00:00:00'::TIMESTAMP,
+            '2026-03-15 00:00:00'::TIMESTAMP,
+            '2027-03-15 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=3,3;COUNT=3',
+            '2025-03-15 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.14: Warning emission when output_limit hit
+-- Code: rrule.sql:2142-2147 — truncation warning
+-- PostgreSQL RAISE WARNING cannot be captured in PL/pgSQL. We verify the cap
+-- behavior by checking that an unbounded rule returns exactly 1000 results.
+-- This is already tested in 14.5/21.4 but we add a YEARLY variant.
+-- ============================================================================
+
+-- Test 24.14: YEARLY with no COUNT/UNTIL hits 10-year window cap
+-- Produces exactly 10 results (2025-2034 inclusive)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'API Limit Warning',
+    'Test 24.14: YEARLY no COUNT/UNTIL caps at 10-year window',
+    assert_equals(
+        'YEARLY 10-year cap',
+        '10',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=YEARLY',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))
+    );
+
+-- ============================================================================
+-- 24.15: YEARLY SKIP=FORWARD recovers to dtstart day on subsequent leap years
+-- Verify that after FORWARD adjustment in a non-leap year, the next leap year
+-- returns to Feb 29 (no cumulative drift).
+-- ============================================================================
+
+-- Test 24.15: YEARLY SKIP=FORWARD drift prevention — recovers to Feb 29
+-- After FORWARD adjustment (Feb 29 -> Mar 1), the next iteration resets to
+-- dtstart month+day (Feb 29). Non-leap years forward to Mar 1; leap years
+-- restore to Feb 29. The 5th occurrence is 2028-02-29.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY SKIP Drift',
+    'Test 24.15: YEARLY SKIP=FORWARD recovers on leap year (Feb 29)',
+    assert_equals(
+        'FORWARD drift recovery',
+        '2028-02-29 10:00:00',
+        (SELECT (array_agg(occurrence ORDER BY occurrence))[5]::TEXT FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=5',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.16: MONTHLY SKIP=OMIT with INTERVAL=1 skips short months correctly
+-- Verify basic OMIT behavior: day 31 in months with <31 days are skipped.
+-- ============================================================================
+
+-- Test 24.16: MONTHLY INTERVAL=1 SKIP=OMIT from Jan 31
+-- Jan 31 ok, Feb OMIT, Mar 31 ok, Apr OMIT, May 31 ok, Jun OMIT
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY SKIP OMIT INTERVAL',
+    'Test 24.16: MONTHLY INTERVAL=1 SKIP=OMIT from Jan 31',
+    assert_occurrences_equal(
+        'MONTHLY INTERVAL=1 SKIP=OMIT',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP,
+            '2025-08-31 00:00:00'::TIMESTAMP,
+            '2025-10-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=6',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.16b: YEARLY BYMONTH+BYWEEKNO+BYDAY COUNT regression (post-filter limiting)
+-- Bug: yearly_set() passed max_results to inner set function, but post-filter
+-- WHERE clauses (BYWEEKNO) rejected candidates after the limit was applied,
+-- returning fewer results than COUNT requested.
+-- ============================================================================
+
+-- Test 24.16b: YEARLY BYMONTH+BYWEEKNO+BYDAY COUNT=4 returns exactly 4 results
+-- BYMONTH=1 generates January dates, BYWEEKNO=2 filters to ISO week 2,
+-- BYDAY=MO,FR selects Monday and Friday within that week.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Post-Filter Limit',
+    'Test 24.16b: YEARLY BYMONTH+BYWEEKNO+BYDAY COUNT=4 not truncated',
+    assert_equals(
+        'Post-filter COUNT regression',
+        '4',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=1;BYWEEKNO=2;BYDAY=MO,FR;COUNT=4',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))
+    );
+
+-- ============================================================================
+-- 24.17: YEARLY BYDAY=-4SA — deeper negative ordinal
+-- ============================================================================
+
+-- Test 24.17: YEARLY BYDAY=-4SA (4th-to-last Saturday)
+-- 2025: Last Sat = Dec 27. -2 = Dec 20. -3 = Dec 13. -4 = Dec 6.
+-- 2026: Last Sat = Dec 26. -2 = Dec 19. -3 = Dec 12. -4 = Dec 5.
+-- 2027: Last Sat = Dec 25. -2 = Dec 18. -3 = Dec 11. -4 = Dec 4.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Deep Negative',
+    'Test 24.17: YEARLY BYDAY=-4SA (4th-to-last Saturday)',
+    assert_occurrences_equal(
+        'BYDAY=-4SA',
+        ARRAY[
+            '2025-12-06 00:00:00'::TIMESTAMP,
+            '2026-12-05 00:00:00'::TIMESTAMP,
+            '2027-12-04 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4SA;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.18: YEARLY BYMONTH SKIP=BACKWARD with day overflow (complementary)
+-- Code: rrule_yearly_bymonth_set:1609-1615
+-- This path is partially tested in 11.7 but only for BYMONTH=2.
+-- Test with multiple BYMONTH values including overflow months.
+-- ============================================================================
+
+-- Test 24.18: YEARLY BYMONTH=2,4 SKIP=BACKWARD from Jan 31
+-- Feb 31 -> Feb 28, Apr 31 -> Apr 30
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYMONTH SKIP Overflow',
+    'Test 24.18: YEARLY BYMONTH=2,4 SKIP=BACKWARD day 31 overflow',
+    assert_occurrences_equal(
+        'YEARLY BYMONTH SKIP=BACKWARD overflow',
+        ARRAY[
+            '2025-02-28 00:00:00'::TIMESTAMP,
+            '2025-04-30 00:00:00'::TIMESTAMP,
+            '2026-02-28 00:00:00'::TIMESTAMP,
+            '2026-04-30 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=2,4;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=4',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- 24.19: YEARLY + BYMONTH + BYYEARDAY non-matching intersection (empty result)
+-- Verify that conflicting BYMONTH and BYYEARDAY correctly produce no results
+-- ============================================================================
+
+-- Test 24.19: YEARLY BYMONTH=1 BYYEARDAY=100 — day 100 is in April, not January
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.19: YEARLY BYMONTH=1 BYYEARDAY=100 (conflicting, no results in Jan)',
+    assert_equals(
+        'BYMONTH+BYYEARDAY conflict',
+        '0',
+        (SELECT COUNT(*)::TEXT FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=1;BYYEARDAY=100',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ))
+    );
+
+
+-- ============================================================================
+-- Section 25: MONTHLY BYDAY Positive Ordinals
+-- ============================================================================
+\echo 'Section 25: MONTHLY BYDAY Positive Ordinals...'
+
+-- Test 25.1: MONTHLY BYDAY=1MO (1st Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.1: MONTHLY BYDAY=1MO (1st Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1MO',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP,'2025-02-03 10:00:00'::TIMESTAMP,'2025-03-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.2: MONTHLY BYDAY=1TU (1st Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.2: MONTHLY BYDAY=1TU (1st Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1TU',
+        ARRAY['2025-01-07 10:00:00'::TIMESTAMP,'2025-02-04 10:00:00'::TIMESTAMP,'2025-03-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.3: MONTHLY BYDAY=1WE (1st Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.3: MONTHLY BYDAY=1WE (1st Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1WE',
+        ARRAY['2025-01-01 10:00:00'::TIMESTAMP,'2025-02-05 10:00:00'::TIMESTAMP,'2025-03-05 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.4: MONTHLY BYDAY=1TH (1st Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.4: MONTHLY BYDAY=1TH (1st Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1TH',
+        ARRAY['2025-01-02 10:00:00'::TIMESTAMP,'2025-02-06 10:00:00'::TIMESTAMP,'2025-03-06 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.5: MONTHLY BYDAY=1FR (1st Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.5: MONTHLY BYDAY=1FR (1st Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1FR',
+        ARRAY['2025-01-03 10:00:00'::TIMESTAMP,'2025-02-07 10:00:00'::TIMESTAMP,'2025-03-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.6: MONTHLY BYDAY=1SA (1st Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.6: MONTHLY BYDAY=1SA (1st Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1SA',
+        ARRAY['2025-01-04 10:00:00'::TIMESTAMP,'2025-02-01 10:00:00'::TIMESTAMP,'2025-03-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.7: MONTHLY BYDAY=1SU (1st Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.7: MONTHLY BYDAY=1SU (1st Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=1SU',
+        ARRAY['2025-01-05 10:00:00'::TIMESTAMP,'2025-02-02 10:00:00'::TIMESTAMP,'2025-03-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=1SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.8: MONTHLY BYDAY=2MO (2nd Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.8: MONTHLY BYDAY=2MO (2nd Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2MO',
+        ARRAY['2025-01-13 10:00:00'::TIMESTAMP,'2025-02-10 10:00:00'::TIMESTAMP,'2025-03-10 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.9: MONTHLY BYDAY=2TU (2nd Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.9: MONTHLY BYDAY=2TU (2nd Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2TU',
+        ARRAY['2025-01-14 10:00:00'::TIMESTAMP,'2025-02-11 10:00:00'::TIMESTAMP,'2025-03-11 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.10: MONTHLY BYDAY=2WE (2nd Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.10: MONTHLY BYDAY=2WE (2nd Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2WE',
+        ARRAY['2025-01-08 10:00:00'::TIMESTAMP,'2025-02-12 10:00:00'::TIMESTAMP,'2025-03-12 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.11: MONTHLY BYDAY=2TH (2nd Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.11: MONTHLY BYDAY=2TH (2nd Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2TH',
+        ARRAY['2025-01-09 10:00:00'::TIMESTAMP,'2025-02-13 10:00:00'::TIMESTAMP,'2025-03-13 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.12: MONTHLY BYDAY=2FR (2nd Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.12: MONTHLY BYDAY=2FR (2nd Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2FR',
+        ARRAY['2025-01-10 10:00:00'::TIMESTAMP,'2025-02-14 10:00:00'::TIMESTAMP,'2025-03-14 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.13: MONTHLY BYDAY=2SA (2nd Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.13: MONTHLY BYDAY=2SA (2nd Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2SA',
+        ARRAY['2025-01-11 10:00:00'::TIMESTAMP,'2025-02-08 10:00:00'::TIMESTAMP,'2025-03-08 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.14: MONTHLY BYDAY=2SU (2nd Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.14: MONTHLY BYDAY=2SU (2nd Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=2SU',
+        ARRAY['2025-01-12 10:00:00'::TIMESTAMP,'2025-02-09 10:00:00'::TIMESTAMP,'2025-03-09 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=2SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.15: MONTHLY BYDAY=3MO (3rd Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.15: MONTHLY BYDAY=3MO (3rd Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3MO',
+        ARRAY['2025-01-20 10:00:00'::TIMESTAMP,'2025-02-17 10:00:00'::TIMESTAMP,'2025-03-17 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.16: MONTHLY BYDAY=3TU (3rd Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.16: MONTHLY BYDAY=3TU (3rd Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3TU',
+        ARRAY['2025-01-21 10:00:00'::TIMESTAMP,'2025-02-18 10:00:00'::TIMESTAMP,'2025-03-18 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.17: MONTHLY BYDAY=3WE (3rd Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.17: MONTHLY BYDAY=3WE (3rd Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3WE',
+        ARRAY['2025-01-15 10:00:00'::TIMESTAMP,'2025-02-19 10:00:00'::TIMESTAMP,'2025-03-19 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.18: MONTHLY BYDAY=3TH (3rd Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.18: MONTHLY BYDAY=3TH (3rd Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3TH',
+        ARRAY['2025-01-16 10:00:00'::TIMESTAMP,'2025-02-20 10:00:00'::TIMESTAMP,'2025-03-20 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.19: MONTHLY BYDAY=3FR (3rd Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.19: MONTHLY BYDAY=3FR (3rd Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3FR',
+        ARRAY['2025-01-17 10:00:00'::TIMESTAMP,'2025-02-21 10:00:00'::TIMESTAMP,'2025-03-21 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.20: MONTHLY BYDAY=3SA (3rd Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.20: MONTHLY BYDAY=3SA (3rd Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3SA',
+        ARRAY['2025-01-18 10:00:00'::TIMESTAMP,'2025-02-15 10:00:00'::TIMESTAMP,'2025-03-15 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.21: MONTHLY BYDAY=3SU (3rd Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.21: MONTHLY BYDAY=3SU (3rd Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=3SU',
+        ARRAY['2025-01-19 10:00:00'::TIMESTAMP,'2025-02-16 10:00:00'::TIMESTAMP,'2025-03-16 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=3SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.22: MONTHLY BYDAY=4MO (4th Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.22: MONTHLY BYDAY=4MO (4th Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4MO',
+        ARRAY['2025-01-27 10:00:00'::TIMESTAMP,'2025-02-24 10:00:00'::TIMESTAMP,'2025-03-24 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.23: MONTHLY BYDAY=4TU (4th Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.23: MONTHLY BYDAY=4TU (4th Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4TU',
+        ARRAY['2025-01-28 10:00:00'::TIMESTAMP,'2025-02-25 10:00:00'::TIMESTAMP,'2025-03-25 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.24: MONTHLY BYDAY=4WE (4th Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.24: MONTHLY BYDAY=4WE (4th Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4WE',
+        ARRAY['2025-01-22 10:00:00'::TIMESTAMP,'2025-02-26 10:00:00'::TIMESTAMP,'2025-03-26 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.25: MONTHLY BYDAY=4TH (4th Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.25: MONTHLY BYDAY=4TH (4th Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4TH',
+        ARRAY['2025-01-23 10:00:00'::TIMESTAMP,'2025-02-27 10:00:00'::TIMESTAMP,'2025-03-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.26: MONTHLY BYDAY=4FR (4th Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.26: MONTHLY BYDAY=4FR (4th Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4FR',
+        ARRAY['2025-01-24 10:00:00'::TIMESTAMP,'2025-02-28 10:00:00'::TIMESTAMP,'2025-03-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.27: MONTHLY BYDAY=4SA (4th Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.27: MONTHLY BYDAY=4SA (4th Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4SA',
+        ARRAY['2025-01-25 10:00:00'::TIMESTAMP,'2025-02-22 10:00:00'::TIMESTAMP,'2025-03-22 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.28: MONTHLY BYDAY=4SU (4th Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.28: MONTHLY BYDAY=4SU (4th Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=4SU',
+        ARRAY['2025-01-26 10:00:00'::TIMESTAMP,'2025-02-23 10:00:00'::TIMESTAMP,'2025-03-23 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=4SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.29: MONTHLY BYDAY=5MO (5th Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.29: MONTHLY BYDAY=5MO (5th Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5MO',
+        ARRAY['2025-03-31 10:00:00'::TIMESTAMP,'2025-06-30 10:00:00'::TIMESTAMP,'2025-09-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.30: MONTHLY BYDAY=5TU (5th Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.30: MONTHLY BYDAY=5TU (5th Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5TU',
+        ARRAY['2025-04-29 10:00:00'::TIMESTAMP,'2025-07-29 10:00:00'::TIMESTAMP,'2025-09-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.31: MONTHLY BYDAY=5WE (5th Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.31: MONTHLY BYDAY=5WE (5th Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5WE',
+        ARRAY['2025-01-29 10:00:00'::TIMESTAMP,'2025-04-30 10:00:00'::TIMESTAMP,'2025-07-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.32: MONTHLY BYDAY=5TH (5th Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.32: MONTHLY BYDAY=5TH (5th Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5TH',
+        ARRAY['2025-01-30 10:00:00'::TIMESTAMP,'2025-05-29 10:00:00'::TIMESTAMP,'2025-07-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.33: MONTHLY BYDAY=5FR (5th Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.33: MONTHLY BYDAY=5FR (5th Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5FR',
+        ARRAY['2025-01-31 10:00:00'::TIMESTAMP,'2025-05-30 10:00:00'::TIMESTAMP,'2025-08-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.34: MONTHLY BYDAY=5SA (5th Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.34: MONTHLY BYDAY=5SA (5th Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5SA',
+        ARRAY['2025-03-29 10:00:00'::TIMESTAMP,'2025-05-31 10:00:00'::TIMESTAMP,'2025-08-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 25.35: MONTHLY BYDAY=5SU (5th Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Ordinals',
+    'Test 25.35: MONTHLY BYDAY=5SU (5th Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=5SU',
+        ARRAY['2025-03-30 10:00:00'::TIMESTAMP,'2025-06-29 10:00:00'::TIMESTAMP,'2025-08-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=5SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- Section 26: MONTHLY BYDAY Negative Ordinals
+-- ============================================================================
+\echo 'Section 26: MONTHLY BYDAY Negative Ordinals...'
+
+-- Test 26.1: MONTHLY BYDAY=-1MO (last Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.1: MONTHLY BYDAY=-1MO (last Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1MO',
+        ARRAY['2025-01-27 10:00:00'::TIMESTAMP,'2025-02-24 10:00:00'::TIMESTAMP,'2025-03-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.2: MONTHLY BYDAY=-1TU (last Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.2: MONTHLY BYDAY=-1TU (last Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1TU',
+        ARRAY['2025-01-28 10:00:00'::TIMESTAMP,'2025-02-25 10:00:00'::TIMESTAMP,'2025-03-25 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.3: MONTHLY BYDAY=-1WE (last Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.3: MONTHLY BYDAY=-1WE (last Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1WE',
+        ARRAY['2025-01-29 10:00:00'::TIMESTAMP,'2025-02-26 10:00:00'::TIMESTAMP,'2025-03-26 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.4: MONTHLY BYDAY=-1TH (last Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.4: MONTHLY BYDAY=-1TH (last Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1TH',
+        ARRAY['2025-01-30 10:00:00'::TIMESTAMP,'2025-02-27 10:00:00'::TIMESTAMP,'2025-03-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.5: MONTHLY BYDAY=-1FR (last Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.5: MONTHLY BYDAY=-1FR (last Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1FR',
+        ARRAY['2025-01-31 10:00:00'::TIMESTAMP,'2025-02-28 10:00:00'::TIMESTAMP,'2025-03-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.6: MONTHLY BYDAY=-1SA (last Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.6: MONTHLY BYDAY=-1SA (last Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1SA',
+        ARRAY['2025-01-25 10:00:00'::TIMESTAMP,'2025-02-22 10:00:00'::TIMESTAMP,'2025-03-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.7: MONTHLY BYDAY=-1SU (last Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.7: MONTHLY BYDAY=-1SU (last Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-1SU',
+        ARRAY['2025-01-26 10:00:00'::TIMESTAMP,'2025-02-23 10:00:00'::TIMESTAMP,'2025-03-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-1SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.8: MONTHLY BYDAY=-2MO (2nd-last Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.8: MONTHLY BYDAY=-2MO (2nd-last Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2MO',
+        ARRAY['2025-01-20 10:00:00'::TIMESTAMP,'2025-02-17 10:00:00'::TIMESTAMP,'2025-03-24 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.9: MONTHLY BYDAY=-2TU (2nd-last Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.9: MONTHLY BYDAY=-2TU (2nd-last Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2TU',
+        ARRAY['2025-01-21 10:00:00'::TIMESTAMP,'2025-02-18 10:00:00'::TIMESTAMP,'2025-03-18 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.10: MONTHLY BYDAY=-2WE (2nd-last Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.10: MONTHLY BYDAY=-2WE (2nd-last Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2WE',
+        ARRAY['2025-01-22 10:00:00'::TIMESTAMP,'2025-02-19 10:00:00'::TIMESTAMP,'2025-03-19 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.11: MONTHLY BYDAY=-2TH (2nd-last Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.11: MONTHLY BYDAY=-2TH (2nd-last Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2TH',
+        ARRAY['2025-01-23 10:00:00'::TIMESTAMP,'2025-02-20 10:00:00'::TIMESTAMP,'2025-03-20 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.12: MONTHLY BYDAY=-2FR (2nd-last Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.12: MONTHLY BYDAY=-2FR (2nd-last Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2FR',
+        ARRAY['2025-01-24 10:00:00'::TIMESTAMP,'2025-02-21 10:00:00'::TIMESTAMP,'2025-03-21 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.13: MONTHLY BYDAY=-2SA (2nd-last Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.13: MONTHLY BYDAY=-2SA (2nd-last Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2SA',
+        ARRAY['2025-01-18 10:00:00'::TIMESTAMP,'2025-02-15 10:00:00'::TIMESTAMP,'2025-03-22 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.14: MONTHLY BYDAY=-2SU (2nd-last Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.14: MONTHLY BYDAY=-2SU (2nd-last Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-2SU',
+        ARRAY['2025-01-19 10:00:00'::TIMESTAMP,'2025-02-16 10:00:00'::TIMESTAMP,'2025-03-23 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-2SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.15: MONTHLY BYDAY=-3MO (3rd-last Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.15: MONTHLY BYDAY=-3MO (3rd-last Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3MO',
+        ARRAY['2025-01-13 10:00:00'::TIMESTAMP,'2025-02-10 10:00:00'::TIMESTAMP,'2025-03-17 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.16: MONTHLY BYDAY=-3TU (3rd-last Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.16: MONTHLY BYDAY=-3TU (3rd-last Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3TU',
+        ARRAY['2025-01-14 10:00:00'::TIMESTAMP,'2025-02-11 10:00:00'::TIMESTAMP,'2025-03-11 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.17: MONTHLY BYDAY=-3WE (3rd-last Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.17: MONTHLY BYDAY=-3WE (3rd-last Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3WE',
+        ARRAY['2025-01-15 10:00:00'::TIMESTAMP,'2025-02-12 10:00:00'::TIMESTAMP,'2025-03-12 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.18: MONTHLY BYDAY=-3TH (3rd-last Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.18: MONTHLY BYDAY=-3TH (3rd-last Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3TH',
+        ARRAY['2025-01-16 10:00:00'::TIMESTAMP,'2025-02-13 10:00:00'::TIMESTAMP,'2025-03-13 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.19: MONTHLY BYDAY=-3FR (3rd-last Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.19: MONTHLY BYDAY=-3FR (3rd-last Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3FR',
+        ARRAY['2025-01-17 10:00:00'::TIMESTAMP,'2025-02-14 10:00:00'::TIMESTAMP,'2025-03-14 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.20: MONTHLY BYDAY=-3SA (3rd-last Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.20: MONTHLY BYDAY=-3SA (3rd-last Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3SA',
+        ARRAY['2025-01-11 10:00:00'::TIMESTAMP,'2025-02-08 10:00:00'::TIMESTAMP,'2025-03-15 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.21: MONTHLY BYDAY=-3SU (3rd-last Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.21: MONTHLY BYDAY=-3SU (3rd-last Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-3SU',
+        ARRAY['2025-01-12 10:00:00'::TIMESTAMP,'2025-02-09 10:00:00'::TIMESTAMP,'2025-03-16 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-3SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.22: MONTHLY BYDAY=-4MO (4th-last Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.22: MONTHLY BYDAY=-4MO (4th-last Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4MO',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP,'2025-02-03 10:00:00'::TIMESTAMP,'2025-03-10 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.23: MONTHLY BYDAY=-4TU (4th-last Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.23: MONTHLY BYDAY=-4TU (4th-last Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4TU',
+        ARRAY['2025-01-07 10:00:00'::TIMESTAMP,'2025-02-04 10:00:00'::TIMESTAMP,'2025-03-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.24: MONTHLY BYDAY=-4WE (4th-last Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.24: MONTHLY BYDAY=-4WE (4th-last Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4WE',
+        ARRAY['2025-01-08 10:00:00'::TIMESTAMP,'2025-02-05 10:00:00'::TIMESTAMP,'2025-03-05 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.25: MONTHLY BYDAY=-4TH (4th-last Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.25: MONTHLY BYDAY=-4TH (4th-last Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4TH',
+        ARRAY['2025-01-09 10:00:00'::TIMESTAMP,'2025-02-06 10:00:00'::TIMESTAMP,'2025-03-06 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.26: MONTHLY BYDAY=-4FR (4th-last Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.26: MONTHLY BYDAY=-4FR (4th-last Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4FR',
+        ARRAY['2025-01-10 10:00:00'::TIMESTAMP,'2025-02-07 10:00:00'::TIMESTAMP,'2025-03-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.27: MONTHLY BYDAY=-4SA (4th-last Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.27: MONTHLY BYDAY=-4SA (4th-last Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4SA',
+        ARRAY['2025-01-04 10:00:00'::TIMESTAMP,'2025-02-01 10:00:00'::TIMESTAMP,'2025-03-08 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.28: MONTHLY BYDAY=-4SU (4th-last Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.28: MONTHLY BYDAY=-4SU (4th-last Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-4SU',
+        ARRAY['2025-01-05 10:00:00'::TIMESTAMP,'2025-02-02 10:00:00'::TIMESTAMP,'2025-03-09 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-4SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.29: MONTHLY BYDAY=-5MO (5th-last Monday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.29: MONTHLY BYDAY=-5MO (5th-last Monday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5MO',
+        ARRAY['2025-03-03 10:00:00'::TIMESTAMP,'2025-06-02 10:00:00'::TIMESTAMP,'2025-09-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.30: MONTHLY BYDAY=-5TU (5th-last Tuesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.30: MONTHLY BYDAY=-5TU (5th-last Tuesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5TU',
+        ARRAY['2025-04-01 10:00:00'::TIMESTAMP,'2025-07-01 10:00:00'::TIMESTAMP,'2025-09-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5TU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.31: MONTHLY BYDAY=-5WE (5th-last Wednesday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.31: MONTHLY BYDAY=-5WE (5th-last Wednesday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5WE',
+        ARRAY['2025-01-01 10:00:00'::TIMESTAMP,'2025-04-02 10:00:00'::TIMESTAMP,'2025-07-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5WE;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.32: MONTHLY BYDAY=-5TH (5th-last Thursday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.32: MONTHLY BYDAY=-5TH (5th-last Thursday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5TH',
+        ARRAY['2025-01-02 10:00:00'::TIMESTAMP,'2025-05-01 10:00:00'::TIMESTAMP,'2025-07-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5TH;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.33: MONTHLY BYDAY=-5FR (5th-last Friday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.33: MONTHLY BYDAY=-5FR (5th-last Friday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5FR',
+        ARRAY['2025-01-03 10:00:00'::TIMESTAMP,'2025-05-02 10:00:00'::TIMESTAMP,'2025-08-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5FR;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.34: MONTHLY BYDAY=-5SA (5th-last Saturday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.34: MONTHLY BYDAY=-5SA (5th-last Saturday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5SA',
+        ARRAY['2025-03-01 10:00:00'::TIMESTAMP,'2025-05-03 10:00:00'::TIMESTAMP,'2025-08-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5SA;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 26.35: MONTHLY BYDAY=-5SU (5th-last Sunday)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'MONTHLY BYDAY Negative Ordinals',
+    'Test 26.35: MONTHLY BYDAY=-5SU (5th-last Sunday)',
+    assert_occurrences_equal(
+        'MONTHLY BYDAY=-5SU',
+        ARRAY['2025-03-02 10:00:00'::TIMESTAMP,'2025-06-01 10:00:00'::TIMESTAMP,'2025-08-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=-5SU;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- Section 27: YEARLY BYDAY Positive Ordinals
+-- ============================================================================
+\echo 'Section 27: YEARLY BYDAY Positive Ordinals...'
+
+-- Test 27.1: YEARLY BYDAY=1MO (1st Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.1: YEARLY BYDAY=1MO (1st Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1MO',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP,'2026-01-05 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.2: YEARLY BYDAY=1TU (1st Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.2: YEARLY BYDAY=1TU (1st Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1TU',
+        ARRAY['2025-01-07 10:00:00'::TIMESTAMP,'2026-01-06 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.3: YEARLY BYDAY=1WE (1st Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.3: YEARLY BYDAY=1WE (1st Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1WE',
+        ARRAY['2025-01-01 10:00:00'::TIMESTAMP,'2026-01-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.4: YEARLY BYDAY=1TH (1st Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.4: YEARLY BYDAY=1TH (1st Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1TH',
+        ARRAY['2025-01-02 10:00:00'::TIMESTAMP,'2026-01-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.5: YEARLY BYDAY=1FR (1st Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.5: YEARLY BYDAY=1FR (1st Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1FR',
+        ARRAY['2025-01-03 10:00:00'::TIMESTAMP,'2026-01-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.6: YEARLY BYDAY=1SA (1st Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.6: YEARLY BYDAY=1SA (1st Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1SA',
+        ARRAY['2025-01-04 10:00:00'::TIMESTAMP,'2026-01-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.7: YEARLY BYDAY=1SU (1st Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.7: YEARLY BYDAY=1SU (1st Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=1SU',
+        ARRAY['2025-01-05 10:00:00'::TIMESTAMP,'2026-01-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=1SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.8: YEARLY BYDAY=2MO (2nd Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.8: YEARLY BYDAY=2MO (2nd Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2MO',
+        ARRAY['2025-01-13 10:00:00'::TIMESTAMP,'2026-01-12 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.9: YEARLY BYDAY=2TU (2nd Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.9: YEARLY BYDAY=2TU (2nd Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2TU',
+        ARRAY['2025-01-14 10:00:00'::TIMESTAMP,'2026-01-13 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.10: YEARLY BYDAY=2WE (2nd Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.10: YEARLY BYDAY=2WE (2nd Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2WE',
+        ARRAY['2025-01-08 10:00:00'::TIMESTAMP,'2026-01-14 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.11: YEARLY BYDAY=2TH (2nd Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.11: YEARLY BYDAY=2TH (2nd Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2TH',
+        ARRAY['2025-01-09 10:00:00'::TIMESTAMP,'2026-01-08 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.12: YEARLY BYDAY=2FR (2nd Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.12: YEARLY BYDAY=2FR (2nd Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2FR',
+        ARRAY['2025-01-10 10:00:00'::TIMESTAMP,'2026-01-09 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.13: YEARLY BYDAY=2SA (2nd Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.13: YEARLY BYDAY=2SA (2nd Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2SA',
+        ARRAY['2025-01-11 10:00:00'::TIMESTAMP,'2026-01-10 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.14: YEARLY BYDAY=2SU (2nd Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.14: YEARLY BYDAY=2SU (2nd Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=2SU',
+        ARRAY['2025-01-12 10:00:00'::TIMESTAMP,'2026-01-11 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=2SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.15: YEARLY BYDAY=3MO (3rd Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.15: YEARLY BYDAY=3MO (3rd Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3MO',
+        ARRAY['2025-01-20 10:00:00'::TIMESTAMP,'2026-01-19 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.16: YEARLY BYDAY=3TU (3rd Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.16: YEARLY BYDAY=3TU (3rd Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3TU',
+        ARRAY['2025-01-21 10:00:00'::TIMESTAMP,'2026-01-20 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.17: YEARLY BYDAY=3WE (3rd Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.17: YEARLY BYDAY=3WE (3rd Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3WE',
+        ARRAY['2025-01-15 10:00:00'::TIMESTAMP,'2026-01-21 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.18: YEARLY BYDAY=3TH (3rd Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.18: YEARLY BYDAY=3TH (3rd Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3TH',
+        ARRAY['2025-01-16 10:00:00'::TIMESTAMP,'2026-01-15 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.19: YEARLY BYDAY=3FR (3rd Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.19: YEARLY BYDAY=3FR (3rd Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3FR',
+        ARRAY['2025-01-17 10:00:00'::TIMESTAMP,'2026-01-16 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.20: YEARLY BYDAY=3SA (3rd Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.20: YEARLY BYDAY=3SA (3rd Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3SA',
+        ARRAY['2025-01-18 10:00:00'::TIMESTAMP,'2026-01-17 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.21: YEARLY BYDAY=3SU (3rd Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.21: YEARLY BYDAY=3SU (3rd Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=3SU',
+        ARRAY['2025-01-19 10:00:00'::TIMESTAMP,'2026-01-18 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=3SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.22: YEARLY BYDAY=4MO (4th Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.22: YEARLY BYDAY=4MO (4th Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4MO',
+        ARRAY['2025-01-27 10:00:00'::TIMESTAMP,'2026-01-26 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.23: YEARLY BYDAY=4TU (4th Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.23: YEARLY BYDAY=4TU (4th Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4TU',
+        ARRAY['2025-01-28 10:00:00'::TIMESTAMP,'2026-01-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.24: YEARLY BYDAY=4WE (4th Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.24: YEARLY BYDAY=4WE (4th Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4WE',
+        ARRAY['2025-01-22 10:00:00'::TIMESTAMP,'2026-01-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.25: YEARLY BYDAY=4TH (4th Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.25: YEARLY BYDAY=4TH (4th Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4TH',
+        ARRAY['2025-01-23 10:00:00'::TIMESTAMP,'2026-01-22 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.26: YEARLY BYDAY=4FR (4th Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.26: YEARLY BYDAY=4FR (4th Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4FR',
+        ARRAY['2025-01-24 10:00:00'::TIMESTAMP,'2026-01-23 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.27: YEARLY BYDAY=4SA (4th Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.27: YEARLY BYDAY=4SA (4th Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4SA',
+        ARRAY['2025-01-25 10:00:00'::TIMESTAMP,'2026-01-24 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.28: YEARLY BYDAY=4SU (4th Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.28: YEARLY BYDAY=4SU (4th Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=4SU',
+        ARRAY['2025-01-26 10:00:00'::TIMESTAMP,'2026-01-25 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=4SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.29: YEARLY BYDAY=5MO (5th Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.29: YEARLY BYDAY=5MO (5th Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5MO',
+        ARRAY['2025-02-03 10:00:00'::TIMESTAMP,'2026-02-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.30: YEARLY BYDAY=5TU (5th Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.30: YEARLY BYDAY=5TU (5th Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5TU',
+        ARRAY['2025-02-04 10:00:00'::TIMESTAMP,'2026-02-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.31: YEARLY BYDAY=5WE (5th Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.31: YEARLY BYDAY=5WE (5th Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5WE',
+        ARRAY['2025-01-29 10:00:00'::TIMESTAMP,'2026-02-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.32: YEARLY BYDAY=5TH (5th Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.32: YEARLY BYDAY=5TH (5th Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5TH',
+        ARRAY['2025-01-30 10:00:00'::TIMESTAMP,'2026-01-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.33: YEARLY BYDAY=5FR (5th Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.33: YEARLY BYDAY=5FR (5th Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5FR',
+        ARRAY['2025-01-31 10:00:00'::TIMESTAMP,'2026-01-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.34: YEARLY BYDAY=5SA (5th Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.34: YEARLY BYDAY=5SA (5th Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5SA',
+        ARRAY['2025-02-01 10:00:00'::TIMESTAMP,'2026-01-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 27.35: YEARLY BYDAY=5SU (5th Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Ordinals',
+    'Test 27.35: YEARLY BYDAY=5SU (5th Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=5SU',
+        ARRAY['2025-02-02 10:00:00'::TIMESTAMP,'2026-02-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=5SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- Section 28: YEARLY BYDAY Negative Ordinals
+-- ============================================================================
+\echo 'Section 28: YEARLY BYDAY Negative Ordinals...'
+
+-- Test 28.1: YEARLY BYDAY=-1MO (last Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.1: YEARLY BYDAY=-1MO (last Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1MO',
+        ARRAY['2025-12-29 10:00:00'::TIMESTAMP,'2026-12-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.2: YEARLY BYDAY=-1TU (last Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.2: YEARLY BYDAY=-1TU (last Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1TU',
+        ARRAY['2025-12-30 10:00:00'::TIMESTAMP,'2026-12-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.3: YEARLY BYDAY=-1WE (last Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.3: YEARLY BYDAY=-1WE (last Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1WE',
+        ARRAY['2025-12-31 10:00:00'::TIMESTAMP,'2026-12-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.4: YEARLY BYDAY=-1TH (last Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.4: YEARLY BYDAY=-1TH (last Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1TH',
+        ARRAY['2025-12-25 10:00:00'::TIMESTAMP,'2026-12-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.5: YEARLY BYDAY=-1FR (last Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.5: YEARLY BYDAY=-1FR (last Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1FR',
+        ARRAY['2025-12-26 10:00:00'::TIMESTAMP,'2026-12-25 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.6: YEARLY BYDAY=-1SA (last Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.6: YEARLY BYDAY=-1SA (last Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1SA',
+        ARRAY['2025-12-27 10:00:00'::TIMESTAMP,'2026-12-26 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.7: YEARLY BYDAY=-1SU (last Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.7: YEARLY BYDAY=-1SU (last Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-1SU',
+        ARRAY['2025-12-28 10:00:00'::TIMESTAMP,'2026-12-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-1SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.8: YEARLY BYDAY=-2MO (2nd-last Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.8: YEARLY BYDAY=-2MO (2nd-last Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2MO',
+        ARRAY['2025-12-22 10:00:00'::TIMESTAMP,'2026-12-21 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.9: YEARLY BYDAY=-2TU (2nd-last Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.9: YEARLY BYDAY=-2TU (2nd-last Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2TU',
+        ARRAY['2025-12-23 10:00:00'::TIMESTAMP,'2026-12-22 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.10: YEARLY BYDAY=-2WE (2nd-last Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.10: YEARLY BYDAY=-2WE (2nd-last Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2WE',
+        ARRAY['2025-12-24 10:00:00'::TIMESTAMP,'2026-12-23 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.11: YEARLY BYDAY=-2TH (2nd-last Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.11: YEARLY BYDAY=-2TH (2nd-last Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2TH',
+        ARRAY['2025-12-18 10:00:00'::TIMESTAMP,'2026-12-24 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.12: YEARLY BYDAY=-2FR (2nd-last Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.12: YEARLY BYDAY=-2FR (2nd-last Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2FR',
+        ARRAY['2025-12-19 10:00:00'::TIMESTAMP,'2026-12-18 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.13: YEARLY BYDAY=-2SA (2nd-last Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.13: YEARLY BYDAY=-2SA (2nd-last Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2SA',
+        ARRAY['2025-12-20 10:00:00'::TIMESTAMP,'2026-12-19 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.14: YEARLY BYDAY=-2SU (2nd-last Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.14: YEARLY BYDAY=-2SU (2nd-last Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-2SU',
+        ARRAY['2025-12-21 10:00:00'::TIMESTAMP,'2026-12-20 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-2SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.15: YEARLY BYDAY=-3MO (3rd-last Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.15: YEARLY BYDAY=-3MO (3rd-last Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3MO',
+        ARRAY['2025-12-15 10:00:00'::TIMESTAMP,'2026-12-14 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.16: YEARLY BYDAY=-3TU (3rd-last Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.16: YEARLY BYDAY=-3TU (3rd-last Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3TU',
+        ARRAY['2025-12-16 10:00:00'::TIMESTAMP,'2026-12-15 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.17: YEARLY BYDAY=-3WE (3rd-last Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.17: YEARLY BYDAY=-3WE (3rd-last Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3WE',
+        ARRAY['2025-12-17 10:00:00'::TIMESTAMP,'2026-12-16 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.18: YEARLY BYDAY=-3TH (3rd-last Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.18: YEARLY BYDAY=-3TH (3rd-last Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3TH',
+        ARRAY['2025-12-11 10:00:00'::TIMESTAMP,'2026-12-17 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.19: YEARLY BYDAY=-3FR (3rd-last Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.19: YEARLY BYDAY=-3FR (3rd-last Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3FR',
+        ARRAY['2025-12-12 10:00:00'::TIMESTAMP,'2026-12-11 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.20: YEARLY BYDAY=-3SA (3rd-last Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.20: YEARLY BYDAY=-3SA (3rd-last Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3SA',
+        ARRAY['2025-12-13 10:00:00'::TIMESTAMP,'2026-12-12 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.21: YEARLY BYDAY=-3SU (3rd-last Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.21: YEARLY BYDAY=-3SU (3rd-last Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-3SU',
+        ARRAY['2025-12-14 10:00:00'::TIMESTAMP,'2026-12-13 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-3SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.22: YEARLY BYDAY=-4MO (4th-last Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.22: YEARLY BYDAY=-4MO (4th-last Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4MO',
+        ARRAY['2025-12-08 10:00:00'::TIMESTAMP,'2026-12-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.23: YEARLY BYDAY=-4TU (4th-last Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.23: YEARLY BYDAY=-4TU (4th-last Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4TU',
+        ARRAY['2025-12-09 10:00:00'::TIMESTAMP,'2026-12-08 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.24: YEARLY BYDAY=-4WE (4th-last Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.24: YEARLY BYDAY=-4WE (4th-last Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4WE',
+        ARRAY['2025-12-10 10:00:00'::TIMESTAMP,'2026-12-09 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.25: YEARLY BYDAY=-4TH (4th-last Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.25: YEARLY BYDAY=-4TH (4th-last Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4TH',
+        ARRAY['2025-12-04 10:00:00'::TIMESTAMP,'2026-12-10 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.26: YEARLY BYDAY=-4FR (4th-last Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.26: YEARLY BYDAY=-4FR (4th-last Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4FR',
+        ARRAY['2025-12-05 10:00:00'::TIMESTAMP,'2026-12-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.27: YEARLY BYDAY=-4SA (4th-last Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.27: YEARLY BYDAY=-4SA (4th-last Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4SA',
+        ARRAY['2025-12-06 10:00:00'::TIMESTAMP,'2026-12-05 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.28: YEARLY BYDAY=-4SU (4th-last Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.28: YEARLY BYDAY=-4SU (4th-last Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-4SU',
+        ARRAY['2025-12-07 10:00:00'::TIMESTAMP,'2026-12-06 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-4SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.29: YEARLY BYDAY=-5MO (5th-last Monday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.29: YEARLY BYDAY=-5MO (5th-last Monday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5MO',
+        ARRAY['2025-12-01 10:00:00'::TIMESTAMP,'2026-11-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5MO;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.30: YEARLY BYDAY=-5TU (5th-last Tuesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.30: YEARLY BYDAY=-5TU (5th-last Tuesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5TU',
+        ARRAY['2025-12-02 10:00:00'::TIMESTAMP,'2026-12-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5TU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.31: YEARLY BYDAY=-5WE (5th-last Wednesday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.31: YEARLY BYDAY=-5WE (5th-last Wednesday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5WE',
+        ARRAY['2025-12-03 10:00:00'::TIMESTAMP,'2026-12-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5WE;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.32: YEARLY BYDAY=-5TH (5th-last Thursday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.32: YEARLY BYDAY=-5TH (5th-last Thursday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5TH',
+        ARRAY['2025-11-27 10:00:00'::TIMESTAMP,'2026-12-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5TH;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.33: YEARLY BYDAY=-5FR (5th-last Friday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.33: YEARLY BYDAY=-5FR (5th-last Friday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5FR',
+        ARRAY['2025-11-28 10:00:00'::TIMESTAMP,'2026-11-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5FR;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.34: YEARLY BYDAY=-5SA (5th-last Saturday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.34: YEARLY BYDAY=-5SA (5th-last Saturday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5SA',
+        ARRAY['2025-11-29 10:00:00'::TIMESTAMP,'2026-11-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5SA;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 28.35: YEARLY BYDAY=-5SU (5th-last Sunday of year)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Negative Ordinals',
+    'Test 28.35: YEARLY BYDAY=-5SU (5th-last Sunday of year)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=-5SU',
+        ARRAY['2025-11-30 10:00:00'::TIMESTAMP,'2026-11-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=-5SU;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- Section 29: BYMONTHDAY Positive
+-- ============================================================================
+\echo 'Section 29: BYMONTHDAY Positive...'
+
+-- Test 29.1: BYMONTHDAY=1
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.1: BYMONTHDAY=1',
+    assert_occurrences_equal(
+        'BYMONTHDAY=1',
+        ARRAY['2025-01-01 10:00:00'::TIMESTAMP,'2025-02-01 10:00:00'::TIMESTAMP,'2025-03-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.2: BYMONTHDAY=2
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.2: BYMONTHDAY=2',
+    assert_occurrences_equal(
+        'BYMONTHDAY=2',
+        ARRAY['2025-01-02 10:00:00'::TIMESTAMP,'2025-02-02 10:00:00'::TIMESTAMP,'2025-03-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=2;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.3: BYMONTHDAY=3
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.3: BYMONTHDAY=3',
+    assert_occurrences_equal(
+        'BYMONTHDAY=3',
+        ARRAY['2025-01-03 10:00:00'::TIMESTAMP,'2025-02-03 10:00:00'::TIMESTAMP,'2025-03-03 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=3;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.4: BYMONTHDAY=4
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.4: BYMONTHDAY=4',
+    assert_occurrences_equal(
+        'BYMONTHDAY=4',
+        ARRAY['2025-01-04 10:00:00'::TIMESTAMP,'2025-02-04 10:00:00'::TIMESTAMP,'2025-03-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=4;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.5: BYMONTHDAY=5
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.5: BYMONTHDAY=5',
+    assert_occurrences_equal(
+        'BYMONTHDAY=5',
+        ARRAY['2025-01-05 10:00:00'::TIMESTAMP,'2025-02-05 10:00:00'::TIMESTAMP,'2025-03-05 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=5;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.6: BYMONTHDAY=6
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.6: BYMONTHDAY=6',
+    assert_occurrences_equal(
+        'BYMONTHDAY=6',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP,'2025-02-06 10:00:00'::TIMESTAMP,'2025-03-06 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=6;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.7: BYMONTHDAY=7
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.7: BYMONTHDAY=7',
+    assert_occurrences_equal(
+        'BYMONTHDAY=7',
+        ARRAY['2025-01-07 10:00:00'::TIMESTAMP,'2025-02-07 10:00:00'::TIMESTAMP,'2025-03-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=7;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.8: BYMONTHDAY=8
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.8: BYMONTHDAY=8',
+    assert_occurrences_equal(
+        'BYMONTHDAY=8',
+        ARRAY['2025-01-08 10:00:00'::TIMESTAMP,'2025-02-08 10:00:00'::TIMESTAMP,'2025-03-08 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=8;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.9: BYMONTHDAY=9
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.9: BYMONTHDAY=9',
+    assert_occurrences_equal(
+        'BYMONTHDAY=9',
+        ARRAY['2025-01-09 10:00:00'::TIMESTAMP,'2025-02-09 10:00:00'::TIMESTAMP,'2025-03-09 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=9;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.10: BYMONTHDAY=10
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.10: BYMONTHDAY=10',
+    assert_occurrences_equal(
+        'BYMONTHDAY=10',
+        ARRAY['2025-01-10 10:00:00'::TIMESTAMP,'2025-02-10 10:00:00'::TIMESTAMP,'2025-03-10 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=10;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.11: BYMONTHDAY=11
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.11: BYMONTHDAY=11',
+    assert_occurrences_equal(
+        'BYMONTHDAY=11',
+        ARRAY['2025-01-11 10:00:00'::TIMESTAMP,'2025-02-11 10:00:00'::TIMESTAMP,'2025-03-11 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=11;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.12: BYMONTHDAY=12
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.12: BYMONTHDAY=12',
+    assert_occurrences_equal(
+        'BYMONTHDAY=12',
+        ARRAY['2025-01-12 10:00:00'::TIMESTAMP,'2025-02-12 10:00:00'::TIMESTAMP,'2025-03-12 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=12;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.13: BYMONTHDAY=13
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.13: BYMONTHDAY=13',
+    assert_occurrences_equal(
+        'BYMONTHDAY=13',
+        ARRAY['2025-01-13 10:00:00'::TIMESTAMP,'2025-02-13 10:00:00'::TIMESTAMP,'2025-03-13 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=13;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.14: BYMONTHDAY=14
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.14: BYMONTHDAY=14',
+    assert_occurrences_equal(
+        'BYMONTHDAY=14',
+        ARRAY['2025-01-14 10:00:00'::TIMESTAMP,'2025-02-14 10:00:00'::TIMESTAMP,'2025-03-14 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=14;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.15: BYMONTHDAY=15
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.15: BYMONTHDAY=15',
+    assert_occurrences_equal(
+        'BYMONTHDAY=15',
+        ARRAY['2025-01-15 10:00:00'::TIMESTAMP,'2025-02-15 10:00:00'::TIMESTAMP,'2025-03-15 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.16: BYMONTHDAY=16
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.16: BYMONTHDAY=16',
+    assert_occurrences_equal(
+        'BYMONTHDAY=16',
+        ARRAY['2025-01-16 10:00:00'::TIMESTAMP,'2025-02-16 10:00:00'::TIMESTAMP,'2025-03-16 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=16;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.17: BYMONTHDAY=17
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.17: BYMONTHDAY=17',
+    assert_occurrences_equal(
+        'BYMONTHDAY=17',
+        ARRAY['2025-01-17 10:00:00'::TIMESTAMP,'2025-02-17 10:00:00'::TIMESTAMP,'2025-03-17 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=17;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.18: BYMONTHDAY=18
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.18: BYMONTHDAY=18',
+    assert_occurrences_equal(
+        'BYMONTHDAY=18',
+        ARRAY['2025-01-18 10:00:00'::TIMESTAMP,'2025-02-18 10:00:00'::TIMESTAMP,'2025-03-18 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=18;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.19: BYMONTHDAY=19
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.19: BYMONTHDAY=19',
+    assert_occurrences_equal(
+        'BYMONTHDAY=19',
+        ARRAY['2025-01-19 10:00:00'::TIMESTAMP,'2025-02-19 10:00:00'::TIMESTAMP,'2025-03-19 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=19;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.20: BYMONTHDAY=20
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.20: BYMONTHDAY=20',
+    assert_occurrences_equal(
+        'BYMONTHDAY=20',
+        ARRAY['2025-01-20 10:00:00'::TIMESTAMP,'2025-02-20 10:00:00'::TIMESTAMP,'2025-03-20 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=20;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.21: BYMONTHDAY=21
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.21: BYMONTHDAY=21',
+    assert_occurrences_equal(
+        'BYMONTHDAY=21',
+        ARRAY['2025-01-21 10:00:00'::TIMESTAMP,'2025-02-21 10:00:00'::TIMESTAMP,'2025-03-21 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=21;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.22: BYMONTHDAY=22
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.22: BYMONTHDAY=22',
+    assert_occurrences_equal(
+        'BYMONTHDAY=22',
+        ARRAY['2025-01-22 10:00:00'::TIMESTAMP,'2025-02-22 10:00:00'::TIMESTAMP,'2025-03-22 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=22;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.23: BYMONTHDAY=23
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.23: BYMONTHDAY=23',
+    assert_occurrences_equal(
+        'BYMONTHDAY=23',
+        ARRAY['2025-01-23 10:00:00'::TIMESTAMP,'2025-02-23 10:00:00'::TIMESTAMP,'2025-03-23 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=23;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.24: BYMONTHDAY=24
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.24: BYMONTHDAY=24',
+    assert_occurrences_equal(
+        'BYMONTHDAY=24',
+        ARRAY['2025-01-24 10:00:00'::TIMESTAMP,'2025-02-24 10:00:00'::TIMESTAMP,'2025-03-24 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=24;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.25: BYMONTHDAY=25
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.25: BYMONTHDAY=25',
+    assert_occurrences_equal(
+        'BYMONTHDAY=25',
+        ARRAY['2025-01-25 10:00:00'::TIMESTAMP,'2025-02-25 10:00:00'::TIMESTAMP,'2025-03-25 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=25;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.26: BYMONTHDAY=26
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.26: BYMONTHDAY=26',
+    assert_occurrences_equal(
+        'BYMONTHDAY=26',
+        ARRAY['2025-01-26 10:00:00'::TIMESTAMP,'2025-02-26 10:00:00'::TIMESTAMP,'2025-03-26 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=26;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.27: BYMONTHDAY=27
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.27: BYMONTHDAY=27',
+    assert_occurrences_equal(
+        'BYMONTHDAY=27',
+        ARRAY['2025-01-27 10:00:00'::TIMESTAMP,'2025-02-27 10:00:00'::TIMESTAMP,'2025-03-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=27;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.28: BYMONTHDAY=28
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.28: BYMONTHDAY=28',
+    assert_occurrences_equal(
+        'BYMONTHDAY=28',
+        ARRAY['2025-01-28 10:00:00'::TIMESTAMP,'2025-02-28 10:00:00'::TIMESTAMP,'2025-03-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=28;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.29: BYMONTHDAY=29
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.29: BYMONTHDAY=29',
+    assert_occurrences_equal(
+        'BYMONTHDAY=29',
+        ARRAY['2025-01-29 10:00:00'::TIMESTAMP,'2025-03-29 10:00:00'::TIMESTAMP,'2025-04-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=29;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.30: BYMONTHDAY=30
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.30: BYMONTHDAY=30',
+    assert_occurrences_equal(
+        'BYMONTHDAY=30',
+        ARRAY['2025-01-30 10:00:00'::TIMESTAMP,'2025-03-30 10:00:00'::TIMESTAMP,'2025-04-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=30;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 29.31: BYMONTHDAY=31
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Positive',
+    'Test 29.31: BYMONTHDAY=31',
+    assert_occurrences_equal(
+        'BYMONTHDAY=31',
+        ARRAY['2025-01-31 10:00:00'::TIMESTAMP,'2025-03-31 10:00:00'::TIMESTAMP,'2025-05-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=31;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- ============================================================================
+-- Section 30: BYMONTHDAY Negative
+-- ============================================================================
+\echo 'Section 30: BYMONTHDAY Negative...'
+
+-- Test 30.1: BYMONTHDAY=-1 (1th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.1: BYMONTHDAY=-1 (1th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-1',
+        ARRAY['2025-01-31 10:00:00'::TIMESTAMP,'2025-02-28 10:00:00'::TIMESTAMP,'2025-03-31 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.2: BYMONTHDAY=-2 (2th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.2: BYMONTHDAY=-2 (2th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-2',
+        ARRAY['2025-01-30 10:00:00'::TIMESTAMP,'2025-02-27 10:00:00'::TIMESTAMP,'2025-03-30 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-2;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.3: BYMONTHDAY=-3 (3th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.3: BYMONTHDAY=-3 (3th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-3',
+        ARRAY['2025-01-29 10:00:00'::TIMESTAMP,'2025-02-26 10:00:00'::TIMESTAMP,'2025-03-29 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-3;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.4: BYMONTHDAY=-4 (4th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.4: BYMONTHDAY=-4 (4th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-4',
+        ARRAY['2025-01-28 10:00:00'::TIMESTAMP,'2025-02-25 10:00:00'::TIMESTAMP,'2025-03-28 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-4;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.5: BYMONTHDAY=-5 (5th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.5: BYMONTHDAY=-5 (5th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-5',
+        ARRAY['2025-01-27 10:00:00'::TIMESTAMP,'2025-02-24 10:00:00'::TIMESTAMP,'2025-03-27 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-5;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.6: BYMONTHDAY=-6 (6th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.6: BYMONTHDAY=-6 (6th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-6',
+        ARRAY['2025-01-26 10:00:00'::TIMESTAMP,'2025-02-23 10:00:00'::TIMESTAMP,'2025-03-26 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-6;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.7: BYMONTHDAY=-7 (7th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.7: BYMONTHDAY=-7 (7th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-7',
+        ARRAY['2025-01-25 10:00:00'::TIMESTAMP,'2025-02-22 10:00:00'::TIMESTAMP,'2025-03-25 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-7;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.8: BYMONTHDAY=-8 (8th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.8: BYMONTHDAY=-8 (8th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-8',
+        ARRAY['2025-01-24 10:00:00'::TIMESTAMP,'2025-02-21 10:00:00'::TIMESTAMP,'2025-03-24 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-8;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.9: BYMONTHDAY=-9 (9th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.9: BYMONTHDAY=-9 (9th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-9',
+        ARRAY['2025-01-23 10:00:00'::TIMESTAMP,'2025-02-20 10:00:00'::TIMESTAMP,'2025-03-23 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-9;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.10: BYMONTHDAY=-10 (10th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.10: BYMONTHDAY=-10 (10th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-10',
+        ARRAY['2025-01-22 10:00:00'::TIMESTAMP,'2025-02-19 10:00:00'::TIMESTAMP,'2025-03-22 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-10;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.11: BYMONTHDAY=-11 (11th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.11: BYMONTHDAY=-11 (11th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-11',
+        ARRAY['2025-01-21 10:00:00'::TIMESTAMP,'2025-02-18 10:00:00'::TIMESTAMP,'2025-03-21 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-11;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.12: BYMONTHDAY=-12 (12th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.12: BYMONTHDAY=-12 (12th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-12',
+        ARRAY['2025-01-20 10:00:00'::TIMESTAMP,'2025-02-17 10:00:00'::TIMESTAMP,'2025-03-20 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-12;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.13: BYMONTHDAY=-13 (13th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.13: BYMONTHDAY=-13 (13th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-13',
+        ARRAY['2025-01-19 10:00:00'::TIMESTAMP,'2025-02-16 10:00:00'::TIMESTAMP,'2025-03-19 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-13;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.14: BYMONTHDAY=-14 (14th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.14: BYMONTHDAY=-14 (14th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-14',
+        ARRAY['2025-01-18 10:00:00'::TIMESTAMP,'2025-02-15 10:00:00'::TIMESTAMP,'2025-03-18 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-14;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.15: BYMONTHDAY=-15 (15th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.15: BYMONTHDAY=-15 (15th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-15',
+        ARRAY['2025-01-17 10:00:00'::TIMESTAMP,'2025-02-14 10:00:00'::TIMESTAMP,'2025-03-17 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-15;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.16: BYMONTHDAY=-16 (16th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.16: BYMONTHDAY=-16 (16th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-16',
+        ARRAY['2025-01-16 10:00:00'::TIMESTAMP,'2025-02-13 10:00:00'::TIMESTAMP,'2025-03-16 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-16;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.17: BYMONTHDAY=-17 (17th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.17: BYMONTHDAY=-17 (17th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-17',
+        ARRAY['2025-01-15 10:00:00'::TIMESTAMP,'2025-02-12 10:00:00'::TIMESTAMP,'2025-03-15 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-17;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.18: BYMONTHDAY=-18 (18th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.18: BYMONTHDAY=-18 (18th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-18',
+        ARRAY['2025-01-14 10:00:00'::TIMESTAMP,'2025-02-11 10:00:00'::TIMESTAMP,'2025-03-14 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-18;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.19: BYMONTHDAY=-19 (19th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.19: BYMONTHDAY=-19 (19th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-19',
+        ARRAY['2025-01-13 10:00:00'::TIMESTAMP,'2025-02-10 10:00:00'::TIMESTAMP,'2025-03-13 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-19;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.20: BYMONTHDAY=-20 (20th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.20: BYMONTHDAY=-20 (20th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-20',
+        ARRAY['2025-01-12 10:00:00'::TIMESTAMP,'2025-02-09 10:00:00'::TIMESTAMP,'2025-03-12 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-20;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.21: BYMONTHDAY=-21 (21th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.21: BYMONTHDAY=-21 (21th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-21',
+        ARRAY['2025-01-11 10:00:00'::TIMESTAMP,'2025-02-08 10:00:00'::TIMESTAMP,'2025-03-11 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-21;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.22: BYMONTHDAY=-22 (22th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.22: BYMONTHDAY=-22 (22th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-22',
+        ARRAY['2025-01-10 10:00:00'::TIMESTAMP,'2025-02-07 10:00:00'::TIMESTAMP,'2025-03-10 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-22;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.23: BYMONTHDAY=-23 (23th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.23: BYMONTHDAY=-23 (23th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-23',
+        ARRAY['2025-01-09 10:00:00'::TIMESTAMP,'2025-02-06 10:00:00'::TIMESTAMP,'2025-03-09 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-23;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.24: BYMONTHDAY=-24 (24th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.24: BYMONTHDAY=-24 (24th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-24',
+        ARRAY['2025-01-08 10:00:00'::TIMESTAMP,'2025-02-05 10:00:00'::TIMESTAMP,'2025-03-08 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-24;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.25: BYMONTHDAY=-25 (25th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.25: BYMONTHDAY=-25 (25th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-25',
+        ARRAY['2025-01-07 10:00:00'::TIMESTAMP,'2025-02-04 10:00:00'::TIMESTAMP,'2025-03-07 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-25;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.26: BYMONTHDAY=-26 (26th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.26: BYMONTHDAY=-26 (26th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-26',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP,'2025-02-03 10:00:00'::TIMESTAMP,'2025-03-06 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-26;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.27: BYMONTHDAY=-27 (27th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.27: BYMONTHDAY=-27 (27th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-27',
+        ARRAY['2025-01-05 10:00:00'::TIMESTAMP,'2025-02-02 10:00:00'::TIMESTAMP,'2025-03-05 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-27;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.28: BYMONTHDAY=-28 (28th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.28: BYMONTHDAY=-28 (28th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-28',
+        ARRAY['2025-01-04 10:00:00'::TIMESTAMP,'2025-02-01 10:00:00'::TIMESTAMP,'2025-03-04 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-28;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.29: BYMONTHDAY=-29 (29th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.29: BYMONTHDAY=-29 (29th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-29',
+        ARRAY['2025-01-03 10:00:00'::TIMESTAMP,'2025-03-03 10:00:00'::TIMESTAMP,'2025-04-02 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-29;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.30: BYMONTHDAY=-30 (30th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.30: BYMONTHDAY=-30 (30th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-30',
+        ARRAY['2025-01-02 10:00:00'::TIMESTAMP,'2025-03-02 10:00:00'::TIMESTAMP,'2025-04-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-30;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 30.31: BYMONTHDAY=-31 (31th from end)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYMONTHDAY Negative',
+    'Test 30.31: BYMONTHDAY=-31 (31th from end)',
+    assert_occurrences_equal(
+        'BYMONTHDAY=-31',
+        ARRAY['2025-01-01 10:00:00'::TIMESTAMP,'2025-03-01 10:00:00'::TIMESTAMP,'2025-05-01 10:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=-31;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
     );
 
