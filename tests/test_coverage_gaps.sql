@@ -1488,7 +1488,7 @@ SELECT
 \echo '=================================================='
 
 -- TIMESTAMP API: FREQ=DAILY from 2020-01-01, before_date 2025-01-01 (~1826 occurrences)
--- The correct answer is 2024-12-31, not the 1000th occurrence (2022-09-27)
+-- The correct answer is 2024-12-31, not the 1000th occurrence (2022-09-26)
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'before() Correctness',
@@ -6309,6 +6309,67 @@ SELECT
             'FREQ=MONTHLY;COUNT=6',
             '2025-01-30 10:00:00'::TIMESTAMP
         ) AS occurrence)
+    );
+
+-- ============================================================================
+-- SECTION 25: before() Beyond 1000-Result Cap
+-- ============================================================================
+\echo ''
+\echo '--- Section 25: before() Beyond 1000-Result Cap ---'
+
+-- Test 33.1: before() returns the 1500th occurrence (beyond the 1000-result cap)
+-- FREQ=DAILY;COUNT=1500 starting 2020-01-01 produces 1500 occurrences.
+-- The 1500th occurrence is 2020-01-01 + 1499 days = 2024-02-08.
+-- before() uses max_count=50000000 internally, so it must find the true last
+-- occurrence even though all() would cap at 1000.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() >1000 cap',
+    'Test 33.1: before() finds 1500th occurrence beyond 1000-cap',
+    assert_equals(
+        'before beyond cap',
+        '2024-02-08 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=1500',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            FALSE
+        ))::TEXT
+    );
+
+-- Test 33.2: before() with inc=TRUE at exact 1500th occurrence boundary
+-- When before_date equals the 1500th occurrence and inc=TRUE, it should
+-- return that occurrence (2024-02-08).
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() >1000 cap',
+    'Test 33.2: before() inc=TRUE at exact 1500th occurrence',
+    assert_equals(
+        'before inc=TRUE at 1500th',
+        '2024-02-08 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=1500',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2024-02-08 00:00:00'::TIMESTAMP,
+            TRUE
+        ))::TEXT
+    );
+
+-- Test 33.3: all() caps at 1000 for the same COUNT=1500 rule
+-- Confirms the 1000-result cap exists in all(), proving that before()
+-- bypasses it. The 1000th daily occurrence from 2020-01-01 is
+-- 2020-01-01 + 999 days = 2022-09-27.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'before() >1000 cap',
+    'Test 33.3: all() caps at 1000 for COUNT=1500 rule',
+    assert_equals(
+        'all() capped at 1000',
+        '1000',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=DAILY;COUNT=1500',
+            '2020-01-01 00:00:00'::TIMESTAMP
+        ))
     );
 
 -- Fail if any tests failed

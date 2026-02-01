@@ -689,6 +689,310 @@ VALUES ('Sub-Day between()', 'SECONDLY between() with inc=true includes boundari
     )
 );
 
+-- ============================================================================
+-- SECTION 8: WEEKLY TIMESTAMPTZ TZ Generator Boundary Check Regression
+-- ============================================================================
+\echo ''
+\echo '--- Section 8: WEEKLY TZ Generator Boundary Checks ---'
+
+-- Test 8.1: WEEKLY + BYMONTH + UNTIL via TIMESTAMPTZ API
+-- Regression test: the subday TZ generator WEEKLY branch previously had EXIT WHEN
+-- checks (UNTIL, maxdate) INSIDE the BYxxx filter IF block. When BYMONTH filtered
+-- out an occurrence past UNTIL, the loop would not exit and would continue scanning
+-- weeks indefinitely until hitting the 10-year safety cap. With the fix, EXIT WHEN
+-- checks run BEFORE the filter block, so the loop terminates promptly at UNTIL.
+--
+-- WEEKLY on Mondays starting 2025-01-06, BYMONTH=1 limits to January only,
+-- UNTIL=2025-02-28 means the rule should stop checking after February.
+-- Expected: only the January Mondays (Jan 6, 13, 20, 27).
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-06 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-13 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-20 10:00:00-05'::TIMESTAMPTZ,
+        '2025-01-27 10:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=WEEKLY;BYMONTH=1;UNTIL=20250228T235959Z',
+        '2025-01-06 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('WEEKLY TZ Boundary',
+        'WEEKLY+BYMONTH+UNTIL via TIMESTAMPTZ exits at UNTIL not at safety cap',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- ============================================================================
+-- SECTION 9: MONTHLY SKIP via Subday TZ Generator (TIMESTAMPTZ API)
+-- ============================================================================
+\echo ''
+\echo '--- Section 9: MONTHLY SKIP via Subday TZ Generator ---'
+
+-- Test 9.1: SKIP=OMIT + MONTHLY via TIMESTAMPTZ API
+-- Starting Jan 31, months without day 31 are omitted.
+-- Jan(31)→Feb(28,skip)→Mar(31)→Apr(30,skip)→May(31)→Jun(30,skip)→Jul(31)→Aug(31)
+-- Expected: Jan 31, Mar 31, May 31, Jul 31, Aug 31
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-05-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-07-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-08-31 10:00:00-04'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MONTHLY;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=5',
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('MONTHLY SKIP TZ',
+        'SKIP=OMIT+MONTHLY skips months without day 31 via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 9.2: SKIP=BACKWARD + MONTHLY via TIMESTAMPTZ API
+-- Starting Jan 31, short months fall back to last day.
+-- Jan 31, Feb 28, Mar 31, Apr 30, May 31
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        '2025-02-28 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-04-30 10:00:00-04'::TIMESTAMPTZ,
+        '2025-05-31 10:00:00-04'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MONTHLY;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=5',
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('MONTHLY SKIP TZ',
+        'SKIP=BACKWARD+MONTHLY falls back to last day via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 9.3: SKIP=FORWARD + MONTHLY via TIMESTAMPTZ API
+-- Starting Jan 31, short months advance to 1st of next month.
+-- Jan 31, Mar 1 (Feb forward), Mar 31, May 1 (Apr forward), May 31
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-01 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-05-01 10:00:00-04'::TIMESTAMPTZ,
+        '2025-05-31 10:00:00-04'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MONTHLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=5',
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('MONTHLY SKIP TZ',
+        'SKIP=FORWARD+MONTHLY advances to 1st of next month via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 9.4: SKIP=OMIT + MONTHLY + INTERVAL=2 via TIMESTAMPTZ API
+-- Starting Jan 31, INTERVAL=2: Jan→Mar→May→Jul→Sep→Nov→Jan 2026
+-- Sep has 30 days (omit), Nov has 30 days (omit), Jan 2026 has 31 days.
+-- Expected: Jan 31, Mar 31, May 31, Jul 31, Jan 31 2026
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-05-31 10:00:00-04'::TIMESTAMPTZ,
+        '2025-07-31 10:00:00-04'::TIMESTAMPTZ,
+        '2026-01-31 10:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MONTHLY;INTERVAL=2;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=5',
+        '2025-01-31 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('MONTHLY SKIP TZ',
+        'SKIP=OMIT+MONTHLY+INTERVAL=2 skips short months via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- ============================================================================
+-- SECTION 10: YEARLY SKIP via Subday TZ Generator (TIMESTAMPTZ API)
+-- ============================================================================
+\echo ''
+\echo '--- Section 10: YEARLY SKIP via Subday TZ Generator ---'
+
+-- Test 10.1: SKIP=OMIT + YEARLY via TIMESTAMPTZ API
+-- Starting Feb 29, 2024 (leap year). Non-leap years are omitted.
+-- Leap years within 10-year cap (2024-2034): 2024, 2028, 2032
+-- The all() function caps at 10 years from dtstart, so 2036 and 2040 are beyond range.
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        '2028-02-29 10:00:00-05'::TIMESTAMPTZ,
+        '2032-02-29 10:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=YEARLY;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=5',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('YEARLY SKIP TZ',
+        'SKIP=OMIT+YEARLY only returns leap years via TIMESTAMPTZ API (10yr cap)',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 10.2: SKIP=FORWARD + YEARLY via TIMESTAMPTZ API
+-- Starting Feb 29, 2024. Non-leap years advance to Mar 1.
+-- 2024: Feb 29, 2025: Mar 1, 2026: Mar 1, 2027: Mar 1, 2028: Feb 29
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-01 10:00:00-05'::TIMESTAMPTZ,
+        '2026-03-01 10:00:00-05'::TIMESTAMPTZ,
+        '2027-03-01 10:00:00-05'::TIMESTAMPTZ,
+        '2028-02-29 10:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=YEARLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=5',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('YEARLY SKIP TZ',
+        'SKIP=FORWARD+YEARLY advances to Mar 1 in non-leap years via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 10.3: SKIP=BACKWARD + YEARLY via TIMESTAMPTZ API
+-- Starting Feb 29, 2024. Non-leap years fall back to Feb 28.
+-- 2024: Feb 29, 2025: Feb 28, 2026: Feb 28, 2027: Feb 28, 2028: Feb 29
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        '2025-02-28 10:00:00-05'::TIMESTAMPTZ,
+        '2026-02-28 10:00:00-05'::TIMESTAMPTZ,
+        '2027-02-28 10:00:00-05'::TIMESTAMPTZ,
+        '2028-02-29 10:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=YEARLY;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=5',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('YEARLY SKIP TZ',
+        'SKIP=BACKWARD+YEARLY falls back to Feb 28 in non-leap years via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test 10.4: SKIP=OMIT + YEARLY + INTERVAL=2 via TIMESTAMPTZ API
+-- Starting Feb 29, 2024, INTERVAL=2: 2024→2026→2028→2030→2032→...
+-- Feb 29 exists in: 2024 (yes), 2026 (no), 2028 (yes), 2030 (no), 2032 (yes)
+-- The all() function caps at 10 years from dtstart (2034), so only 3 leap years are reachable.
+-- Expected: Feb 29 2024, Feb 29 2028, Feb 29 2032
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    expected := ARRAY[
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        '2028-02-29 10:00:00-05'::TIMESTAMPTZ,
+        '2032-02-29 10:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=YEARLY;INTERVAL=2;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=5',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('YEARLY SKIP TZ',
+        'SKIP=OMIT+YEARLY+INTERVAL=2 skips non-leap years via TIMESTAMPTZ API (10yr cap)',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
 \echo ''
 \echo 'Overall Summary:'
 SELECT

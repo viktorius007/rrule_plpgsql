@@ -22,6 +22,9 @@
  * - monthly_set() - Monthly occurrence generation
  * - yearly_set() - Yearly occurrence generation
  * - calculate_safe_iteration_limit() - DoS protection
+ * - rrule_bysetpos_filter() - BYSETPOS cursor-based filtering
+ * - rrule_yearly_byyearday_set() - Yearly BYYEARDAY generation
+ * - rrule_yearly_byweekno_set() - Yearly BYWEEKNO generation
  *
  * Usage:
  *   psql -d your_database -f tests/test_internal_functions.sql
@@ -604,6 +607,384 @@ BEGIN
         CASE WHEN test_passed THEN 'PASS' ELSE 'FAIL - No exception for invalid timezone' END);
 END;
 $$;
+
+-- ============================================================================
+-- SECTION 22: rrule_bysetpos_filter() Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 22: rrule_bysetpos_filter() ---'
+
+-- Helper function to test rrule_bysetpos_filter with known data.
+-- Opens a SCROLL cursor over 5 fixed timestamps, calls the filter, returns results as sorted array.
+CREATE OR REPLACE FUNCTION test_bysetpos(bysetpos INT[])
+RETURNS TEXT AS $$
+DECLARE
+    cur REFCURSOR := 'test_bysetpos_cur';
+    results TIMESTAMP WITH TIME ZONE[];
+BEGIN
+    OPEN cur SCROLL FOR
+        SELECT ts FROM (
+            VALUES
+                ('2025-01-01 10:00:00+00'::TIMESTAMPTZ),
+                ('2025-01-02 10:00:00+00'::TIMESTAMPTZ),
+                ('2025-01-03 10:00:00+00'::TIMESTAMPTZ),
+                ('2025-01-04 10:00:00+00'::TIMESTAMPTZ),
+                ('2025-01-05 10:00:00+00'::TIMESTAMPTZ)
+        ) AS v(ts)
+        ORDER BY ts;
+    SELECT array_agg(d ORDER BY d) INTO results
+    FROM rrule.rrule_bysetpos_filter(cur, bysetpos) d;
+    RETURN COALESCE(results::TEXT, '{}');
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+-- Test 22.1: NULL bysetpos passthrough — all 5 rows returned
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'NULL bysetpos returns all rows',
+    assert_equals('NULL passthrough',
+        '{"2025-01-01 10:00:00+00","2025-01-02 10:00:00+00","2025-01-03 10:00:00+00","2025-01-04 10:00:00+00","2025-01-05 10:00:00+00"}',
+        test_bysetpos(NULL));
+
+-- Test 22.2: Positive BYSETPOS=1 — first element
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=1 returns first element',
+    assert_equals('Pos 1',
+        '{"2025-01-01 10:00:00+00"}',
+        test_bysetpos(ARRAY[1]));
+
+-- Test 22.3: Positive BYSETPOS=3 — third element
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=3 returns third element',
+    assert_equals('Pos 3',
+        '{"2025-01-03 10:00:00+00"}',
+        test_bysetpos(ARRAY[3]));
+
+-- Test 22.4: Multiple positive BYSETPOS=1,2,3
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=1,2,3 returns first three',
+    assert_equals('Pos 1,2,3',
+        '{"2025-01-01 10:00:00+00","2025-01-02 10:00:00+00","2025-01-03 10:00:00+00"}',
+        test_bysetpos(ARRAY[1,2,3]));
+
+-- Test 22.5: Negative BYSETPOS=-1 — last element
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=-1 returns last element',
+    assert_equals('Neg -1',
+        '{"2025-01-05 10:00:00+00"}',
+        test_bysetpos(ARRAY[-1]));
+
+-- Test 22.6: Negative BYSETPOS=-2 — second-to-last element
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=-2 returns second-to-last',
+    assert_equals('Neg -2',
+        '{"2025-01-04 10:00:00+00"}',
+        test_bysetpos(ARRAY[-2]));
+
+-- Test 22.7: Mixed positive and negative BYSETPOS=1,-1
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=1,-1 returns first and last',
+    assert_equals('Mixed 1,-1',
+        '{"2025-01-01 10:00:00+00","2025-01-05 10:00:00+00"}',
+        test_bysetpos(ARRAY[1,-1]));
+
+-- Test 22.8: Position beyond set size — BYSETPOS=10 silently skipped
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=10 beyond set size returns empty',
+    assert_equals('Beyond size',
+        '{}',
+        test_bysetpos(ARRAY[10]));
+
+-- Test 22.9: Negative beyond set size — BYSETPOS=-10 silently skipped
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=-10 beyond set size returns empty',
+    assert_equals('Neg beyond size',
+        '{}',
+        test_bysetpos(ARRAY[-10]));
+
+-- Test 22.10: Deduplication — BYSETPOS=1,1 returns only one copy
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=1,1 deduplicates',
+    assert_equals('Dedup 1,1',
+        '{"2025-01-01 10:00:00+00"}',
+        test_bysetpos(ARRAY[1,1]));
+
+-- Test 22.11: Deduplication with positive and negative resolving to same element
+-- BYSETPOS=5,-1 both point to the 5th (last) element in a 5-element set
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=5,-1 deduplicates same element',
+    assert_equals('Dedup 5,-1',
+        '{"2025-01-05 10:00:00+00"}',
+        test_bysetpos(ARRAY[5,-1]));
+
+-- Test 22.12: Mixed valid and beyond-size — BYSETPOS=1,10 returns only valid
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=1,10 skips out-of-range position',
+    assert_equals('Partial valid',
+        '{"2025-01-01 10:00:00+00"}',
+        test_bysetpos(ARRAY[1,10]));
+
+-- Test 22.13: Results are sorted — BYSETPOS=3,1 returns in chronological order
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=3,1 returns sorted',
+    assert_equals('Sort 3,1',
+        '{"2025-01-01 10:00:00+00","2025-01-03 10:00:00+00"}',
+        test_bysetpos(ARRAY[3,1]));
+
+-- Test 22.14: All negative — BYSETPOS=-1,-3,-5 picks last, 3rd-to-last, 5th-to-last (= 1st)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_bysetpos_filter()', 'BYSETPOS=-1,-3,-5 returns 1st, 3rd, 5th',
+    assert_equals('All neg -1,-3,-5',
+        '{"2025-01-01 10:00:00+00","2025-01-03 10:00:00+00","2025-01-05 10:00:00+00"}',
+        test_bysetpos(ARRAY[-1,-3,-5]));
+
+-- ============================================================================
+-- SECTION 23: rrule_yearly_byyearday_set() Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 23: rrule_yearly_byyearday_set() ---'
+
+-- Test 23.1: Basic positive yearday — BYYEARDAY=1 (Jan 1)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=1 returns Jan 1',
+    assert_equals('Yearday 1',
+        '{"2025-01-01 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=1;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 23.2: Basic positive yearday — BYYEARDAY=365 (Dec 31 in non-leap year 2025)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=365 returns Dec 31 (non-leap)',
+    assert_equals('Yearday 365',
+        '{"2025-12-31 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=365;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 23.3: Negative yearday — BYYEARDAY=-1 (last day of year = Dec 31)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=-1 returns Dec 31',
+    assert_equals('Yearday -1',
+        '{"2025-12-31 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=-1;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 23.4: Negative yearday — BYYEARDAY=-365 (Jan 1 in non-leap year 2025)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=-365 returns Jan 1 (non-leap)',
+    assert_equals('Yearday -365',
+        '{"2025-01-01 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=-365;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 23.5: Yearday exceeding year length — BYYEARDAY=366 in non-leap year 2025 (365 days)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=366 skipped in non-leap year',
+    assert_equals('Yearday 366 non-leap', '0',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=366;COUNT=5'),
+            NULL
+        )));
+
+-- Test 23.6: Negative yearday exceeding year length — BYYEARDAY=-366 in non-leap year (365 days)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=-366 skipped in non-leap year',
+    assert_equals('Yearday -366 non-leap', '0',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=-366;COUNT=5'),
+            NULL
+        )));
+
+-- Test 23.7: Leap year — BYYEARDAY=366 in 2024 (leap year) returns Dec 31
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=366 returns Dec 31 in leap year',
+    assert_equals('Yearday 366 leap',
+        '{"2024-12-31 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=366;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 23.8: Multiple yeardays — BYYEARDAY=1,100,-1 in 2025
+-- Day 1 = Jan 1, Day 100 = Apr 10, Day -1 = Dec 31
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'BYYEARDAY=1,100,-1 returns three dates',
+    assert_equals('Multi yearday',
+        '{"2025-01-01 10:00:00+00","2025-04-10 10:00:00+00","2025-12-31 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=1,100,-1;COUNT=10'),
+            NULL
+        ) d));
+
+-- Test 23.9: NULL BYYEARDAY — returns the input timestamp unchanged (passthrough)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'NULL BYYEARDAY returns input timestamp',
+    assert_equals('NULL passthrough',
+        '{"2025-06-15 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-06-15 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-06-15 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 23.10: max_results limiting — BYYEARDAY=1,100,-1 with max_results=2
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'max_results=2 limits output',
+    assert_equals('Max results limit', '2',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=1,100,-1;COUNT=10'),
+            2
+        )));
+
+-- Test 23.11: Time preservation — time component from after_ts is preserved
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byyearday_set()', 'Time component preserved from after_ts',
+    assert_equals('Time preserved',
+        '{"2025-01-01 14:30:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byyearday_set(
+            '2025-01-01 14:30:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 14:30:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYYEARDAY=1;COUNT=5'),
+            NULL
+        ) d));
+
+-- ============================================================================
+-- SECTION 24: rrule_yearly_byweekno_set() Tests
+-- ============================================================================
+\echo ''
+\echo '--- Section 24: rrule_yearly_byweekno_set() ---'
+
+-- Test 24.1: Basic BYWEEKNO=1 — first ISO week of 2025
+-- 2025-01-01 is Wednesday. ISO week 1 starts Mon Dec 30 2024.
+-- With WKST=MO (default), week 1 start = 2024-12-29 (Mon).
+-- But year filter (line 1781) restricts to dates in 2025, so returns 2024-12-29 with time.
+-- Actually: week1_start = get_week_start(year_start + 3 days, wkst).
+-- year_start = 2025-01-01, +3 days = 2025-01-04 (Saturday).
+-- get_week_start('2025-01-04', 'MO') = 2024-12-29 (Monday).
+-- week_start for week 1 = 2024-12-29 + time = 2024-12-29 10:00.
+-- Year filter: date_part('year', '2024-12-29') = 2024 != 2025 → skipped.
+-- So BYWEEKNO=1 without BYDAY in 2025 returns nothing because week start is in 2024.
+-- Let's use a year where week 1 starts in the same year. 2024: Jan 1 = Monday.
+-- year_start = 2024-01-01, +3 = 2024-01-04 (Thu). get_week_start('2024-01-04', 'MO') = 2024-01-01.
+-- week_start = 2024-01-01 10:00. Year 2024 = 2024. Match!
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1 returns week 1 start in 2024',
+    assert_equals('Week 1 start',
+        '{"2024-01-01 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 24.2: BYWEEKNO=-1 — last week of 2024
+-- 2024 has 52 ISO weeks (WKST=MO). Week -1 = week 52.
+-- week 52 start = week1_start + 51*7 days = 2024-01-01 + 357 = 2024-12-23.
+-- week_start = 2024-12-23 10:00. Year = 2024. Match!
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=-1 returns last week of 2024',
+    assert_equals('Last week',
+        '{"2024-12-23 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=-1;COUNT=5'),
+            NULL
+        ) d));
+
+-- Test 24.3: BYWEEKNO=-53 in a 52-week year — normalized_week = 52 + (-53) + 1 = 0 → skipped
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=-53 in 52-week year produces no result',
+    assert_equals('Week -53 skipped', '0',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=-53;COUNT=5'),
+            NULL
+        )));
+
+-- Test 24.4: BYWEEKNO=1 with BYDAY=MO,FR — specific days in week 1 of 2024
+-- Week 1 starts 2024-01-01 (Mon). MO = 2024-01-01, FR = 2024-01-05.
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1;BYDAY=MO,FR returns Mon and Fri of week 1',
+    assert_equals('Week 1 MO+FR',
+        '{"2024-01-01 10:00:00+00","2024-01-05 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO,FR;COUNT=10'),
+            NULL
+        ) d));
+
+-- Test 24.5: Year boundary — BYWEEKNO=1 in 2025 where week 1 starts in Dec 2024
+-- Week 1 of 2025 starts 2024-12-29 (Mon). Without BYDAY, returns week_start.
+-- Year filter: date_part('year', '2024-12-29') = 2024 != 2025 → no results returned.
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1 in 2025 cross-year filtered out',
+    assert_equals('Cross-year filter', '0',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;COUNT=5'),
+            NULL
+        )));
+
+-- Test 24.6: Year boundary with BYDAY — BYWEEKNO=1;BYDAY=MO,TU,TH in 2025
+-- ISO week 1 of 2025 spans Dec 30 2024 to Jan 5 2025.
+-- MO=Dec 30 (2024, filtered), TU=Dec 31 (2024, filtered), TH=Jan 2 (2025, kept).
+-- Year filter keeps only dates in 2025.
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1;BYDAY=MO,TU,TH cross-year keeps only 2025 dates',
+    assert_equals('Cross-year BYDAY',
+        '{"2025-01-02 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO,TU,TH;COUNT=10'),
+            NULL
+        ) d));
+
+-- Test 24.7: Multiple week numbers — BYWEEKNO=1,10 in 2024
+-- Week 1 start = 2024-01-01. Week 10 start = 2024-01-01 + 9*7 = 2024-03-04.
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1,10 returns two week starts',
+    assert_equals('Two weeks',
+        '{"2024-01-01 10:00:00+00","2024-03-04 10:00:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1,10;COUNT=10'),
+            NULL
+        ) d));
+
+-- Test 24.8: max_results limiting — BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR with max_results=3
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'max_results=3 limits BYDAY expansion',
+    assert_equals('Max results', '3',
+        (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 10:00:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO,TU,WE,TH,FR;COUNT=10'),
+            3
+        )));
+
+-- Test 24.9: Time preservation — time component from after_ts is preserved
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'rrule_yearly_byweekno_set()', 'Time component preserved from after_ts',
+    assert_equals('Time preserved',
+        '{"2024-01-01 14:30:00+00"}',
+        (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
+            '2024-01-01 14:30:00+00'::TIMESTAMPTZ,
+            rrule.parse_rrule_parts('2024-01-01 14:30:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;COUNT=5'),
+            NULL
+        ) d));
 
 -- ============================================================================
 -- TEST RESULTS SUMMARY

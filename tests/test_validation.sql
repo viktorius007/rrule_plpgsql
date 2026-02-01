@@ -1329,6 +1329,28 @@ VALUES ('INTERVAL Validation', 'INTERVAL=-1 (should be rejected)',
     )
 );
 
+-- Test 9.3: UNTIL with syntactically valid but semantically invalid date (month 13)
+-- Passes the regex check ([0-9TZ]+) and the Z-suffix check, but fails the ::TIMESTAMPTZ cast.
+-- This exercises the EXCEPTION WHEN OTHERS handler in parse_rrule_parts().
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('UNTIL Cast Validation', 'UNTIL=20251301T000000Z (month 13, invalid cast)',
+    assert_rrule_rejected(
+        'UNTIL invalid cast month 13',
+        'FREQ=DAILY;UNTIL=20251301T000000Z;COUNT=5',
+        '%UNTIL%20251301T000000Z%is not a valid timestamp%'
+    )
+);
+
+-- Test 9.4: UNTIL with syntactically valid but semantically invalid date (Feb 30)
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('UNTIL Cast Validation', 'UNTIL=20250230T000000Z (Feb 30, invalid cast)',
+    assert_rrule_rejected(
+        'UNTIL invalid cast Feb 30',
+        'FREQ=DAILY;UNTIL=20250230T000000Z;COUNT=5',
+        '%UNTIL%20250230T000000Z%is not a valid timestamp%'
+    )
+);
+
 -- ============================================================================
 -- SECTION 10: Additional Error Rejection Tests
 -- ============================================================================

@@ -552,12 +552,13 @@ BEGIN
                          ELSE NULL END) w
                 WHERE w::TIMESTAMP >= min_in_period
             LOOP
+                -- Time boundary checks apply regardless of BYxxx filters
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN current > maxdate;
                 IF rrule.test_byyearday_rule(current::TIMESTAMPTZ, rule.byyearday)
                    AND rrule.test_bymonthday_rule(current::TIMESTAMPTZ, rule.bymonthday)
                    AND rrule.test_bymonth_rule(current::TIMESTAMPTZ, rule.bymonth)
                 THEN
-                    EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
-                    EXIT WHEN current > maxdate;
                     occurrence_count := occurrence_count + 1;
                     EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
                     IF current >= mindate THEN

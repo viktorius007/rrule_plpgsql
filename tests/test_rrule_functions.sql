@@ -16,6 +16,7 @@
  * 7. Complex combinations
  * 8. Edge cases (leap years, month boundaries)
  * 9. Advanced BYxxx combinations (BYMONTH+BYDAY, BYYEARDAY, BYDAY+BYMONTHDAY)
+ * 10. YEARLY + BYDAY/BYMONTHDAY without BYMONTH (12-month scan path)
  *
  * Usage:
  *   psql -d your_database -f test_rrule_functions.sql
@@ -411,6 +412,93 @@ INSERT INTO test_results VALUES (22, 'MONTHLY BYDAY=MO + BYMONTHDAY=1,8,15,22,29
             '2025-12-01 10:00:00'::TIMESTAMP   -- Mon Dec 1
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=MONTHLY;BYDAY=MO;BYMONTHDAY=1,8,15,22,29;COUNT=6', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- ============================================================================
+-- TEST GROUP 10: YEARLY + BYDAY/BYMONTHDAY without BYMONTH (12-month scan)
+-- ============================================================================
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 10: YEARLY + BYDAY/BYMONTHDAY without BYMONTH'
+\echo '==================================================================='
+
+-- Test 23: YEARLY+BYDAY=FR without BYMONTH — every Friday across all months
+-- Exercises the yearly_set() branch: generate_series(1,12) CROSS JOIN monthly_set()
+-- with BYDAY expansion (non-ordinal)
+INSERT INTO test_results VALUES (23, 'YEARLY BYDAY=FR without BYMONTH (all Fridays)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=FR without BYMONTH (all Fridays)',
+        ARRAY[
+            '2025-01-03 10:00:00'::TIMESTAMP,  -- 1st Friday of Jan
+            '2025-01-10 10:00:00'::TIMESTAMP,
+            '2025-01-17 10:00:00'::TIMESTAMP,
+            '2025-01-24 10:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-02-07 10:00:00'::TIMESTAMP,  -- 1st Friday of Feb
+            '2025-02-14 10:00:00'::TIMESTAMP,
+            '2025-02-21 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-03-07 10:00:00'::TIMESTAMP   -- 1st Friday of Mar
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYDAY=FR;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 24: YEARLY+BYMONTHDAY=31 without BYMONTH — skips months with <31 days
+-- Only Jan(31), Mar(31), May(31), Jul(31), Aug(31), Oct(31), Dec(31) have 31 days
+-- Feb(28/29), Apr(30), Jun(30), Sep(30), Nov(30) are skipped
+INSERT INTO test_results VALUES (24, 'YEARLY BYMONTHDAY=31 without BYMONTH (skip short months)',
+    assert_occurrences_equal(
+        'YEARLY BYMONTHDAY=31 without BYMONTH (skip short months)',
+        ARRAY[
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-05-31 10:00:00'::TIMESTAMP,
+            '2025-07-31 10:00:00'::TIMESTAMP,
+            '2025-08-31 10:00:00'::TIMESTAMP,
+            '2025-10-31 10:00:00'::TIMESTAMP,
+            '2025-12-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTHDAY=31;COUNT=7', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 25: YEARLY+BYMONTHDAY=29 without BYMONTH — skips Feb 29 in non-leap years
+-- 2025 is non-leap: 11 months have day 29 (all except Feb)
+-- 2026 is non-leap: Feb 29 skipped again, so COUNT=13 spans into 2026
+INSERT INTO test_results VALUES (25, 'YEARLY BYMONTHDAY=29 without BYMONTH (leap year skip)',
+    assert_occurrences_equal(
+        'YEARLY BYMONTHDAY=29 without BYMONTH (leap year skip)',
+        ARRAY[
+            '2025-01-29 10:00:00'::TIMESTAMP,
+            '2025-03-29 10:00:00'::TIMESTAMP,  -- Feb skipped (non-leap)
+            '2025-04-29 10:00:00'::TIMESTAMP,
+            '2025-05-29 10:00:00'::TIMESTAMP,
+            '2025-06-29 10:00:00'::TIMESTAMP,
+            '2025-07-29 10:00:00'::TIMESTAMP,
+            '2025-08-29 10:00:00'::TIMESTAMP,
+            '2025-09-29 10:00:00'::TIMESTAMP,
+            '2025-10-29 10:00:00'::TIMESTAMP,
+            '2025-11-29 10:00:00'::TIMESTAMP,
+            '2025-12-29 10:00:00'::TIMESTAMP,
+            '2026-01-29 10:00:00'::TIMESTAMP,  -- Wraps to next year
+            '2026-03-29 10:00:00'::TIMESTAMP   -- Feb 2026 also skipped (non-leap)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYMONTHDAY=29;COUNT=13', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- Test 26: YEARLY+BYDAY=MO+BYSETPOS=1,-1 without BYMONTH — first and last Monday of year
+-- BYSETPOS operates on the full yearly candidate set (all Mondays across 12 months)
+-- BYSETPOS=1 picks the first Monday, BYSETPOS=-1 picks the last Monday of the year
+INSERT INTO test_results VALUES (26, 'YEARLY BYDAY=MO BYSETPOS=1,-1 without BYMONTH',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=MO BYSETPOS=1,-1 without BYMONTH',
+        ARRAY[
+            '2025-01-06 10:00:00'::TIMESTAMP,  -- First Monday of 2025
+            '2025-12-29 10:00:00'::TIMESTAMP,  -- Last Monday of 2025
+            '2026-01-05 10:00:00'::TIMESTAMP,  -- First Monday of 2026
+            '2026-12-28 10:00:00'::TIMESTAMP   -- Last Monday of 2026
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYDAY=MO;BYSETPOS=1,-1;COUNT=4', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================

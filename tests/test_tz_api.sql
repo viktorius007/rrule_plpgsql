@@ -1746,6 +1746,11 @@ ORDER BY
         WHEN 'DST Gap Times' THEN 14
         WHEN 'Half-Hour Offsets' THEN 15
         WHEN 'Southern Hemisphere DST' THEN 16
+        WHEN 'YEARLY SKIP Drift TZ' THEN 17
+        WHEN 'MONTHLY SKIP Drift TZ' THEN 18
+        WHEN 'SKIP INTERVAL Parity TZ' THEN 19
+        WHEN 'NULL Input TZ' THEN 20
+        WHEN 'Edge Cases TZ' THEN 21
     END,
     test_name;
 
@@ -2295,6 +2300,245 @@ BEGIN
     END;
 END;
 $$;
+
+-- ================================================================================================================
+-- TEST SUITE 21: Edge Cases for after(), before(), overlaps(), and TZ generator truncation
+-- ================================================================================================================
+\echo ''
+\echo '=================================================='
+\echo 'TEST SUITE 21: TIMESTAMPTZ API Edge Cases'
+\echo '=================================================='
+\echo ''
+
+-- Test 21.1: after() with count=0 should return no rows (early return)
+DO $$
+DECLARE
+    result_count INT;
+BEGIN
+    SELECT COUNT(*) INTO result_count
+    FROM rrule."after"(
+        'FREQ=DAILY;COUNT=10',
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-01 00:00:00+00'::TIMESTAMPTZ,
+        0,       -- count=0
+        'UTC',
+        TRUE     -- inc
+    );
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'after() with count=0 returns no rows',
+        result_count = 0,
+        result_count::TEXT,
+        '0'
+    );
+
+    RAISE NOTICE 'Test 21.1: after() count=0 - Result count: %', result_count;
+END;
+$$;
+
+-- Test 21.2: after() with count=-1 should return no rows (early return)
+DO $$
+DECLARE
+    result_count INT;
+BEGIN
+    SELECT COUNT(*) INTO result_count
+    FROM rrule."after"(
+        'FREQ=DAILY;COUNT=10',
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-01 00:00:00+00'::TIMESTAMPTZ,
+        -1,      -- count=-1
+        'UTC',
+        TRUE
+    );
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'after() with count=-1 returns no rows',
+        result_count = 0,
+        result_count::TEXT,
+        '0'
+    );
+
+    RAISE NOTICE 'Test 21.2: after() count=-1 - Result count: %', result_count;
+END;
+$$;
+
+-- Test 21.3: before() with count=0 should return no rows (early return)
+DO $$
+DECLARE
+    result_count INT;
+BEGIN
+    SELECT COUNT(*) INTO result_count
+    FROM rrule."before"(
+        'FREQ=DAILY;COUNT=10',
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-15 00:00:00+00'::TIMESTAMPTZ,
+        0,       -- count=0
+        'UTC',
+        TRUE
+    );
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'before() with count=0 returns no rows',
+        result_count = 0,
+        result_count::TEXT,
+        '0'
+    );
+
+    RAISE NOTICE 'Test 21.3: before() count=0 - Result count: %', result_count;
+END;
+$$;
+
+-- Test 21.4: before() with count=-1 should return no rows (early return)
+DO $$
+DECLARE
+    result_count INT;
+BEGIN
+    SELECT COUNT(*) INTO result_count
+    FROM rrule."before"(
+        'FREQ=DAILY;COUNT=10',
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-15 00:00:00+00'::TIMESTAMPTZ,
+        -1,      -- count=-1
+        'UTC',
+        TRUE
+    );
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'before() with count=-1 returns no rows',
+        result_count = 0,
+        result_count::TEXT,
+        '0'
+    );
+
+    RAISE NOTICE 'Test 21.4: before() count=-1 - Result count: %', result_count;
+END;
+$$;
+
+-- Test 21.5: overlaps() with NULL mindate uses COALESCE default (CURRENT_TIMESTAMP - 10 years)
+-- A daily recurring event starting 2025-01-01 should overlap with a range where mindate is NULL
+-- and maxdate is well after dtstart. The COALESCE sets mindate to ~10 years before now.
+DO $$
+DECLARE
+    result BOOLEAN;
+BEGIN
+    SELECT rrule."overlaps"(
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-01 11:00:00+00'::TIMESTAMPTZ,
+        'FREQ=DAILY;COUNT=30',
+        NULL,    -- mindate NULL → COALESCE to CURRENT_TIMESTAMP - 10 years
+        '2025-02-15 00:00:00+00'::TIMESTAMPTZ,
+        'UTC'
+    ) INTO result;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'overlaps() with NULL mindate uses COALESCE default',
+        result = TRUE,
+        result::TEXT,
+        'true'
+    );
+
+    RAISE NOTICE 'Test 21.5: overlaps() NULL mindate - Result: %', result;
+END;
+$$;
+
+-- Test 21.6: overlaps() with NULL maxdate uses COALESCE default (CURRENT_TIMESTAMP + 10 years)
+-- A daily recurring event starting 2025-01-01 should overlap with a range where maxdate is NULL
+-- and mindate is within the event range. The COALESCE sets maxdate to ~10 years after now.
+DO $$
+DECLARE
+    result BOOLEAN;
+BEGIN
+    SELECT rrule."overlaps"(
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-01 11:00:00+00'::TIMESTAMPTZ,
+        'FREQ=DAILY;COUNT=30',
+        '2025-01-05 00:00:00+00'::TIMESTAMPTZ,
+        NULL,    -- maxdate NULL → COALESCE to CURRENT_TIMESTAMP + 10 years
+        'UTC'
+    ) INTO result;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'overlaps() with NULL maxdate uses COALESCE default',
+        result = TRUE,
+        result::TEXT,
+        'true'
+    );
+
+    RAISE NOTICE 'Test 21.6: overlaps() NULL maxdate - Result: %', result;
+END;
+$$;
+
+-- Test 21.7: TZ generator truncation at 1000 results for rules without COUNT/UNTIL
+-- FREQ=DAILY with no COUNT/UNTIL generates indefinitely. The TZ all() caps at 1000.
+-- We verify the result count is exactly 1000 (the cap limit).
+DO $$
+DECLARE
+    result_count INT;
+BEGIN
+    SELECT COUNT(*) INTO result_count
+    FROM rrule."all"(
+        'FREQ=DAILY',
+        '2020-01-01 10:00:00+00'::TIMESTAMPTZ,
+        'UTC'
+    );
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'TZ all() truncates at 1000 for rule without COUNT/UNTIL',
+        result_count = 1000,
+        result_count::TEXT,
+        '1000'
+    );
+
+    RAISE NOTICE 'Test 21.7: TZ generator truncation - Result count: %', result_count;
+END;
+$$;
+
+-- Test 21.8: before() sliding window trimming returns only last N occurrences
+-- FREQ=DAILY;COUNT=50 starting Jan 1 produces 50 days (Jan 1 through Feb 19).
+-- before() with before_date=2025-02-20, count=3, inc=TRUE should return
+-- the last 3 occurrences on or before Feb 20: Feb 17, Feb 18, Feb 19.
+-- This exercises the array slicing at src/rrule.sql:3249-3252.
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    result_count INT;
+    expected TIMESTAMPTZ[];
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."before"(
+        'FREQ=DAILY;COUNT=50',
+        '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+        '2025-02-20 00:00:00+00'::TIMESTAMPTZ,
+        3,       -- only last 3
+        'UTC',
+        TRUE     -- inclusive
+    ) ts;
+
+    expected := ARRAY[
+        '2025-02-17 10:00:00+00'::TIMESTAMPTZ,
+        '2025-02-18 10:00:00+00'::TIMESTAMPTZ,
+        '2025-02-19 10:00:00+00'::TIMESTAMPTZ
+    ];
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'before() sliding window returns last 3 of 50 occurrences',
+        result_count = 3 AND results = expected,
+        result_count::TEXT || ' results: ' || COALESCE(results::TEXT, 'NULL'),
+        '3 results: ' || expected::TEXT
+    );
+
+    RAISE NOTICE 'Test 21.8: before() sliding window - Count: %, Results: %', result_count, results;
+END;
+$$;
+
 
 -- Fail transaction if any tests failed
 DO $$
