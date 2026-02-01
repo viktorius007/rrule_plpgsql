@@ -335,6 +335,47 @@ INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'calculate_safe_iteration_limit()', 'NULL count + NULL max = NULL',
     assert_true('Both NULL', rrule.calculate_safe_iteration_limit('DAILY', NULL, NULL) IS NULL);
 
+
+-- INTERVAL-aware DoS caps: SECONDLY with large INTERVAL
+-- FLOOR(3600 / 3600) = 1, so effective_max=10000 -> LEAST(10000, 1) = 1
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'SECONDLY INTERVAL=3600 caps to 1',
+    assert_equals('Secondly large interval', '1', rrule.calculate_safe_iteration_limit('SECONDLY'::TEXT, NULL::INT, 10000, 3600)::TEXT);
+
+-- INTERVAL-aware DoS caps: SECONDLY with INTERVAL=60
+-- FLOOR(3600 / 60) = 60, so effective_max=10000 -> LEAST(10000, 60) = 60
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'SECONDLY INTERVAL=60 caps to 60',
+    assert_equals('Secondly interval 60', '60', rrule.calculate_safe_iteration_limit('SECONDLY'::TEXT, NULL::INT, 10000, 60)::TEXT);
+
+-- INTERVAL-aware DoS caps: MINUTELY with large INTERVAL
+-- FLOOR(1440 / 1440) = 1, so effective_max=5000 -> LEAST(5000, 1) = 1
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'MINUTELY INTERVAL=1440 caps to 1',
+    assert_equals('Minutely large interval', '1', rrule.calculate_safe_iteration_limit('MINUTELY'::TEXT, NULL::INT, 5000, 1440)::TEXT);
+
+-- INTERVAL-aware DoS caps: MINUTELY with INTERVAL=60
+-- FLOOR(1440 / 60) = 24, so effective_max=5000 -> LEAST(5000, 24) = 24
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'MINUTELY INTERVAL=60 caps to 24',
+    assert_equals('Minutely interval 60', '24', rrule.calculate_safe_iteration_limit('MINUTELY'::TEXT, NULL::INT, 5000, 60)::TEXT);
+
+-- INTERVAL=1 unchanged: SECONDLY still caps at 3600
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'SECONDLY INTERVAL=1 unchanged at 3600',
+    assert_equals('Secondly interval 1', '3600', rrule.calculate_safe_iteration_limit('SECONDLY'::TEXT, NULL::INT, 10000, 1)::TEXT);
+
+-- INTERVAL=1 unchanged: MINUTELY still caps at 1440
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'MINUTELY INTERVAL=1 unchanged at 1440',
+    assert_equals('Minutely interval 1', '1440', rrule.calculate_safe_iteration_limit('MINUTELY'::TEXT, NULL::INT, 5000, 1)::TEXT);
+
+-- Default parameter (no interval_val passed) same as INTERVAL=1
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'SECONDLY default interval same as 1',
+    assert_equals('Secondly default', '3600',
+        rrule.calculate_safe_iteration_limit('SECONDLY', NULL, 10000)::TEXT);
+
 -- ============================================================================
 -- SECTION 11: rrule_month_byday_set() Tests
 -- ============================================================================

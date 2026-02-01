@@ -64,17 +64,16 @@ The TIMESTAMPTZ `before()` function accumulates ALL occurrences in an array with
 
 ---
 
-## Issue 5: Sub-day frequency DoS cap bypassed by large INTERVAL values
+## Issue 5: ~~Sub-day frequency DoS cap bypassed by large INTERVAL values~~ RESOLVED
 
 **Category:** Safety & Security
 **Severity Assessment:** Medium
 **Reports:** 1
+**Status:** Resolved
 
-The DoS caps for MINUTELY (1440 iterations) and SECONDLY (3600 iterations) assume INTERVAL=1. With `INTERVAL=86400`, SECONDLY scans 3600 iterations * 86400 seconds = 360 days per iteration. The iteration limit is iteration count, not time span.
+The DoS caps for MINUTELY and SECONDLY are now INTERVAL-aware. `calculate_safe_iteration_limit()` accepts an `interval_val` parameter and divides the base cap by the interval value: MINUTELY uses `FLOOR(1440 / interval)` and SECONDLY uses `FLOOR(3600 / interval)`. This ensures the caps represent real time spans (1 day for MINUTELY, 1 hour for SECONDLY) regardless of INTERVAL.
 
-**Location:** `src/rrule.sql` `calculate_safe_iteration_limit` lines 1221-1222.
-
-**Note:** Documentation recommends application-level validation for sub-day frequencies. The database function only provides iteration-count-based limits.
+**Fix:** `calculate_safe_iteration_limit()` in `src/rrule.sql`; all 4 callers updated to pass `rule.interval`.
 
 ---
 
