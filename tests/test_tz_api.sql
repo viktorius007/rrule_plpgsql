@@ -2011,6 +2011,191 @@ BEGIN
 END;
 $$;
 
+-- ================================================================================================================
+-- TEST SUITE 19: SKIP+INTERVAL>1 Parity Tests (TIMESTAMPTZ API)
+-- Mirrors TIMESTAMP SKIP+INTERVAL tests through the TZ API to verify TZ generator parity.
+-- ================================================================================================================
+\echo ''
+\echo '=================================================='
+\echo 'TEST SUITE 19: SKIP+INTERVAL>1 Parity (TIMESTAMPTZ API)'
+\echo '=================================================='
+\echo ''
+
+-- Test 19.1: MONTHLY INTERVAL=2 SKIP=BACKWARD from Jan 31 via TIMESTAMPTZ API
+-- Mirrors test_coverage_gaps.sql Test 13.3
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2025-01-31 00:00:00 EST',
+        '2025-03-31 00:00:00 EDT',
+        '2025-05-31 00:00:00 EDT',
+        '2025-07-31 00:00:00 EDT',
+        '2025-09-30 00:00:00 EDT',
+        '2025-11-30 00:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=MONTHLY;INTERVAL=2;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=6',
+        '2025-01-31 00:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'SKIP INTERVAL Parity TZ',
+        'MONTHLY INTERVAL=2 SKIP=BACKWARD (TZ)',
+        result_count = 6 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '6 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- Test 19.2: MONTHLY INTERVAL=2 SKIP=FORWARD from Jan 31 via TIMESTAMPTZ API
+-- Mirrors test_coverage_gaps.sql Test 13.4
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2025-01-31 00:00:00 EST',
+        '2025-03-31 00:00:00 EDT',
+        '2025-05-31 00:00:00 EDT',
+        '2025-07-31 00:00:00 EDT',
+        '2025-10-01 00:00:00 EDT',
+        '2025-12-01 00:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=MONTHLY;INTERVAL=2;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=6',
+        '2025-01-31 00:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'SKIP INTERVAL Parity TZ',
+        'MONTHLY INTERVAL=2 SKIP=FORWARD (TZ)',
+        result_count = 6 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '6 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- Test 19.3: YEARLY INTERVAL=2 SKIP=BACKWARD from Feb 29 via TIMESTAMPTZ API
+-- Mirrors test_coverage_gaps.sql Test 31.1
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2024-02-29 10:00:00 EST',
+        '2026-02-28 10:00:00 EST',
+        '2028-02-29 10:00:00 EST',
+        '2030-02-28 10:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=YEARLY;INTERVAL=2;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=4',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'SKIP INTERVAL Parity TZ',
+        'YEARLY INTERVAL=2 SKIP=BACKWARD (TZ)',
+        result_count = 4 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '4 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- Test 19.4: YEARLY INTERVAL=2 SKIP=FORWARD from Feb 29 via TIMESTAMPTZ API
+-- Mirrors test_coverage_gaps.sql Test 31.2
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    actual TEXT[];
+    expected TEXT[] := ARRAY[
+        '2024-02-29 10:00:00 EST',
+        '2026-03-01 10:00:00 EST',
+        '2028-02-29 10:00:00 EST',
+        '2030-03-01 10:00:00 EST'
+    ];
+    result_count INT;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts), COUNT(*) INTO results, result_count
+    FROM rrule."all"(
+        'FREQ=YEARLY;INTERVAL=2;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=4',
+        '2024-02-29 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual
+    FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'SKIP INTERVAL Parity TZ',
+        'YEARLY INTERVAL=2 SKIP=FORWARD (TZ)',
+        result_count = 4 AND actual = expected,
+        result_count::TEXT || ' dates: ' || array_to_string(COALESCE(actual, ARRAY[]::TEXT[]), ', '),
+        '4 dates: ' || array_to_string(expected, ', ')
+    );
+END;
+$$;
+
+-- Test 19.5: TZ API sub-day frequency error message should mention install_with_subday.sql
+-- In standard install: HOURLY is rejected, error must mention install_with_subday.sql
+-- In sub-day install: HOURLY succeeds, test passes (sub-day is enabled)
+DO $$
+DECLARE
+    err_msg TEXT;
+BEGIN
+    BEGIN
+        PERFORM * FROM rrule."all"(
+            'FREQ=HOURLY;COUNT=3',
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+        );
+        -- Sub-day installation: HOURLY works, this is expected
+        INSERT INTO tz_api_test_results VALUES (
+            'TZ Sub-day Error',
+            'FREQ=HOURLY via TZ API (sub-day enabled or error expected)',
+            TRUE,
+            'HOURLY succeeded (sub-day installation)',
+            'HOURLY succeeds in sub-day install OR error mentions install_with_subday.sql'
+        );
+    EXCEPTION WHEN OTHERS THEN
+        err_msg := SQLERRM;
+        -- Standard installation: error must be helpful
+        INSERT INTO tz_api_test_results VALUES (
+            'TZ Sub-day Error',
+            'FREQ=HOURLY via TZ API (sub-day enabled or error expected)',
+            err_msg LIKE '%install_with_subday%',
+            err_msg,
+            'HOURLY succeeds in sub-day install OR error mentions install_with_subday.sql'
+        );
+    END;
+END;
+$$;
+
 -- Fail transaction if any tests failed
 DO $$
 DECLARE

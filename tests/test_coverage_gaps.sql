@@ -6034,6 +6034,149 @@ SELECT
         ) AS occurrence)
     );
 
+-- ============================================================================
+-- Section 31: Consensus Review — TRUE CONCERN Gap Tests
+-- Tests added to address gaps identified by 3-agent consensus review.
+-- ============================================================================
+\echo ''
+\echo '--- Section 31: Consensus Review Gap Tests ---'
+
+-- Test 31.1: YEARLY INTERVAL=2 SKIP=BACKWARD from Feb 29 leap year
+-- 2024 leap -> Feb 29, 2026 non-leap -> Feb 28 (backward), 2028 leap -> Feb 29, 2030 non-leap -> Feb 28
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY SKIP INTERVAL',
+    'Test 31.1: YEARLY INTERVAL=2 SKIP=BACKWARD from Feb 29',
+    assert_occurrences_equal(
+        'YEARLY INTERVAL=2 SKIP=BACKWARD',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2026-02-28 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP,
+            '2030-02-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=4',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 31.2: YEARLY INTERVAL=2 SKIP=FORWARD from Feb 29 leap year
+-- 2024 leap -> Feb 29, 2026 non-leap -> Mar 1 (forward), 2028 leap -> Feb 29, 2030 non-leap -> Mar 1
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY SKIP INTERVAL',
+    'Test 31.2: YEARLY INTERVAL=2 SKIP=FORWARD from Feb 29',
+    assert_occurrences_equal(
+        'YEARLY INTERVAL=2 SKIP=FORWARD',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2026-03-01 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP,
+            '2030-03-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=4',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 31.3: YEARLY BYDAY=20MO (20th Monday of year)
+-- 2025: 20th Monday = May 19. 2026: 20th Monday = May 18. 2027: 20th Monday = May 17.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Large Ordinal',
+    'Test 31.3: YEARLY BYDAY=20MO (20th Monday)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=20MO',
+        ARRAY[
+            '2025-05-19 10:00:00'::TIMESTAMP,
+            '2026-05-18 10:00:00'::TIMESTAMP,
+            '2027-05-17 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYDAY=20MO;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 31.4: YEARLY BYDAY=53MO (53rd Monday — only years with 53 Mondays)
+-- 2024 starts on Mon, has 53 Mondays: 53rd = Dec 30. 2029 starts on Mon: 53rd = Dec 31.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY BYDAY Large Ordinal',
+    'Test 31.4: YEARLY BYDAY=53MO (53rd Monday, sparse)',
+    assert_occurrences_equal(
+        'YEARLY BYDAY=53MO',
+        ARRAY[
+            '2024-12-30 10:00:00'::TIMESTAMP,
+            '2029-12-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=YEARLY;BYDAY=53MO',
+            '2024-01-01 10:00:00'::TIMESTAMP,
+            '2024-01-01 00:00:00'::TIMESTAMP,
+            '2034-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ) AS occurrence)
+    );
+
+-- Test 31.5: BYSETPOS with BYYEARDAY
+-- FREQ=YEARLY;BYYEARDAY=1,100,200,-1;BYSETPOS=1,-1 selects first (Jan 1) and last (Dec 31)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'BYSETPOS BYYEARDAY',
+    'Test 31.5: YEARLY BYYEARDAY=1,100,200,-1 BYSETPOS=1,-1',
+    assert_occurrences_equal(
+        'BYSETPOS+BYYEARDAY',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-12-31 10:00:00'::TIMESTAMP,
+            '2026-01-01 10:00:00'::TIMESTAMP,
+            '2026-12-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYYEARDAY=1,100,200,-1;BYSETPOS=1,-1;COUNT=4',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 31.6: overlaps() with NULL rrule via 5-arg signature (single-event overlap check)
+-- After fix, NULL rrule falls through to single-event check instead of raising exception
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'overlaps NULL RRULE',
+    'Test 31.6: overlaps() with NULL rrule overlapping',
+    assert_true(
+        'overlaps NULL rrule single event',
+        (SELECT rrule."overlaps"(
+            '2025-06-15 10:00:00'::TIMESTAMPTZ,
+            '2025-06-15 11:00:00'::TIMESTAMPTZ,
+            NULL::TEXT,
+            '2025-06-01 00:00:00'::TIMESTAMPTZ,
+            '2025-06-30 00:00:00'::TIMESTAMPTZ,
+            'UTC'
+        ))
+    );
+
+-- Test 31.7: overlaps() with NULL rrule, non-overlapping range
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'overlaps NULL RRULE',
+    'Test 31.7: overlaps() NULL rrule non-overlapping',
+    assert_equals(
+        'overlaps NULL rrule no overlap',
+        'false',
+        (SELECT rrule."overlaps"(
+            '2025-06-15 10:00:00'::TIMESTAMPTZ,
+            '2025-06-15 11:00:00'::TIMESTAMPTZ,
+            NULL::TEXT,
+            '2025-07-01 00:00:00'::TIMESTAMPTZ,
+            '2025-07-31 00:00:00'::TIMESTAMPTZ,
+            'UTC'
+        ))::TEXT
+    );
+
 -- Fail if any tests failed
 DO $$
 DECLARE
