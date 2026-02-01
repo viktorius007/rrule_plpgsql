@@ -9,7 +9,7 @@ Pure PL/pgSQL implementation of RFC 5545 iCalendar RRULE for PostgreSQL. No C ex
 ## Commands
 
 ```bash
-# Run all tests (200+ tests across 13 suites)
+# Run all tests (400+ tests across 13 suites)
 npm test
 ./test.sh
 
@@ -39,7 +39,7 @@ psql -d your_db -f src/install.sql
 
 ## Architecture
 
-**SQL-as-NPM-Package:** This is database code, not application code. Changes go in `/src/rrule.sql`. The npm package exports SQL strings for any PostgreSQL client to execute.
+**SQL-as-NPM-Package:** This is database code, not application code. Changes go in `/src/rrule.sql`. The npm package (`index.js`) strips psql meta-commands (`\set`, `\echo`) and inlines `\ir` file references to produce driver-safe SQL strings. Exports: `SQL.install`, `SQL.installWithSubday`, `SQL.core`. Works with pg, TypeORM, Prisma, Knex, Sequelize.
 
 **Schema Namespacing:** All functions live in `rrule` PostgreSQL schema. Always use schema-qualified names: `rrule."all"()`, `rrule."between"()`, etc.
 
@@ -63,13 +63,24 @@ psql -d your_db -f src/install.sql
 
 ## Key Files
 
-- `/src/rrule.sql` - Core implementation (~3100 lines)
+- `/src/rrule.sql` - Core implementation (~3400 lines)
+- `/src/rrule_subday.sql` - Sub-day frequency overrides (~774 lines)
 - `/src/install.sql` - Standard installation
 - `/src/install_with_subday.sql` - Installation with sub-day frequencies
 - `/tests/*.sql` - 13 test suites covering validation, frequencies, timezone, RFC compliance
+- `/tests/helpers.sql` - Shared test assertion functions (`assert_occurrences_equal`, `assert_equals`, `assert_true`)
 - `DECISIONS.md` - Prescriptive architectural decisions with verification links
 - `TESTING_STANDARDS.md` - Required test patterns (ROLLBACK, fixed timestamps, exact assertions)
 - `SPEC_COMPLIANCE.md` - RFC 5545/7529 compliance status and documented gaps
+
+## CI/CD Pipeline
+
+GitHub Actions (`.github/workflows/test.yml`) runs on push/PR to main:
+1. `./test.sh --both` — full test suite (standard + sub-day)
+2. `./lint.sh` — plpgsql_check semantic linting (requires PostgreSQL + plpgsql_check extension)
+3. `./lint-tests.sh` — static SQL coding standards (bash-based, no database required)
+
+All three must pass. Uses PostgreSQL 14 and Node.js 20.
 
 ## Internal Architecture
 
