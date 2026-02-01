@@ -104,7 +104,13 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 8. **Testing Standards:** Follow rules in [TESTING_STANDARDS.md](TESTING_STANDARDS.md) -- key rules: ROLLBACK not COMMIT, fixed timestamps not NOW(), exact assertions not loose comparisons, ORDER BY in array_agg, test boundary/invalid inputs, test DST gap times, test BYxxx deduplication.
 
-9. **Triple Generator Maintenance:** Three copies of `rrule_event_instances_range()` exist: (1) TIMESTAMP generator in `src/rrule.sql`, (2) TZ generator (`rrule_event_instances_range_tz()`) in `src/rrule.sql`, and (3) subday override in `src/rrule_subday.sql` which replaces the TIMESTAMP generator and adds HOURLY/MINUTELY/SECONDLY branches. All three share identical loop structure. Any fix to one (boundary checks, EXIT conditions, SKIP handling) must be mirrored in all three.
+9. **Quadruple Generator Maintenance:** Four copies of the main occurrence loop exist: (1) TIMESTAMP generator `rrule_event_instances_range()` in `src/rrule.sql`, (2) TZ generator `rrule_event_instances_range_tz()` in `src/rrule.sql`, (3) subday TIMESTAMP override in `src/rrule_subday.sql`, (4) subday TZ override in `src/rrule_subday.sql`. All four share identical MONTHLY/YEARLY loop structure. Any fix to one (boundary checks, EXIT conditions, SKIP handling, drift prevention) must be mirrored in all four. When fixing these, apply to one location first, verify with a targeted query, then replicate.
+
+10. **Test with INTERVAL > 1:** When modifying period advancement logic (MONTHLY/YEARLY branches), always test with `INTERVAL=2` or higher. SKIP and drift prevention interact with INTERVAL in non-obvious ways — a fix that works for `INTERVAL=1` can silently break for `INTERVAL=2` because the forwarded/skipped date may land across a different period boundary.
+
+11. **Never limit candidate generation before post-filters:** When set functions (e.g., `yearly_set`) pass `max_results` to inner generators but then apply WHERE-clause post-filters, the limit must be passed as NULL. Otherwise the post-filter rejects candidates the generator already counted against the limit, producing fewer results than requested. General principle: limit at the outermost consumer, not at the generator.
+
+12. **Run manual spot-checks from plans:** When a plan specifies manual verification queries, run them as a final step even if the test suite passes. Tests validate expected values set during development — spot-checks validate against the original specification.
 
 ## RRULE Parameters Supported
 
