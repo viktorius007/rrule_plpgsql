@@ -1186,6 +1186,7 @@ $$ LANGUAGE plpgsql STABLE;
 --   frequency      - FREQ value from RRULE (DAILY, WEEKLY, MONTHLY, YEARLY, HOURLY, MINUTELY, SECONDLY)
 --   rrule_count    - COUNT parameter from RRULE, or NULL if not specified (used as fallback)
 --   requested_max  - Maximum occurrences requested by API caller
+--   interval_val   - INTERVAL parameter from RRULE (used to scale sub-day DoS caps; DEFAULT 1)
 --
 -- Returns:
 --   Safe iteration limit that balances:
@@ -1195,13 +1196,15 @@ $$ LANGUAGE plpgsql STABLE;
 -- Examples:
 --   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 4000  (100 × 40)
 --   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 500   (50 × 10)
---   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap)
+--   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap, INTERVAL=1)
+--   calculate_safe_iteration_limit('SECONDLY', NULL, 5000, 60) -> 60  (3600/60, INTERVAL-aware)
 --   calculate_safe_iteration_limit('DAILY', 75, 75)       → 3000  (COUNT caps output_limit; multipliers still apply)
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION calculate_safe_iteration_limit(
   frequency TEXT,
   rrule_count INT,
-  requested_max INT
+  requested_max INT,
+  interval_val INT DEFAULT 1
 ) RETURNS INT AS $$
 DECLARE
   effective_max INT;
@@ -1218,8 +1221,8 @@ BEGIN
     WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 40, 2147483647)::INT   -- Sparse: BYMONTHDAY filters (1/31 days match)
     WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 10, 2147483647)::INT   -- Sparse: monthly-pattern filters
     WHEN 'HOURLY'   THEN LEAST(effective_max::BIGINT * 2, 2147483647)::INT    -- Moderate: time-of-day filters
-    WHEN 'MINUTELY' THEN LEAST(effective_max, 1440)  -- DoS protection: max 1 day
-    WHEN 'SECONDLY' THEN LEAST(effective_max, 3600)  -- DoS protection: max 1 hour
+    WHEN 'MINUTELY' THEN LEAST(effective_max, FLOOR(1440.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 day of real time
+    WHEN 'SECONDLY' THEN LEAST(effective_max, FLOOR(3600.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 hour of real time
     WHEN 'MONTHLY'  THEN GREATEST(LEAST(effective_max::BIGINT * 20, 2147483647)::INT, 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years
     WHEN 'YEARLY'   THEN LEAST(effective_max::BIGINT * 10, 2147483647)::INT   -- Sparse: BYYEARDAY/BYWEEKNO/BYDAY filters
     ELSE effective_max                         -- Fallback: no multiplier
@@ -1959,7 +1962,7 @@ BEGIN
   -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
   -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
   -- See calculate_safe_iteration_limit() for detailed security rationale.
-  period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit);
+  period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
   IF period_limit IS NULL THEN
     period_limit := 2147483647;  -- effectively unlimited
   END IF;
@@ -2685,7 +2688,7 @@ BEGIN
     -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
     -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
     -- See calculate_safe_iteration_limit() for detailed security rationale.
-    period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit);
+    period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
     IF period_limit IS NULL THEN
         period_limit := 2147483647;  -- effectively unlimited
     END IF;
