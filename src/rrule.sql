@@ -2598,11 +2598,6 @@ BEGIN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
-    -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
-    IF rrule_string IS NULL THEN
-        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
-    END IF;
-
     base_date := dtstart;
     duration := COALESCE(dtend, dtstart) - dtstart;
 
@@ -2614,6 +2609,7 @@ BEGIN
         adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
+    -- If no RRULE, check single event overlap (matches TIMESTAMPTZ behavior)
     IF rrule_string IS NULL THEN
         RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
     END IF;
@@ -2909,7 +2905,12 @@ BEGIN
             END IF;
 
         ELSE
-            RAISE EXCEPTION 'Unsupported frequency: %', rule.freq;
+            -- Provide helpful error message for sub-day frequencies
+            IF rule.freq IN ('HOURLY', 'MINUTELY', 'SECONDLY') THEN
+              RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql. See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
+            ELSE
+              RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY. For sub-day frequencies, see INCLUDING_SUBDAY_OPERATIONS.md', rule.freq;
+            END IF;
         END IF;
         period_count := period_count + 1;
         EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
