@@ -16,7 +16,7 @@
 #   PGPORT=54322         # PostgreSQL port (default: Supabase local)
 #   PGUSER=postgres      # PostgreSQL user
 #   PGPASSWORD=postgres  # PostgreSQL password
-#   DATABASE_URL=rrule_test  # Test database name
+#   DATABASE_URL=<name>     # Override database name (default: rrule_test_{branch})
 #
 # Requirements:
 #   - PostgreSQL 12+ installed and running
@@ -40,7 +40,8 @@ export PGPORT="${PGPORT:-54322}"
 export PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-postgres}"
 
-DB="${DATABASE_URL:-rrule_test}"
+_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/-.' '_' || echo "default")
+DB="${DATABASE_URL:-rrule_test_${_BRANCH}}"
 MODE="${1:---standard}"
 
 # Test suite files in execution order

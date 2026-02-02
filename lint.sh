@@ -14,6 +14,7 @@
 #   PGPORT=54322           # PostgreSQL port (default: Supabase local)
 #   PGUSER=postgres        # PostgreSQL user
 #   PGPASSWORD=postgres    # PostgreSQL password
+#   DATABASE_URL=<name>    # Override database name (default: rrule_lint_{branch})
 #
 # Requirements:
 #   - PostgreSQL 12+ with plpgsql_check extension available
@@ -35,7 +36,8 @@ export PGPORT="${PGPORT:-54322}"
 export PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-postgres}"
 
-DB="rrule_lint"
+_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/-.' '_' || echo "default")
+DB="${DATABASE_URL:-rrule_lint_${_BRANCH}}"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}PLPGSQL_CHECK LINTER${NC}"
