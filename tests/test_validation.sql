@@ -1693,4 +1693,334 @@ BEGIN
     END;
 END $$;
 
+
+
+-- ============================================================================
+-- Issue 35: Duplicate BYxxx parameters silently ignored
+-- ============================================================================
+\echo ''
+\echo '--- Issue 35: Duplicate RRULE parameters ---'
+
+-- Test: Duplicate COUNT raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate COUNT rejected',
+    assert_rrule_rejected('Duplicate COUNT', 'FREQ=DAILY;COUNT=3;COUNT=5', '%Duplicate COUNT%');
+
+-- Test: Duplicate UNTIL raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate UNTIL rejected',
+    assert_rrule_rejected('Duplicate UNTIL', 'FREQ=DAILY;UNTIL=20250301T000000Z;UNTIL=20250401T000000Z', '%Duplicate UNTIL%');
+
+-- Test: Duplicate INTERVAL raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate INTERVAL rejected',
+    assert_rrule_rejected('Duplicate INTERVAL', 'FREQ=DAILY;INTERVAL=2;INTERVAL=3;COUNT=5', '%Duplicate INTERVAL%');
+
+-- Test: Duplicate WKST raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate WKST rejected',
+    assert_rrule_rejected('Duplicate WKST', 'FREQ=WEEKLY;WKST=MO;WKST=SU;COUNT=3', '%Duplicate WKST%');
+
+-- Test: Duplicate TZID raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate TZID rejected',
+    assert_rrule_rejected('Duplicate TZID', 'FREQ=DAILY;TZID=US/Eastern;TZID=US/Pacific;COUNT=3', '%Duplicate TZID%');
+
+-- Test: Duplicate BYDAY raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYDAY rejected',
+    assert_rrule_rejected('Duplicate BYDAY', 'FREQ=WEEKLY;BYDAY=MO,WE;BYDAY=TU,TH;COUNT=5', '%Duplicate BYDAY%');
+
+-- Test: Duplicate BYMONTH raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYMONTH rejected',
+    assert_rrule_rejected('Duplicate BYMONTH', 'FREQ=YEARLY;BYMONTH=1;BYMONTH=6;COUNT=5', '%Duplicate BYMONTH%');
+
+-- Test: Duplicate BYMONTHDAY raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYMONTHDAY rejected',
+    assert_rrule_rejected('Duplicate BYMONTHDAY', 'FREQ=MONTHLY;BYMONTHDAY=1;BYMONTHDAY=15;COUNT=5', '%Duplicate BYMONTHDAY%');
+
+-- Test: Duplicate BYYEARDAY raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYYEARDAY rejected',
+    assert_rrule_rejected('Duplicate BYYEARDAY', 'FREQ=YEARLY;BYYEARDAY=1;BYYEARDAY=100;COUNT=5', '%Duplicate BYYEARDAY%');
+
+-- Test: Duplicate BYWEEKNO raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYWEEKNO rejected',
+    assert_rrule_rejected('Duplicate BYWEEKNO', 'FREQ=YEARLY;BYWEEKNO=1;BYWEEKNO=20;BYDAY=MO;COUNT=5', '%Duplicate BYWEEKNO%');
+
+-- Test: Duplicate BYSETPOS raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYSETPOS rejected',
+    assert_rrule_rejected('Duplicate BYSETPOS', 'FREQ=MONTHLY;BYDAY=MO,TU;BYSETPOS=1;BYSETPOS=-1;COUNT=5', '%Duplicate BYSETPOS%');
+
+-- Test: Duplicate RSCALE raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate RSCALE rejected',
+    assert_rrule_rejected('Duplicate RSCALE', 'FREQ=MONTHLY;RSCALE=GREGORIAN;RSCALE=GREGORIAN;SKIP=BACKWARD;BYMONTHDAY=31;COUNT=3', '%Duplicate RSCALE%');
+
+-- Test: Duplicate SKIP raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate SKIP rejected',
+    assert_rrule_rejected('Duplicate SKIP', 'FREQ=MONTHLY;RSCALE=GREGORIAN;SKIP=BACKWARD;SKIP=FORWARD;BYMONTHDAY=31;COUNT=3', '%Duplicate SKIP%');
+
+-- Test: Non-duplicate parameters still work (regression check)
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Non-duplicate rule still works',
+    assert_rrule_accepted('Non-duplicate params', 'FREQ=MONTHLY;BYMONTH=1,6;BYMONTHDAY=15;COUNT=4', 4);
+
+-- =====================================================================
+-- TEST GROUP: Trailing Comma Tolerance in BYxxx Parameters
+-- =====================================================================
+-- Trailing commas in BYxxx values should be silently ignored.
+-- Without array_remove cleanup, trailing commas produce empty string
+-- elements that cause cast errors or confusing validation failures.
+
+\echo ''
+\echo '====================================================================='
+\echo 'TEST GROUP: Trailing Comma Tolerance in BYxxx Parameters'
+\echo '====================================================================='
+
+-- Test: BYMONTH with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYMONTH trailing comma accepted',
+    assert_rrule_accepted('BYMONTH trailing comma', 'FREQ=YEARLY;BYMONTH=1,6,;COUNT=4', 4);
+
+-- Test: BYMONTHDAY with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYMONTHDAY trailing comma accepted',
+    assert_rrule_accepted('BYMONTHDAY trailing comma', 'FREQ=MONTHLY;BYMONTHDAY=1,15,;COUNT=4', 4);
+
+-- Test: BYYEARDAY with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYYEARDAY trailing comma accepted',
+    assert_rrule_accepted('BYYEARDAY trailing comma', 'FREQ=YEARLY;BYYEARDAY=1,100,;COUNT=4', 4);
+
+-- Test: BYWEEKNO with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYWEEKNO trailing comma accepted',
+    assert_rrule_accepted('BYWEEKNO trailing comma', 'FREQ=YEARLY;BYWEEKNO=1,20,;BYDAY=MO;COUNT=4', 4);
+
+-- Test: BYSETPOS with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYSETPOS trailing comma accepted',
+    assert_rrule_accepted('BYSETPOS trailing comma', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1,;COUNT=4', 4);
+
+-- Test: BYDAY with trailing comma (already had array_remove - regression test)
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYDAY trailing comma accepted',
+    assert_rrule_accepted('BYDAY trailing comma', 'FREQ=WEEKLY;BYDAY=MO,WE,;COUNT=4', 4);
+
+
+-- =====================================================================
+-- TEST GROUP: Integer Overflow in RRULE Parameters
+-- =====================================================================
+-- Values exceeding INT range for COUNT, INTERVAL, BYYEARDAY, BYWEEKNO,
+-- and BYMONTHDAY should produce descriptive RRULE-specific errors
+-- instead of generic PostgreSQL "integer out of range" messages.
+
+\echo ''
+\echo '====================================================================='
+\echo 'TEST GROUP: Integer Overflow in RRULE Parameters'
+\echo '====================================================================='
+
+-- Test: COUNT overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'COUNT overflow gives descriptive error',
+    assert_rrule_rejected('COUNT overflow', 'FREQ=DAILY;COUNT=99999999999', '%COUNT value out of range%');
+
+-- Test: INTERVAL overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'INTERVAL overflow gives descriptive error',
+    assert_rrule_rejected('INTERVAL overflow', 'FREQ=DAILY;INTERVAL=99999999999', '%INTERVAL value out of range%');
+
+-- Test: BYYEARDAY overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'BYYEARDAY overflow gives descriptive error',
+    assert_rrule_rejected('BYYEARDAY overflow', 'FREQ=YEARLY;BYYEARDAY=99999999999', '%BYYEARDAY value out of range%');
+
+-- Test: BYWEEKNO overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'BYWEEKNO overflow gives descriptive error',
+    assert_rrule_rejected('BYWEEKNO overflow', 'FREQ=YEARLY;BYWEEKNO=99999999999;BYDAY=MO', '%BYWEEKNO value out of range%');
+
+-- Test: BYMONTHDAY overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'BYMONTHDAY overflow gives descriptive error',
+    assert_rrule_rejected('BYMONTHDAY overflow', 'FREQ=MONTHLY;BYMONTHDAY=99999999999', '%BYMONTHDAY value out of range%');
+
+
+-- =====================================================================
+\echo 'TEST GROUP: SKIP parameter case-insensitivity'
+\echo '====================================================================='
+
+-- Test: lowercase SKIP=omit is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=omit accepted',
+    assert_occurrences_equal(
+        'SKIP=omit lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=omit;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: mixed-case SKIP=Backward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'mixed-case SKIP=Backward accepted',
+    assert_occurrences_equal(
+        'SKIP=Backward mixed-case',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-02-28 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-04-30 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=Backward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: lowercase SKIP=forward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=forward accepted',
+    assert_occurrences_equal(
+        'SKIP=forward lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=forward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: invalid SKIP value still rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'invalid SKIP=BACKWARDS still rejected',
+    assert_rrule_rejected('SKIP=BACKWARDS', 'FREQ=MONTHLY;SKIP=BACKWARDS', '%Invalid SKIP value%');
+
+
+-- =====================================================================
+\echo 'TEST GROUP: SKIP parameter case-insensitivity'
+\echo '====================================================================='
+
+-- Test: lowercase SKIP=omit is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=omit accepted',
+    assert_occurrences_equal(
+        'SKIP=omit lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=omit;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: mixed-case SKIP=Backward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'mixed-case SKIP=Backward accepted',
+    assert_occurrences_equal(
+        'SKIP=Backward mixed-case',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-02-28 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-04-30 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=Backward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: lowercase SKIP=forward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=forward accepted',
+    assert_occurrences_equal(
+        'SKIP=forward lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=forward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: invalid SKIP value still rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'invalid SKIP=BACKWARDS still rejected',
+    assert_rrule_rejected('SKIP=BACKWARDS', 'FREQ=MONTHLY;SKIP=BACKWARDS', '%Invalid SKIP value%');
+
+-- Issue 38: count() NULL rrule_string guard
+\echo ''
+\echo 'TEST GROUP: Issue 38 - count() NULL rrule guard'
+\echo '====================================================================='
+
+-- Helper: assert count() with NULL rrule raises FREQ required (TIMESTAMP)
+CREATE OR REPLACE FUNCTION assert_count_null_rejected_ts(
+    test_name TEXT,
+    expected_error_pattern TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    cnt INTEGER;
+BEGIN
+    BEGIN
+        SELECT rrule."count"(NULL::VARCHAR, '2025-01-01 00:00:00'::TIMESTAMP) INTO cnt;
+        RAISE EXCEPTION 'FAIL [%]: count(NULL) was accepted when it should have been rejected', test_name;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE expected_error_pattern THEN
+                RETURN 'PASS [' || test_name || ']';
+            ELSE
+                RAISE EXCEPTION 'FAIL [%]: Wrong error message. Expected pattern: %, Got: %',
+                    test_name, expected_error_pattern, SQLERRM;
+            END IF;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper: assert count() with NULL rrule raises FREQ required (TIMESTAMPTZ)
+CREATE OR REPLACE FUNCTION assert_count_null_rejected_tz(
+    test_name TEXT,
+    expected_error_pattern TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    cnt INTEGER;
+BEGIN
+    BEGIN
+        SELECT rrule."count"(NULL::TEXT, '2025-01-01 00:00:00+00'::TIMESTAMPTZ) INTO cnt;
+        RAISE EXCEPTION 'FAIL [%]: count(NULL) was accepted when it should have been rejected', test_name;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE expected_error_pattern THEN
+                RETURN 'PASS [' || test_name || ']';
+            ELSE
+                RAISE EXCEPTION 'FAIL [%]: Wrong error message. Expected pattern: %, Got: %',
+                    test_name, expected_error_pattern, SQLERRM;
+            END IF;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'NULL rrule', 'TIMESTAMP count(NULL) raises FREQ required',
+    assert_count_null_rejected_ts('count NULL TS', '%FREQ parameter is required%');
+
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'NULL rrule', 'TIMESTAMPTZ count(NULL) raises FREQ required',
+    assert_count_null_rejected_tz('count NULL TZ', '%FREQ parameter is required%');
+
+
 ROLLBACK;

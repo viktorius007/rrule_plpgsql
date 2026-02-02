@@ -970,10 +970,10 @@ SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1;BYDAY=MO,FR returns Mon and Fr
 
 -- Test 24.5: Year boundary — BYWEEKNO=1 in 2025 where week 1 starts in Dec 2024
 -- Week 1 of 2025 starts 2024-12-29 (Mon). Without BYDAY, returns week_start.
--- Year filter: date_part('year', '2024-12-29') = 2024 != 2025 → no results returned.
+-- ISO year filter: date_part('isoyear', '2024-12-29') = 2025 = date_part('year', after_ts) → included.
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1 in 2025 cross-year filtered out',
-    assert_equals('Cross-year filter', '0',
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1 in 2025 cross-year included via isoyear',
+    assert_equals('Cross-year filter', '1',
         (SELECT COUNT(*)::TEXT FROM rrule.rrule_yearly_byweekno_set(
             '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;COUNT=5'),
@@ -981,13 +981,12 @@ SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1 in 2025 cross-year filtered ou
         )));
 
 -- Test 24.6: Year boundary with BYDAY — BYWEEKNO=1;BYDAY=MO,TU,TH in 2025
--- ISO week 1 of 2025 spans Dec 30 2024 to Jan 5 2025.
--- MO=Dec 30 (2024, filtered), TU=Dec 31 (2024, filtered), TH=Jan 2 (2025, kept).
--- Year filter keeps only dates in 2025.
+-- ISO week 1 of 2025 spans Dec 29 2024 to Jan 4 2025.
+-- MO=Dec 30, TU=Dec 31, TH=Jan 2 — all have isoyear=2025, so all are included.
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1;BYDAY=MO,TU,TH cross-year keeps only 2025 dates',
+SELECT 'rrule_yearly_byweekno_set()', 'BYWEEKNO=1;BYDAY=MO,TU,TH cross-year includes all isoyear 2025',
     assert_equals('Cross-year BYDAY',
-        '{"2025-01-02 10:00:00+00"}',
+        '{"2024-12-30 10:00:00+00","2024-12-31 10:00:00+00","2025-01-02 10:00:00+00"}',
         (SELECT array_agg(d ORDER BY d)::TEXT FROM rrule.rrule_yearly_byweekno_set(
             '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
             rrule.parse_rrule_parts('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO,TU,TH;COUNT=10'),

@@ -235,23 +235,21 @@ VALUES (
     ))
 );
 
--- Test 8.2: FREQ=YEARLY;BYWEEKNO=53;BYDAY=MO;COUNT=3
--- Only years with 53 ISO weeks produce results. "all()" has a 10-year cap,
--- so we use "between()" with an explicit 15-year range to reach 3 such years.
--- 53-week ISO years starting from 2015: 2015, 2020, 2026.
+-- Test 8.2: FREQ=YEARLY;BYWEEKNO=53;BYDAY=MO;COUNT=2
+-- Only years with 53 ISO weeks produce results. between() clamps to 10 years from dtstart.
+-- 53-week ISO years starting from 2015 within 10yr window (to 2025): 2015, 2020.
 INSERT INTO dual_path_test_results (test_category, test_name, status)
 VALUES (
     'Issue 8: BYWEEKNO multi-year',
-    'BYWEEKNO=53;BYDAY=MO;COUNT=3 skips non-53-week years',
+    'BYWEEKNO=53;BYDAY=MO;COUNT=2 skips non-53-week years',
     assert_occurrences_equal(
-        'BYWEEKNO=53 multi-year COUNT=3',
+        'BYWEEKNO=53 multi-year COUNT=2',
         ARRAY[
             '2015-12-28 10:00:00'::TIMESTAMP,
-            '2020-12-28 10:00:00'::TIMESTAMP,
-            '2026-12-28 10:00:00'::TIMESTAMP
+            '2020-12-28 10:00:00'::TIMESTAMP
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
-            'FREQ=YEARLY;BYWEEKNO=53;BYDAY=MO;COUNT=3',
+            'FREQ=YEARLY;BYWEEKNO=53;BYDAY=MO;COUNT=2',
             '2015-01-01 10:00:00'::TIMESTAMP,
             '2015-01-01 10:00:00'::TIMESTAMP,
             '2027-12-31 10:00:00'::TIMESTAMP
@@ -294,21 +292,20 @@ VALUES (
     ))
 );
 
--- Test 8.4: BYWEEKNO=53 with BYDAY=TH;COUNT=3 (Thursday of week 53)
--- 2015: Thu Dec 31, 2015; 2020: Thu Dec 31, 2020; 2026: Thu Dec 31, 2026
+-- Test 8.4: BYWEEKNO=53 with BYDAY=TH;COUNT=2 (Thursday of week 53)
+-- between() clamps to 10 years from dtstart, so only 2015 and 2020 are reachable.
 INSERT INTO dual_path_test_results (test_category, test_name, status)
 VALUES (
     'Issue 8: BYWEEKNO multi-year',
-    'BYWEEKNO=53;BYDAY=TH;COUNT=3 exact dates',
+    'BYWEEKNO=53;BYDAY=TH;COUNT=2 exact dates',
     assert_occurrences_equal(
-        'BYWEEKNO=53 BYDAY=TH COUNT=3',
+        'BYWEEKNO=53 BYDAY=TH COUNT=2',
         ARRAY[
             '2015-12-31 10:00:00'::TIMESTAMP,
-            '2020-12-31 10:00:00'::TIMESTAMP,
-            '2026-12-31 10:00:00'::TIMESTAMP
+            '2020-12-31 10:00:00'::TIMESTAMP
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
-            'FREQ=YEARLY;BYWEEKNO=53;BYDAY=TH;COUNT=3',
+            'FREQ=YEARLY;BYWEEKNO=53;BYDAY=TH;COUNT=2',
             '2015-01-01 10:00:00'::TIMESTAMP,
             '2015-01-01 10:00:00'::TIMESTAMP,
             '2027-12-31 10:00:00'::TIMESTAMP

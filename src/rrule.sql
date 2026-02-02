@@ -119,17 +119,46 @@ BEGIN
     RAISE EXCEPTION 'Invalid RRULE: Duplicate FREQ parameter. Only one FREQ is allowed per RRULE.  RFC 5545 Section 3.3.10: Each rule part MUST only be specified once.';
   END IF;
 
+  -- Reject duplicate parameters per RFC 5545 Section 3.3.10:
+  -- "Each rule part MUST only be specified once."
+  DECLARE
+    _dup_params TEXT[] := ARRAY['COUNT', 'UNTIL', 'INTERVAL', 'WKST', 'TZID', 'RSCALE', 'SKIP',
+                                'BYDAY', 'BYMONTH', 'BYMONTHDAY', 'BYYEARDAY', 'BYWEEKNO', 'BYSETPOS',
+                                'BYHOUR', 'BYMINUTE', 'BYSECOND'];
+    _dup_param TEXT;
+  BEGIN
+    FOREACH _dup_param IN ARRAY _dup_params LOOP
+      IF (SELECT COUNT(*) FROM regexp_matches(repeatrule, '(^|;)' || _dup_param || '=', 'g')) > 1 THEN
+        RAISE EXCEPTION 'Invalid RRULE: Duplicate % parameter. RFC 5545 Section 3.3.10: Each rule part MUST only be specified once.', _dup_param;
+      END IF;
+    END LOOP;
+  END;
+
   -- Check for negative COUNT value in raw RRULE string before parsing
   IF repeatrule ~* 'COUNT=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer';
   END IF;
-  result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+  -- Only the cast is inside the exception block
+  BEGIN
+    result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: COUNT value out of range: must be a valid integer. Error: %',
+        SQLERRM;
+  END;
 
   -- Check for negative INTERVAL value in raw RRULE string before parsing
   IF repeatrule ~* 'INTERVAL=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: INTERVAL must be a positive integer';
   END IF;
-  result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
+  -- Only the cast is inside the exception block
+  BEGIN
+    result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: INTERVAL value out of range: must be a valid integer. Error: %',
+        SQLERRM;
+  END;
 
   result.wkst       := substring(repeatrule from 'WKST=(MO|TU|WE|TH|FR|SA|SU)(;|$)');
   -- Validate WKST: if WKST= was specified but didn't match a valid day, reject it
@@ -142,10 +171,10 @@ BEGIN
   result.rscale     := UPPER(substring(repeatrule from 'RSCALE=([A-Za-z]+)(;|$)'));
 
   -- RFC 7529: SKIP parameter
-  result.skip       := COALESCE(UPPER(substring(repeatrule from 'SKIP=(OMIT|BACKWARD|FORWARD)(;|$)')), 'OMIT');
+  result.skip       := COALESCE(UPPER(substring(repeatrule from 'SKIP=([A-Za-z]+)(;|$)')), 'OMIT');
 
   -- Validate SKIP: if SKIP= was specified but didn't match a valid value, reject it
-  IF result.skip = 'OMIT' AND repeatrule ~ 'SKIP=' AND repeatrule !~ 'SKIP=(OMIT|BACKWARD|FORWARD)(;|$)' THEN
+  IF result.skip NOT IN ('OMIT', 'BACKWARD', 'FORWARD') AND repeatrule ~* 'SKIP=' THEN
     RAISE EXCEPTION 'Invalid SKIP value. SKIP must be one of: OMIT, BACKWARD, FORWARD';
   END IF;
 
@@ -170,11 +199,39 @@ BEGIN
                          string_to_array( substring(repeatrule from 'BYDAY=(([+-]?[0-9]{0,2}(MO|TU|WE|TH|FR|SA|SU),?)+)(;|$)'), ','),
                          '');
 
-  result.byyearday  := string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ',');
-  result.byweekno   := string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ',');
-  result.bymonthday := string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ',');
-  result.bymonth    := string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ',');
-  result.bysetpos   := string_to_array(substring(repeatrule from 'BYSETPOS=(([+-]?[0-9]{1,3},?)+)(;|$)'), ',');
+  BEGIN
+    result.byyearday  := array_remove(
+                           string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ','),
+                           '');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYYEARDAY value out of range: must be valid integers. Error: %',
+        SQLERRM;
+  END;
+  BEGIN
+    result.byweekno   := array_remove(
+                           string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ','),
+                           '');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYWEEKNO value out of range: must be valid integers. Error: %',
+        SQLERRM;
+  END;
+  BEGIN
+    result.bymonthday := array_remove(
+                           string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ','),
+                           '');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYMONTHDAY value out of range: must be valid integers. Error: %',
+        SQLERRM;
+  END;
+  result.bymonth    := array_remove(
+                         string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ','),
+                         '');
+  result.bysetpos   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYSETPOS=(([+-]?[0-9]{1,3},?)+)(;|$)'), ','),
+                         '');
 
   -- Deduplicate BYYEARDAY and BYWEEKNO arrays to prevent duplicate occurrence generation
   -- (e.g., BYYEARDAY=100,100 or BYWEEKNO=1,1 would otherwise produce duplicates)
@@ -191,9 +248,15 @@ BEGIN
           ORDER BY val, idx) sub;
   END IF;
 
-  result.bysecond   := string_to_array(substring(repeatrule from 'BYSECOND=([0-9,+-]+)(;|$)'), ',');
-  result.byminute   := string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ',');
-  result.byhour     := string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ',');
+  result.bysecond   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYSECOND=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.byminute   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.byhour     := array_remove(
+                         string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ','),
+                         '');
 
   -- Deduplicate BYHOUR, BYMINUTE, BYSECOND arrays to prevent duplicate timestamp generation
   -- (e.g., BYHOUR=9,9,10 should not emit hour 9 twice in rrule_day_time_set)
@@ -1561,10 +1624,11 @@ BEGIN
     END IF;
   END IF;
 
-  -- Pass max_results down to helper functions
+  -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
+  -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
   IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r
-                INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r
+    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+                INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
                     ORDER BY 1;
   ELSIF rule.bymonthday IS NOT NULL THEN
     OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
@@ -1777,8 +1841,11 @@ BEGIN
       FOR occurrence IN
         SELECT r FROM rrule.rrule_week_byday_set(week_start, rule.byday, rule.wkst, remaining) r ORDER BY 1
       LOOP
-        -- Only return occurrences that are still in the same year
-        IF date_part('year', occurrence) = date_part('year', after_ts) THEN
+        -- Only return occurrences that belong to the target ISO year.
+        -- Use isoyear on occurrences but calendar year on after_ts, because
+        -- ISO weeks at year boundaries can span two calendar years (e.g.,
+        -- ISO week 1 of 2026 starts on 2025-12-29).
+        IF date_part('isoyear', occurrence) = date_part('year', after_ts) THEN
           RETURN NEXT occurrence;
           result_count := result_count + 1;
           EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
@@ -1787,7 +1854,7 @@ BEGIN
       EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
     ELSE
       -- No BYDAY specified - return the week start date
-      IF date_part('year', week_start) = date_part('year', after_ts) THEN
+      IF date_part('isoyear', week_start) = date_part('year', after_ts) THEN
         RETURN NEXT week_start;
         result_count := result_count + 1;
         EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
@@ -1844,8 +1911,9 @@ BEGIN
   IF rule.bymonth IS NOT NULL THEN
     -- BYMONTH primary
     -- Pass NULL max_results when post-filters may reject candidates
+    -- Use DISTINCT to deduplicate when SKIP=FORWARD overflows into adjacent BYMONTH months
     OPEN curse SCROLL FOR
-      SELECT r
+      SELECT DISTINCT r
       FROM rrule.rrule_yearly_bymonth_set(after_ts, rr,
         CASE WHEN rule.byweekno IS NOT NULL OR rule.byyearday IS NOT NULL
              THEN NULL ELSE max_results END) r
@@ -1970,6 +2038,7 @@ DECLARE
   period_start TIMESTAMP WITH TIME ZONE;
   min_in_period TIMESTAMP WITH TIME ZONE;
   prev_period_max_ts TIMESTAMP WITH TIME ZONE := NULL;
+  omit_count INT;
   rule rrule.rrule_parts%ROWTYPE;
 BEGIN
   SELECT * INTO rule FROM rrule.parse_rrule_parts(basedate, repeatrule);
@@ -2071,6 +2140,7 @@ BEGIN
           + make_interval(days => LEAST(dtstart_day,
               date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
           + (basedate::time)::interval;
+        omit_count := 0;
         LOOP
           EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
           -- Target day doesn't exist in this month — apply SKIP rule
@@ -2086,6 +2156,8 @@ BEGIN
               + (basedate::time)::interval;
             EXIT WHEN current_base > maxdate;
             EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
+            omit_count := omit_count + 1;
+            EXIT WHEN omit_count >= period_limit;
           ELSIF rule.skip = 'FORWARD' THEN
             -- Emit the FORWARD date (1st of next month) inline, then advance
             -- from the ORIGINAL month by interval so each period is correctly spaced.
@@ -2146,6 +2218,7 @@ BEGIN
                 + make_interval(months => date_part('month', basedate)::INT)
                 - INTERVAL '1 day'))::INT) - 1)
           + (basedate::time)::interval;
+        omit_count := 0;
         LOOP
           EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
           -- Target day doesn't exist in this month — apply SKIP rule
@@ -2163,6 +2236,8 @@ BEGIN
               + (basedate::time)::interval;
             EXIT WHEN current_base > maxdate;
             EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
+            omit_count := omit_count + 1;
+            EXIT WHEN omit_count >= period_limit;
           ELSIF rule.skip = 'FORWARD' THEN
             -- Emit the FORWARD date (1st of next month) inline, then advance
             -- to the next year at dtstart month+day so each year gets its own period.
@@ -2387,6 +2462,8 @@ BEGIN
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     start_utc := start_date AT TIME ZONE 'UTC';
     end_utc := end_date AT TIME ZONE 'UTC';
+    -- Clamp end_utc to dtstart + 10 years (matching all()'s behavior) to prevent DoS on sparse rules
+    end_utc := LEAST(end_utc, dtstart_utc + INTERVAL '10 years');
 
     -- Generate occurrences in UTC space (naive timestamps treated as UTC)
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
@@ -2528,10 +2605,9 @@ BEGIN
     -- Note: rrule_event_instances_range is STRICT (NULL returns no rows), so we
     -- pass 50000000 which is large enough to be uncapped yet safe from integer
     -- overflow in calculate_safe_iteration_limit (max multiplier 40x = 2B < INT_MAX).
-    SELECT occurrence, cnt INTO previous_occurrence, scan_count
+    SELECT occurrence INTO previous_occurrence
     FROM (
-        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence,
-               COUNT(*) OVER () AS cnt
+        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence
         FROM rrule.rrule_event_instances_range(
             dtstart_utc,
             rrule_string,
@@ -2546,6 +2622,23 @@ BEGIN
     END
     ORDER BY occurrence DESC
     LIMIT 1;
+
+    -- Only compute scan_count for the warning when rule is unbounded.
+    -- This is a separate query to avoid COUNT(*) OVER() in the main query,
+    -- which would force PostgreSQL to materialize all rows before LIMIT 1.
+    IF NOT has_bound THEN
+        SELECT COUNT(*)::BIGINT INTO scan_count
+        FROM (
+            SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence
+            FROM rrule.rrule_event_instances_range(
+                dtstart_utc,
+                rrule_string,
+                dtstart_utc,
+                maxdate_utc,
+                1000000
+            ) d
+        ) sub;
+    END IF;
 
     -- Warn when before() scanned many occurrences on an unbounded rule,
     -- matching the safety warning that all() and between() emit at 1000.
@@ -2572,6 +2665,10 @@ RETURNS INTEGER AS $$
 DECLARE
     occurrence_count INTEGER;
 BEGIN
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
@@ -2743,6 +2840,7 @@ DECLARE
     period_start TIMESTAMP;
     min_in_period TIMESTAMP;
     prev_period_max_ts TIMESTAMP := NULL;
+    omit_count INT;
     rule rrule.rrule_parts%ROWTYPE;
 BEGIN
     -- Parse the RRULE (note: basedate is converted to TIMESTAMPTZ for parsing, but only for date extraction)
@@ -2863,6 +2961,7 @@ BEGIN
                 + make_interval(days => LEAST(dtstart_day,
                     date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
                 + (basedate::time)::interval;
+              omit_count := 0;
               LOOP
                 EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
                 IF rule.skip = 'OMIT' THEN
@@ -2875,6 +2974,8 @@ BEGIN
                     + (basedate::time)::interval;
                   EXIT WHEN current_base > maxdate;
                   EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
+                  omit_count := omit_count + 1;
+                  EXIT WHEN omit_count >= period_limit;
                 ELSIF rule.skip = 'FORWARD' THEN
                   current := (date_trunc('month', current_base) + INTERVAL '1 month'
                     + (basedate::time)::interval)::TIMESTAMP;
@@ -2935,6 +3036,7 @@ BEGIN
                       + make_interval(months => date_part('month', basedate)::INT)
                       - INTERVAL '1 day'))::INT) - 1)
                 + (basedate::time)::interval;
+              omit_count := 0;
               LOOP
                 EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
                 IF rule.skip = 'OMIT' THEN
@@ -2950,6 +3052,8 @@ BEGIN
                     + (basedate::time)::interval;
                   EXIT WHEN current_base > maxdate;
                   EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
+                  omit_count := omit_count + 1;
+                  EXIT WHEN omit_count >= period_limit;
                 ELSIF rule.skip = 'FORWARD' THEN
                   current := (date_trunc('month', current_base) + INTERVAL '1 month'
                     + (basedate::time)::interval)::TIMESTAMP;
@@ -3149,6 +3253,8 @@ BEGIN
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_range_start := range_start AT TIME ZONE tz_name;
     wall_clock_range_end := range_end AT TIME ZONE tz_name;
+    -- Clamp range end to dtstart + 10 years (matching all()'s behavior) to prevent DoS on sparse rules
+    wall_clock_range_end := LEAST(wall_clock_range_end, wall_clock_start + INTERVAL '10 years');
 
     -- Generate occurrences
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
@@ -3278,8 +3384,7 @@ DECLARE
     tz_name TEXT;
     wall_clock_start TIMESTAMP;
     wall_clock_before TIMESTAMP;
-    naive_occurrence TIMESTAMP;
-    results TIMESTAMPTZ[];
+    results TIMESTAMP[];
     scan_count BIGINT := 0;
     has_bound BOOLEAN;
 BEGIN
@@ -3323,37 +3428,26 @@ BEGIN
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_before := before_date AT TIME ZONE tz_name;
 
-    -- Generate occurrences up to before_date, keeping only the last N in a sliding window.
-    -- This caps memory at O(count) instead of O(N) for rules with many occurrences.
+    -- Generate all occurrences up to before_date, then select the last N using ORDER BY DESC LIMIT.
+    -- This avoids O(N) array append/slice operations by letting PostgreSQL use an efficient top-N sort.
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
     -- before() must scan all occurrences to find the last N, so we pass a large output_limit.
     -- Use 1000000 to limit iteration budget while being large enough for scanning within the maxdate window.
-    results := ARRAY[]::TIMESTAMPTZ[];
-    FOR naive_occurrence IN
-        SELECT * FROM rrule.rrule_event_instances_range_tz(
-            wall_clock_start,
-            rrule_string,
-            wall_clock_start,
-            wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
-            1000000
-        )
-    LOOP
-        scan_count := scan_count + 1;
-        IF inc THEN
-            IF naive_occurrence > wall_clock_before THEN
-                CONTINUE;
-            END IF;
-        ELSE
-            IF naive_occurrence >= wall_clock_before THEN
-                CONTINUE;
-            END IF;
-        END IF;
-        results := array_append(results, naive_occurrence AT TIME ZONE tz_name);
-        -- Trim to last N elements to cap memory usage
-        IF array_length(results, 1) > count THEN
-            results := results[array_length(results, 1) - count + 1 : array_length(results, 1)];
-        END IF;
-    END LOOP;
+
+    -- Collect filtered occurrences into array for counting + selection
+    SELECT array_agg(d ORDER BY d), COUNT(*)
+    INTO results, scan_count
+    FROM rrule.rrule_event_instances_range_tz(
+        wall_clock_start,
+        rrule_string,
+        wall_clock_start,
+        wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+        1000000
+    ) AS d
+    WHERE CASE
+        WHEN inc THEN d <= wall_clock_before
+        ELSE d < wall_clock_before
+    END;
 
     -- Warn when before() scanned many occurrences on an unbounded rule,
     -- matching the safety warning that all() and between() emit at 1000.
@@ -3361,12 +3455,16 @@ BEGIN
         RAISE WARNING 'rrule: before() scanned % occurrences to find the last match. The recurrence rule has no COUNT or UNTIL and produced many results. Consider adding bounds to the rule.', scan_count;
     END IF;
 
-    -- Return all collected results (already trimmed to at most count elements)
-    IF array_length(results, 1) IS NOT NULL THEN
-        FOR idx IN 1 .. array_length(results, 1) LOOP
-            RETURN NEXT results[idx];
-        END LOOP;
-    END IF;
+    -- Return the last N occurrences using ORDER BY DESC LIMIT for efficiency
+    RETURN QUERY
+        SELECT (sub.occ AT TIME ZONE tz_name)
+        FROM (
+            SELECT unnest AS occ
+            FROM unnest(results)
+            ORDER BY unnest DESC
+            LIMIT count
+        ) sub
+        ORDER BY sub.occ ASC;
 END;
 $$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
@@ -3383,6 +3481,10 @@ CREATE OR REPLACE FUNCTION rrule.count(
 DECLARE
     occurrence_count INTEGER;
 BEGIN
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
