@@ -898,4 +898,91 @@ SELECT
             '2024-02-29 00:00:00'::TIMESTAMP
          ) AS occurrence)
     );
+
+-- ============================================================================
+-- Issue 36: SKIP=OMIT inner loop cap prevents unbounded scanning
+-- ============================================================================
+
+-- Test: YEARLY;SKIP=OMIT with Feb 29 dtstart (pathological: only leap years match)
+-- This should terminate in bounded time even though 3 out of 4 years are skipped.
+-- Note: all() enforces a 10-year window, so only 3 leap years fit (2024, 2028, 2032).
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 36: YEARLY SKIP=OMIT Feb 29 terminates (leap year only)',
+    assert_occurrences_equal(
+        'OMIT YEARLY leap year cap',
+        ARRAY[
+            '2024-02-29 00:00:00'::TIMESTAMP,
+            '2028-02-29 00:00:00'::TIMESTAMP,
+            '2032-02-29 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;RSCALE=GREGORIAN;SKIP=OMIT;COUNT=5',
+            '2024-02-29 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- Test: MONTHLY;SKIP=OMIT with day 31 dtstart (pathological: months with <31 days are skipped)
+-- Months with 31 days: Jan, Mar, May, Jul, Aug, Oct, Dec (7 out of 12)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 36: MONTHLY SKIP=OMIT day 31 terminates',
+    assert_occurrences_equal(
+        'OMIT MONTHLY day 31 cap',
+        ARRAY[
+            '2024-01-31 00:00:00'::TIMESTAMP,
+            '2024-03-31 00:00:00'::TIMESTAMP,
+            '2024-05-31 00:00:00'::TIMESTAMP,
+            '2024-07-31 00:00:00'::TIMESTAMP,
+            '2024-08-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;RSCALE=GREGORIAN;SKIP=OMIT;COUNT=5',
+            '2024-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- Test: YEARLY;INTERVAL=4;SKIP=OMIT with Feb 29 dtstart
+-- Only every 4th year can be a leap year, so 3 out of 4 iterations match.
+-- But century years not divisible by 400 are NOT leap years (2100 is not).
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 36: YEARLY INTERVAL=4 SKIP=OMIT Feb 29 terminates',
+    assert_occurrences_equal(
+        'OMIT YEARLY INTERVAL=4 leap year cap',
+        ARRAY[
+            '2024-02-29 00:00:00'::TIMESTAMP,
+            '2028-02-29 00:00:00'::TIMESTAMP,
+            '2032-02-29 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=4;RSCALE=GREGORIAN;SKIP=OMIT;COUNT=3',
+            '2024-02-29 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- Test: MONTHLY;INTERVAL=2;SKIP=OMIT with day 31 (sparse: every 2 months starting Jan)
+-- Every 2 months from Jan: Jan, Mar, May, Jul, Sep, Nov
+-- Of these, months with 31 days: Jan(31), Mar(31), May(31), Jul(31) — Sep has 30, Nov has 30
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 36: MONTHLY INTERVAL=2 SKIP=OMIT day 31 terminates',
+    assert_occurrences_equal(
+        'OMIT MONTHLY INTERVAL=2 day 31 cap',
+        ARRAY[
+            '2024-01-31 00:00:00'::TIMESTAMP,
+            '2024-03-31 00:00:00'::TIMESTAMP,
+            '2024-05-31 00:00:00'::TIMESTAMP,
+            '2024-07-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=OMIT;COUNT=4',
+            '2024-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
 ROLLBACK;
