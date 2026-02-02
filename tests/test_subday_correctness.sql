@@ -1116,4 +1116,60 @@ SELECT
          FROM rrule."all"('FREQ=HOURLY;BYMONTH=1;COUNT=3', '2025-01-31 22:00:00'::TIMESTAMP) AS occurrence)
     );
 
+
+-- Test Issue 32: Subday TZ generator prev_period_max_ts variable declaration
+-- MONTHLY via TIMESTAMPTZ API exercises the subday TZ generator MONTHLY branch
+-- which uses prev_period_max_ts for cross-period SKIP=FORWARD deduplication.
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    -- MONTHLY;COUNT=3 via TIMESTAMPTZ API exercises the subday TZ generator
+    expected := ARRAY[
+        '2025-01-15 09:00:00-05'::TIMESTAMPTZ,
+        '2025-02-15 09:00:00-05'::TIMESTAMPTZ,
+        '2025-03-15 09:00:00-05'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MONTHLY;COUNT=3',
+        '2025-01-15 09:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('Issue 32: prev_period_max_ts', 'MONTHLY via TIMESTAMPTZ API (subday TZ generator)',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
+
+-- Test Issue 32: MONTHLY + SKIP=FORWARD via TIMESTAMPTZ API (exercises prev_period_max_ts dedup)
+DO $$
+DECLARE
+    actual TIMESTAMPTZ[];
+    expected TIMESTAMPTZ[];
+BEGIN
+    -- SKIP=FORWARD on Jan 31 pushes Feb to Feb 28, Mar to Mar 31
+    expected := ARRAY[
+        '2025-01-31 09:00:00-05'::TIMESTAMPTZ,
+        '2025-02-28 09:00:00-05'::TIMESTAMPTZ,
+        '2025-03-31 09:00:00-04'::TIMESTAMPTZ
+    ];
+
+    SELECT array_agg(occurrence ORDER BY occurrence) INTO actual
+    FROM rrule."all"(
+        'FREQ=MONTHLY;COUNT=3;SKIP=FORWARD;RSCALE=GREGORIAN',
+        '2025-01-31 09:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS occurrence;
+
+    INSERT INTO subday_test_results (test_category, test_name, status)
+    VALUES ('Issue 32: prev_period_max_ts', 'MONTHLY + SKIP=FORWARD via TIMESTAMPTZ API',
+        CASE WHEN actual = expected THEN 'PASS'
+        ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
+END;
+$$;
 ROLLBACK;

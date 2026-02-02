@@ -2102,6 +2102,9 @@ BEGIN
               emitted_count := emitted_count + 1;
               EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
             END IF;
+            -- Count this FORWARD iteration against the period budget (DoS protection)
+            period_count := period_count + 1;
+            EXIT WHEN period_count >= period_limit;
             -- Advance from current month by interval, restore dtstart_day
             current_base := current_base + make_interval(months => rule.interval);
             current_base := date_trunc('month', current_base)
@@ -2176,6 +2179,9 @@ BEGIN
               emitted_count := emitted_count + 1;
               EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
             END IF;
+            -- Count this FORWARD iteration against the period budget (DoS protection)
+            period_count := period_count + 1;
+            EXIT WHEN period_count >= period_limit;
             -- Advance to next year at dtstart month+day (clamped)
             current_base := current_base + make_interval(years => rule.interval);
             current_base := date_trunc('year', current_base)
@@ -2208,7 +2214,7 @@ BEGIN
     ELSE
       -- Provide helpful error message for sub-day frequencies
       IF rule.freq IN ('HOURLY', 'MINUTELY', 'SECONDLY') THEN
-        RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql. See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
+        RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql (or SQL.installWithSubday for npm users). See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
       ELSE
         RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY. For sub-day frequencies, see INCLUDING_SUBDAY_OPERATIONS.md', rule.freq;
       END IF;
@@ -2444,7 +2450,7 @@ BEGIN
     -- This skips generating all occurrences before after_date (O(1) vs O(N))
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     after_utc := after_date AT TIME ZONE 'UTC';
-    maxdate_utc := dtstart_utc + INTERVAL '10 years';
+    maxdate_utc := GREATEST(dtstart_utc, after_utc) + INTERVAL '10 years';
 
     -- max_count=1000: sparse rules may need many periods before finding occurrence after after_date
     SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP INTO next_occurrence
@@ -2531,7 +2537,7 @@ BEGIN
             rrule_string,
             dtstart_utc,
             maxdate_utc,
-            50000000
+            1000000
         ) d
     ) sub
     WHERE CASE
@@ -2654,14 +2660,16 @@ BEGIN
     adjusted_maxdate := COALESCE(maxdate, dtstart + '10 years'::interval);
     adjusted_mindate := COALESCE(mindate, dtstart - '10 years'::interval);
 
-    -- Expand search window to account for event duration
-    IF duration > INTERVAL '0' THEN
-        adjusted_mindate := adjusted_mindate - duration;
-    END IF;
-
-    -- If no RRULE, check single event overlap (matches TIMESTAMPTZ behavior)
+    -- If no RRULE, check single event overlap using original (non-duration-expanded) bounds.
+    -- A single event [dtstart, dtend] overlaps [mindate, maxdate] iff dtstart < maxdate AND dtend >= mindate.
+    -- Duration expansion is only needed for recurring events (to catch occurrences starting before the window).
     IF rrule_string IS NULL THEN
         RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
+    END IF;
+
+    -- Expand search window to account for event duration (recurring events only)
+    IF duration > INTERVAL '0' THEN
+        adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
     -- Check if there's at least one occurrence in the range
@@ -2881,6 +2889,9 @@ BEGIN
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                   END IF;
+                  -- Count this FORWARD iteration against the period budget (DoS protection)
+                  period_count := period_count + 1;
+                  EXIT WHEN period_count >= period_limit;
                   current_base := current_base + make_interval(months => rule.interval);
                   current_base := date_trunc('month', current_base)
                     + make_interval(days => LEAST(dtstart_day,
@@ -2953,6 +2964,9 @@ BEGIN
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                   END IF;
+                  -- Count this FORWARD iteration against the period budget (DoS protection)
+                  period_count := period_count + 1;
+                  EXIT WHEN period_count >= period_limit;
                   current_base := current_base + make_interval(years => rule.interval);
                   current_base := date_trunc('year', current_base)
                     + make_interval(months => date_part('month', basedate)::INT - 1)
@@ -2970,7 +2984,7 @@ BEGIN
         ELSE
             -- Provide helpful error message for sub-day frequencies
             IF rule.freq IN ('HOURLY', 'MINUTELY', 'SECONDLY') THEN
-              RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql. See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
+              RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql (or SQL.installWithSubday for npm users). See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
             ELSE
               RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY. For sub-day frequencies, see INCLUDING_SUBDAY_OPERATIONS.md', rule.freq;
             END IF;
@@ -3219,7 +3233,7 @@ BEGIN
     -- Convert to wall-clock time
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_after := after_date AT TIME ZONE tz_name;
-    wall_clock_end := wall_clock_start + INTERVAL '10 years';
+    wall_clock_end := GREATEST(wall_clock_start, wall_clock_after) + INTERVAL '10 years';
 
     -- Generate occurrences
     FOR naive_occurrence IN
@@ -3313,7 +3327,7 @@ BEGIN
     -- This caps memory at O(count) instead of O(N) for rules with many occurrences.
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
     -- before() must scan all occurrences to find the last N, so we pass a large output_limit.
-    -- Use 50000000 (safe from integer overflow in calculate_safe_iteration_limit's 40x multiplier).
+    -- Use 1000000 to limit iteration budget while being large enough for scanning within the maxdate window.
     results := ARRAY[]::TIMESTAMPTZ[];
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
@@ -3321,7 +3335,7 @@ BEGIN
             rrule_string,
             wall_clock_start,
             wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
-            50000000
+            1000000
         )
     LOOP
         scan_count := scan_count + 1;
@@ -3505,13 +3519,15 @@ BEGIN
     adjusted_mindate := COALESCE(mindate, dtstart - INTERVAL '10 years');
     adjusted_maxdate := COALESCE(maxdate, dtstart + INTERVAL '10 years');
 
-    IF duration > INTERVAL '0' THEN
-        adjusted_mindate := adjusted_mindate - duration;
-    END IF;
-
-    -- If no RRULE, check single event overlap
+    -- If no RRULE, check single event overlap using original (non-duration-expanded) bounds.
+    -- Duration expansion is only needed for recurring events (to catch occurrences starting before the window).
     IF rrule_string IS NULL THEN
         RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
+    END IF;
+
+    -- Expand search window to account for event duration (recurring events only)
+    IF duration > INTERVAL '0' THEN
+        adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
     -- Use generator directly with LIMIT 1 for streaming efficiency (avoids materializing between())

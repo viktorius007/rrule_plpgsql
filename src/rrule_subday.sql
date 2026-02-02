@@ -338,6 +338,9 @@ BEGIN
               emitted_count := emitted_count + 1;
               EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
             END IF;
+            -- Count this FORWARD iteration against the period budget (DoS protection)
+            period_count := period_count + 1;
+            EXIT WHEN period_count >= period_limit;
             current_base := current_base + make_interval(months => rule.interval);
             current_base := date_trunc('month', current_base)
               + make_interval(days => LEAST(dtstart_day,
@@ -402,6 +405,9 @@ BEGIN
               emitted_count := emitted_count + 1;
               EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
             END IF;
+            -- Count this FORWARD iteration against the period budget (DoS protection)
+            period_count := period_count + 1;
+            EXIT WHEN period_count >= period_limit;
             current_base := current_base + make_interval(years => rule.interval);
             current_base := date_trunc('year', current_base)
               + make_interval(months => date_part('month', basedate)::INT - 1)
@@ -509,6 +515,7 @@ DECLARE
     current TIMESTAMP;
     period_start TIMESTAMP;
     min_in_period TIMESTAMP;
+    prev_period_max_ts TIMESTAMP := NULL;
     rule rrule.rrule_parts%ROWTYPE;
 BEGIN
     SELECT * INTO rule FROM rrule.parse_rrule_parts( basedate::TIMESTAMPTZ, repeatrule );
@@ -646,6 +653,9 @@ BEGIN
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                   END IF;
+                  -- Count this FORWARD iteration against the period budget (DoS protection)
+                  period_count := period_count + 1;
+                  EXIT WHEN period_count >= period_limit;
                   current_base := current_base + make_interval(months => rule.interval);
                   current_base := date_trunc('month', current_base)
                     + make_interval(days => LEAST(dtstart_day,
@@ -718,6 +728,9 @@ BEGIN
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                   END IF;
+                  -- Count this FORWARD iteration against the period budget (DoS protection)
+                  period_count := period_count + 1;
+                  EXIT WHEN period_count >= period_limit;
                   current_base := current_base + make_interval(years => rule.interval);
                   current_base := date_trunc('year', current_base)
                     + make_interval(months => date_part('month', basedate)::INT - 1)
@@ -782,7 +795,7 @@ BEGIN
             current_base := current_base + make_interval(secs => rule.interval);
 
         ELSE
-            RAISE EXCEPTION 'Unsupported frequency: %', rule.freq;
+            RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY, HOURLY, MINUTELY, SECONDLY', rule.freq;
         END IF;
         period_count := period_count + 1;
         EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;

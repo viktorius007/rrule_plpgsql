@@ -6601,4 +6601,234 @@ SELECT
         )::TEXT)
     );
 
+
+-- ============================================================================
+-- SECTION: Issue 19 — overlaps() false-positive with duration-expanded
+-- adjusted_mindate for single events (NULL rrule)
+-- ============================================================================
+\echo ''
+\echo '--- Issue 19: overlaps() false-positive for single events ---'
+
+-- Test: Single event [Jan 1, Jan 10] should NOT overlap query range [Jan 11, Jan 20].
+-- The event ends on Jan 10 and the query starts on Jan 11 — no overlap.
+-- Previously, duration expansion shifted adjusted_mindate to Jan 2, causing a false positive.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 19: overlaps() single event',
+    'TIMESTAMP: single event ending before query window returns FALSE',
+    assert_equals(
+        'overlaps() no false positive',
+        'false',
+        (SELECT rrule."overlaps"(
+            '2020-01-01 00:00:00'::TIMESTAMPTZ,   -- dtstart
+            '2020-01-10 00:00:00'::TIMESTAMPTZ,   -- dtend (9-day event)
+            NULL::TEXT,                              -- no rrule (single event)
+            '2020-01-11 00:00:00'::TIMESTAMPTZ,   -- mindate (query start)
+            '2020-01-20 00:00:00'::TIMESTAMPTZ,   -- maxdate (query end)
+            'UTC'
+        )::TEXT)
+    );
+
+-- Test: Single event [Jan 1, Jan 10] SHOULD overlap query range [Jan 5, Jan 15].
+-- The event ends on Jan 10 which is >= Jan 5 (mindate), and starts on Jan 1 which is < Jan 15 (maxdate).
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 19: overlaps() single event',
+    'TIMESTAMP: single event overlapping query window returns TRUE',
+    assert_equals(
+        'overlaps() true positive',
+        'true',
+        (SELECT rrule."overlaps"(
+            '2020-01-01 00:00:00'::TIMESTAMPTZ,
+            '2020-01-10 00:00:00'::TIMESTAMPTZ,
+            NULL::TEXT,
+            '2020-01-05 00:00:00'::TIMESTAMPTZ,
+            '2020-01-15 00:00:00'::TIMESTAMPTZ,
+            'UTC'
+        )::TEXT)
+    );
+
+-- Test: Single event [Jan 1, Jan 10] should NOT overlap [Jan 10 00:00:01, Jan 20].
+-- Event ends exactly at Jan 10 00:00:00, query starts at Jan 10 00:00:01 — no overlap.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 19: overlaps() single event',
+    'TIMESTAMP: single event boundary — ends just before query start returns FALSE',
+    assert_equals(
+        'overlaps() boundary false',
+        'false',
+        (SELECT rrule."overlaps"(
+            '2020-01-01 00:00:00'::TIMESTAMPTZ,
+            '2020-01-10 00:00:00'::TIMESTAMPTZ,
+            NULL::TEXT,
+            '2020-01-10 00:00:01'::TIMESTAMPTZ,
+            '2020-01-20 00:00:00'::TIMESTAMPTZ,
+            'UTC'
+        )::TEXT)
+    );
+
+-- Test: Single event [Jan 1, Jan 10] SHOULD overlap [Jan 10, Jan 20] (dtend == mindate).
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 19: overlaps() single event',
+    'TIMESTAMP: single event boundary — dtend equals mindate returns TRUE',
+    assert_equals(
+        'overlaps() boundary true',
+        'true',
+        (SELECT rrule."overlaps"(
+            '2020-01-01 00:00:00'::TIMESTAMPTZ,
+            '2020-01-10 00:00:00'::TIMESTAMPTZ,
+            NULL::TEXT,
+            '2020-01-10 00:00:00'::TIMESTAMPTZ,
+            '2020-01-20 00:00:00'::TIMESTAMPTZ,
+            'UTC'
+        )::TEXT)
+    );
+
+-- Test: TIMESTAMPTZ overlaps() — same false-positive scenario with timezone
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 19: overlaps() single event',
+    'TIMESTAMPTZ: single event ending before query window returns FALSE',
+    assert_equals(
+        'overlaps() TZ no false positive',
+        'false',
+        (SELECT rrule."overlaps"(
+            '2020-01-01 00:00:00'::TIMESTAMPTZ,
+            '2020-01-10 00:00:00'::TIMESTAMPTZ,
+            NULL::TEXT,
+            '2020-01-11 00:00:00'::TIMESTAMPTZ,
+            '2020-01-20 00:00:00'::TIMESTAMPTZ,
+            'America/New_York'
+        )::TEXT)
+    );
+
+
+-- ============================================================================
+-- SECTION: Issue 25 — after() maxdate anchored to dtstart+10y instead of
+-- GREATEST(dtstart, after_date)+10y
+-- ============================================================================
+\echo ''
+\echo '--- Issue 25: after() maxdate anchoring ---'
+
+-- Test: TIMESTAMP after() with after_date more than 10 years from dtstart.
+-- FREQ=YEARLY;COUNT=20 produces 20 yearly occurrences starting from 2000.
+-- The 15th occurrence is 2014, the 20th is 2019. after_date=2013-06-01 is >10y from dtstart.
+-- Previously returned NULL because maxdate was 2010 (2000+10y), missing occurrences after 2010.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 25: after() maxdate anchoring',
+    'TIMESTAMP: after() finds occurrence >10 years from dtstart',
+    assert_equals(
+        'after() beyond 10y from dtstart',
+        '2014-01-01 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=YEARLY;COUNT=20',
+            '2000-01-01 00:00:00'::TIMESTAMP,
+            '2013-06-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test: TIMESTAMP after() — last occurrence of a 20-year rule
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 25: after() maxdate anchoring',
+    'TIMESTAMP: after() finds last occurrence of 20-year yearly rule',
+    assert_equals(
+        'after() 20th year',
+        '2019-01-01 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=YEARLY;COUNT=20',
+            '2000-01-01 00:00:00'::TIMESTAMP,
+            '2018-06-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test: TIMESTAMPTZ after() with after_date more than 10 years from dtstart.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 25: after() maxdate anchoring',
+    'TIMESTAMPTZ: after() finds occurrence >10 years from dtstart',
+    assert_equals(
+        'after() TZ beyond 10y',
+        '2014-01-01 05:00:00+00',
+        (SELECT (x.*)::TEXT FROM rrule."after"(
+            'FREQ=YEARLY;COUNT=20',
+            '2000-01-01 00:00:00-05'::TIMESTAMPTZ,
+            '2013-06-01 00:00:00-05'::TIMESTAMPTZ,
+            1,
+            'America/New_York',
+            FALSE
+        ) x LIMIT 1)
+    );
+
+-- Test: TIMESTAMP after() — after_date within 10y of dtstart still works (regression check)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 25: after() maxdate anchoring',
+    'TIMESTAMP: after() within 10y still works (regression)',
+    assert_equals(
+        'after() within 10y regression',
+        '2006-01-01 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=YEARLY;COUNT=20',
+            '2000-01-01 00:00:00'::TIMESTAMP,
+            '2005-06-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test Issue 31: before() iteration budget is reasonable
+-- Verify before() still works correctly with reduced max_count (1M instead of 50M)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 31: before() iteration budget',
+    'TIMESTAMP: before() finds last occurrence with reduced budget',
+    assert_equals(
+        'before() with reduced budget',
+        '2025-12-01 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=MONTHLY;COUNT=24',
+            '2024-01-01 00:00:00'::TIMESTAMP,
+            '2026-01-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test Issue 31: TIMESTAMPTZ before() with reduced budget
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 31: before() iteration budget',
+    'TIMESTAMPTZ: before() finds last occurrence with reduced budget',
+    assert_equals(
+        'TZ before() with reduced budget',
+        '2025-12-01 15:00:00+00',
+        (SELECT (rrule."before"(
+            'FREQ=MONTHLY;COUNT=24',
+            '2024-01-01 10:00:00-05'::TIMESTAMPTZ,
+            '2026-01-01 10:00:00-05'::TIMESTAMPTZ,
+            1,
+            'America/New_York',
+            FALSE
+        ))::TEXT)
+    );
+
+-- Test Issue 31: before() with DAILY rule over long range still works
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 31: before() iteration budget',
+    'DAILY before() over multi-year range finds correct last occurrence',
+    assert_equals(
+        'DAILY before() multi-year',
+        '2024-12-31 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=1000',
+            '2022-04-07 00:00:00'::TIMESTAMP,
+            '2025-06-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
 ROLLBACK;
