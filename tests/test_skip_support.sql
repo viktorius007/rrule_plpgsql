@@ -746,4 +746,62 @@ BEGIN
     END IF;
 END $$;
 
+
+-- ============================================================================
+-- Issue 18: SKIP=FORWARD with BYMONTHDAY cross-period dedup
+-- ============================================================================
+\echo ''
+\echo '--- Issue 18: SKIP=FORWARD cross-period dedup ---'
+
+-- FREQ=MONTHLY;BYMONTHDAY=1,31;SKIP=FORWARD;COUNT=6
+-- Feb 31 -> FORWARD to Mar 1. Mar set also has Mar 1. Should not duplicate.
+-- Expected: Jan 1, Jan 31, Feb 1, Mar 1 (from FORWARD), Mar 31, Apr 1
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'BYMONTHDAY=1,31 no cross-period duplicates',
+    assert_occurrences_equal(
+        'FORWARD dedup',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-02-01 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-04-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;RSCALE=GREGORIAN;BYMONTHDAY=1,31;SKIP=FORWARD;COUNT=6',
+            '2025-01-01 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- ============================================================================
+-- Issue 12: SKIP=OMIT drift prevention with large INTERVAL
+-- ============================================================================
+\echo ''
+\echo '--- Issue 12: SKIP=OMIT period_limit with INTERVAL=2 ---'
+
+-- FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=31;SKIP=OMIT;COUNT=5
+-- Months with 31 days from Jan 2025 (every 2 months): Jan(31), Mar(31), May(31), Jul(31)
+-- Sep has 30 days → OMIT, Nov has 30 days → OMIT, Jan 2026 has 31 days → 5th occurrence
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'MONTHLY;INTERVAL=2;BYMONTHDAY=31;SKIP=OMIT;COUNT=5',
+    assert_occurrences_equal(
+        'OMIT INTERVAL=2',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP,
+            '2026-01-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=31;RSCALE=GREGORIAN;SKIP=OMIT;COUNT=5',
+            '2025-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
 ROLLBACK;

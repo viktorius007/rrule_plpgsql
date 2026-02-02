@@ -1048,4 +1048,72 @@ SELECT
     ROUND(100.0 * COUNT(*) FILTER (WHERE status LIKE 'PASS%') / COUNT(*), 1) || '%' AS pass_rate
 FROM subday_test_results;
 
+
+-- ============================================================================
+-- SECTION 12: Issue 15+16 — Subday generator guards and negative BYMONTHDAY
+-- ============================================================================
+\echo ''
+\echo '--- Section 12: Issue 15 (bymonthday/bymonth guards) + Issue 16 (negative BYMONTHDAY) ---'
+
+-- Test Issue 16: BYMONTHDAY=-1 with HOURLY (negative values)
+-- BYMONTHDAY=-1 means last day of month. Previously the naive date_part check rejected negatives.
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'Issue 16: Negative BYMONTHDAY',
+    'HOURLY + BYMONTHDAY=-1 returns last day of month',
+    assert_occurrences_equal(
+        'HOURLY BYMONTHDAY=-1',
+        ARRAY[
+            '2025-01-31 09:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-01-31 11:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=HOURLY;BYMONTHDAY=-1;COUNT=3', '2025-01-31 09:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test Issue 16: BYMONTHDAY=-1 with MINUTELY
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'Issue 16: Negative BYMONTHDAY',
+    'MINUTELY + BYMONTHDAY=-1 returns last day of month',
+    assert_occurrences_equal(
+        'MINUTELY BYMONTHDAY=-1',
+        ARRAY[
+            '2025-01-31 09:00:00'::TIMESTAMP,
+            '2025-01-31 09:01:00'::TIMESTAMP,
+            '2025-01-31 09:02:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MINUTELY;BYMONTHDAY=-1;COUNT=3', '2025-01-31 09:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test Issue 16: BYMONTHDAY=-1 with SECONDLY
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'Issue 16: Negative BYMONTHDAY',
+    'SECONDLY + BYMONTHDAY=-1 returns last day of month',
+    assert_occurrences_equal(
+        'SECONDLY BYMONTHDAY=-1',
+        ARRAY[
+            '2025-01-31 09:00:00'::TIMESTAMP,
+            '2025-01-31 09:00:01'::TIMESTAMP,
+            '2025-01-31 09:00:02'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=SECONDLY;BYMONTHDAY=-1;COUNT=3', '2025-01-31 09:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test Issue 15: HOURLY + BYMONTH filter (guard ensures enough candidates)
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'Issue 15: BYMONTH guard',
+    'HOURLY + BYMONTH=1 returns only January hours',
+    assert_equals(
+        'HOURLY BYMONTH=1 count',
+        '3',
+        (SELECT COUNT(*)::TEXT
+         FROM rrule."all"('FREQ=HOURLY;BYMONTH=1;COUNT=3', '2025-01-31 22:00:00'::TIMESTAMP) AS occurrence)
+    );
+
 ROLLBACK;

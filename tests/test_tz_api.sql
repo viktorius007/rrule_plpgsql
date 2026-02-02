@@ -2628,6 +2628,55 @@ BEGIN
 END;
 $$;
 
+
+-- ============================================================================
+-- Issue 28: TIMESTAMPTZ overlaps() efficiency — use generator directly
+-- This tests correctness (efficiency is verified by the implementation change).
+-- ============================================================================
+\echo ''
+\echo '--- Issue 28: TIMESTAMPTZ overlaps() correctness ---'
+
+DO $$
+DECLARE
+    result BOOLEAN;
+BEGIN
+    -- Test: overlaps() with TIMESTAMPTZ API finds recurring event in range
+    SELECT rrule."overlaps"(
+        '2025-01-15 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-15 11:00:00+00'::TIMESTAMPTZ,
+        'FREQ=DAILY;COUNT=5',
+        '2025-01-10 00:00:00+00'::TIMESTAMPTZ,
+        '2025-01-20 23:59:59+00'::TIMESTAMPTZ,
+        'America/New_York'
+    ) INTO result;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'TZ overlaps() efficiency',
+        'overlaps() finds recurring event in range',
+        result = TRUE,
+        result::TEXT,
+        'true'
+    );
+
+    -- Test: overlaps() returns FALSE when no occurrences in range
+    SELECT rrule."overlaps"(
+        '2025-01-15 10:00:00+00'::TIMESTAMPTZ,
+        '2025-01-15 11:00:00+00'::TIMESTAMPTZ,
+        'FREQ=DAILY;COUNT=2',
+        '2025-02-01 00:00:00+00'::TIMESTAMPTZ,
+        '2025-02-28 23:59:59+00'::TIMESTAMPTZ,
+        'America/New_York'
+    ) INTO result;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'TZ overlaps() efficiency',
+        'overlaps() returns FALSE when no occurrences',
+        result = FALSE,
+        result::TEXT,
+        'false'
+    );
+END $$;
+
 ROLLBACK;
 
 \echo ''
