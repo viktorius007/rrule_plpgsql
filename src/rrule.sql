@@ -2450,7 +2450,7 @@ BEGIN
     -- This skips generating all occurrences before after_date (O(1) vs O(N))
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     after_utc := after_date AT TIME ZONE 'UTC';
-    maxdate_utc := dtstart_utc + INTERVAL '10 years';
+    maxdate_utc := GREATEST(dtstart_utc, after_utc) + INTERVAL '10 years';
 
     -- max_count=1000: sparse rules may need many periods before finding occurrence after after_date
     SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP INTO next_occurrence
@@ -2660,14 +2660,16 @@ BEGIN
     adjusted_maxdate := COALESCE(maxdate, dtstart + '10 years'::interval);
     adjusted_mindate := COALESCE(mindate, dtstart - '10 years'::interval);
 
-    -- Expand search window to account for event duration
-    IF duration > INTERVAL '0' THEN
-        adjusted_mindate := adjusted_mindate - duration;
-    END IF;
-
-    -- If no RRULE, check single event overlap (matches TIMESTAMPTZ behavior)
+    -- If no RRULE, check single event overlap using original (non-duration-expanded) bounds.
+    -- A single event [dtstart, dtend] overlaps [mindate, maxdate] iff dtstart < maxdate AND dtend >= mindate.
+    -- Duration expansion is only needed for recurring events (to catch occurrences starting before the window).
     IF rrule_string IS NULL THEN
         RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
+    END IF;
+
+    -- Expand search window to account for event duration (recurring events only)
+    IF duration > INTERVAL '0' THEN
+        adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
     -- Check if there's at least one occurrence in the range
@@ -3231,7 +3233,7 @@ BEGIN
     -- Convert to wall-clock time
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_after := after_date AT TIME ZONE tz_name;
-    wall_clock_end := wall_clock_start + INTERVAL '10 years';
+    wall_clock_end := GREATEST(wall_clock_start, wall_clock_after) + INTERVAL '10 years';
 
     -- Generate occurrences
     FOR naive_occurrence IN
@@ -3517,13 +3519,15 @@ BEGIN
     adjusted_mindate := COALESCE(mindate, dtstart - INTERVAL '10 years');
     adjusted_maxdate := COALESCE(maxdate, dtstart + INTERVAL '10 years');
 
-    IF duration > INTERVAL '0' THEN
-        adjusted_mindate := adjusted_mindate - duration;
-    END IF;
-
-    -- If no RRULE, check single event overlap
+    -- If no RRULE, check single event overlap using original (non-duration-expanded) bounds.
+    -- Duration expansion is only needed for recurring events (to catch occurrences starting before the window).
     IF rrule_string IS NULL THEN
         RETURN (dtstart < adjusted_maxdate AND (dtstart + duration) >= adjusted_mindate);
+    END IF;
+
+    -- Expand search window to account for event duration (recurring events only)
+    IF duration > INTERVAL '0' THEN
+        adjusted_mindate := adjusted_mindate - duration;
     END IF;
 
     -- Use generator directly with LIMIT 1 for streaming efficiency (avoids materializing between())
