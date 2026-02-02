@@ -13,6 +13,23 @@ You are an ORCHESTRATOR. You coordinate and dispatch subagents, track their resu
 
 ---
 
+## CRITICAL: Context Window Management
+
+**NEVER use `TaskOutput` to collect agent results.** `TaskOutput` returns the full raw JSONL transcript of the agent's entire session (every tool call, file read, hook event) — not just the final answer. Calling it for 20 agents WILL exhaust your context window and kill the session.
+
+**Instead, wait for `<task-notification>` messages.** When a background agent completes, a `<task-notification>` is automatically delivered containing ONLY the agent's final result in the `<result>` tag. This is small and context-efficient.
+
+**Workflow for collecting results:**
+1. Launch all background agents with `run_in_background=true`
+2. Do NOT call `TaskOutput`. Do NOT poll for results.
+3. Simply wait — each agent will deliver a `<task-notification>` when done
+4. Process notifications as they arrive
+5. Proceed to the next phase only after all expected notifications have arrived
+
+**This is the #1 cause of orchestrator failure. Do not use TaskOutput. Wait for notifications.**
+
+---
+
 ## PHASE 1: Parallel Analysis
 
 Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 PARALLEL subagents per category (20 total), each with this instruction:
@@ -31,13 +48,15 @@ Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 P
 > - Existing issue: [POTENTIAL_ISSUES.md issue number, or "New"]
 > - Confidence: [Low/Medium/High]
 
+After launching all 20 agents, **WAIT for all 20 `<task-notification>` messages**. Do NOT call TaskOutput — it will flood your context with raw transcripts and crash the session.
+
 ---
 
 ## PHASE 2: Update POTENTIAL_ISSUES.md
 
-After all 20 agents complete, YOU (orchestrator) update the file:
+After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) update the file:
 
-1. Collect and deduplicate all findings (group by root cause, even if worded differently)
+1. Collect and deduplicate all findings from the notification `<result>` tags (group by root cause, even if worded differently)
 2. For each unique finding:
    - **Existing unresolved entry:** increment `**Reports:**` by the number of agents that found it
    - **New:** add an entry with `**Reports:**` set to the agent count
@@ -78,6 +97,8 @@ After all 20 agents complete, YOU (orchestrator) update the file:
 > **Report:**
 > - Issue: [number] | Fix applied: [Yes/No] | Branch: [name]
 > - Files modified: [list] | Tests: [Passed/Failed - count] | Commit: [hash or N/A]
+
+After launching all fix agents, **WAIT for `<task-notification>` messages**. Do NOT call TaskOutput.
 
 ---
 
@@ -134,3 +155,4 @@ After all 20 agents complete, YOU (orchestrator) update the file:
 - All subagents return SUCCINCT SUMMARIES ONLY
 - Track all dispatched agents before proceeding to the next phase
 - POTENTIAL_ISSUES.md is the single source of truth — never bypass it
+- **NEVER use TaskOutput** — it returns full raw transcripts and will exhaust your context window. Wait for `<task-notification>` messages instead.
