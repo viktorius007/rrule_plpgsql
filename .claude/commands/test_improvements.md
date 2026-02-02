@@ -32,7 +32,18 @@ You are an ORCHESTRATOR. You coordinate and dispatch subagents, track their resu
 
 ## PHASE 1: Parallel Analysis
 
-Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 PARALLEL subagents per category (20 total), each with the instruction template below.
+Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 PARALLEL subagents per category (20 total), each with the instruction template below. **All subagents MUST be launched with `model: "opus"`** — do not use Sonnet or Haiku for analysis agents, as they produce false positives on nuanced code patterns (e.g., misreading `CONTINUE WHEN` skip-logic as inverted boundary checks).
+
+**Exact tool call for each analysis agent:**
+```
+Task(
+  description="Analyze: {category} {A|B}",
+  prompt="<paste analysis template>",
+  subagent_type="general-purpose",
+  model="opus",
+  run_in_background=true
+)
+```
 
 ### Analysis agent instruction template
 
@@ -40,7 +51,7 @@ Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 P
 >
 > **Analyze** `src/rrule.sql` and `src/rrule_subday.sql` for issues in the **{{$category}}** category. Report all severities. Focus on genuine bugs — wrong output, missing validation, unsafe behavior, or untested code paths that could plausibly be wrong. Not style issues.
 >
-> **Do NOT write to any files.**
+> **Do NOT write to any files. Do NOT run any commands** (no `npm test`, `psql`, `bash`, etc.). Analysis is READ-ONLY. Running commands from the main checkout interferes with concurrent processes (Stop hooks, other agents) that share the same database namespace.
 >
 > ---
 >
@@ -135,7 +146,18 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
    git worktree add /tmp/fix-issue-{N} -b fix/issue-{N}
    ```
    Database isolation is automatic — test.sh and lint.sh derive unique DB names from the branch.
-5. Deploy a BACKGROUND fix agent per fix unit (not necessarily per issue):
+5. Deploy a BACKGROUND fix agent per fix unit (not necessarily per issue). **All fix agents MUST be launched with `model: "opus"`.**
+
+**Exact tool call for each fix agent:**
+```
+Task(
+  description="Fix: Issue {N}",
+  prompt="<paste fix template>",
+  subagent_type="general-purpose",
+  model="opus",
+  run_in_background=true
+)
+```
 
 > **Your issue:** [paste full POTENTIAL_ISSUES.md entry]
 >
@@ -224,6 +246,7 @@ After launching all fix agents, **WAIT for `<task-notification>` messages**. Do 
 
 ## CONSTRAINTS
 
+- **All subagents MUST use `model: "opus"`** — never use Sonnet or Haiku. Less capable models produce false positives on nuanced code analysis.
 - Orchestrator delegates ALL code analysis and fixes — never write code yourself
 - Track all dispatched agents before proceeding to the next phase
 - POTENTIAL_ISSUES.md is the single source of truth — never bypass it
