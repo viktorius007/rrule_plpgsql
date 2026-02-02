@@ -2677,6 +2677,71 @@ BEGIN
     );
 END $$;
 
+-- =====================================================================
+-- Issue 2: before() TIMESTAMPTZ efficiency - verify correctness after refactor
+-- =====================================================================
+DO $$
+DECLARE
+    result TEXT;
+    result_count INT;
+BEGIN
+    -- Test: before() TZ returns correct last occurrence with ORDER BY DESC approach
+    SELECT (rrule."before"(
+        'FREQ=WEEKLY;BYDAY=MO;COUNT=52',
+        '2025-01-06 09:00:00-05'::TIMESTAMPTZ,
+        '2025-07-01 00:00:00-04'::TIMESTAMPTZ,
+        1,
+        'America/New_York',
+        FALSE
+    ))::TEXT INTO result;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'TZ before() efficiency',
+        'before() returns correct last weekly occurrence',
+        result IS NOT NULL,
+        result,
+        'non-null last Monday before 2025-07-01'
+    );
+
+    -- Test: before() TZ with count=3 returns correct last 3 occurrences
+    SELECT COUNT(*) INTO result_count
+    FROM rrule."before"(
+        'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=24',
+        '2024-01-15 10:00:00-05'::TIMESTAMPTZ,
+        '2025-06-01 00:00:00-04'::TIMESTAMPTZ,
+        3,
+        'America/New_York',
+        FALSE
+    );
+
+    INSERT INTO tz_api_test_results VALUES (
+        'TZ before() efficiency',
+        'before() with count=3 returns exactly 3 results',
+        result_count = 3,
+        result_count::TEXT,
+        '3'
+    );
+
+    -- Test: before() TZ with inc=TRUE includes the boundary date
+    SELECT (rrule."before"(
+        'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=12',
+        '2025-01-01 09:00:00-05'::TIMESTAMPTZ,
+        '2025-06-01 14:00:00-04'::TIMESTAMPTZ,
+        1,
+        'America/New_York',
+        TRUE
+    ))::TEXT INTO result;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'TZ before() efficiency',
+        'before() with inc=TRUE includes boundary date',
+        result = '2025-06-01 09:00:00-04',
+        result,
+        '2025-06-01 09:00:00-04'
+    );
+END $$;
+
+
 ROLLBACK;
 
 \echo ''

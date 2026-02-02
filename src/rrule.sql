@@ -171,10 +171,10 @@ BEGIN
   result.rscale     := UPPER(substring(repeatrule from 'RSCALE=([A-Za-z]+)(;|$)'));
 
   -- RFC 7529: SKIP parameter
-  result.skip       := COALESCE(UPPER(substring(repeatrule from 'SKIP=(OMIT|BACKWARD|FORWARD)(;|$)')), 'OMIT');
+  result.skip       := COALESCE(UPPER(substring(repeatrule from 'SKIP=([A-Za-z]+)(;|$)')), 'OMIT');
 
   -- Validate SKIP: if SKIP= was specified but didn't match a valid value, reject it
-  IF result.skip = 'OMIT' AND repeatrule ~ 'SKIP=' AND repeatrule !~ 'SKIP=(OMIT|BACKWARD|FORWARD)(;|$)' THEN
+  IF result.skip NOT IN ('OMIT', 'BACKWARD', 'FORWARD') AND repeatrule ~* 'SKIP=' THEN
     RAISE EXCEPTION 'Invalid SKIP value. SKIP must be one of: OMIT, BACKWARD, FORWARD';
   END IF;
 
@@ -2457,6 +2457,8 @@ BEGIN
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     start_utc := start_date AT TIME ZONE 'UTC';
     end_utc := end_date AT TIME ZONE 'UTC';
+    -- Clamp end_utc to dtstart + 10 years (matching all()'s behavior) to prevent DoS on sparse rules
+    end_utc := LEAST(end_utc, dtstart_utc + INTERVAL '10 years');
 
     -- Generate occurrences in UTC space (naive timestamps treated as UTC)
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
@@ -3226,6 +3228,8 @@ BEGIN
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_range_start := range_start AT TIME ZONE tz_name;
     wall_clock_range_end := range_end AT TIME ZONE tz_name;
+    -- Clamp range end to dtstart + 10 years (matching all()'s behavior) to prevent DoS on sparse rules
+    wall_clock_range_end := LEAST(wall_clock_range_end, wall_clock_start + INTERVAL '10 years');
 
     -- Generate occurrences
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
@@ -3355,8 +3359,7 @@ DECLARE
     tz_name TEXT;
     wall_clock_start TIMESTAMP;
     wall_clock_before TIMESTAMP;
-    naive_occurrence TIMESTAMP;
-    results TIMESTAMPTZ[];
+    results TIMESTAMP[];
     scan_count BIGINT := 0;
     has_bound BOOLEAN;
 BEGIN
@@ -3400,37 +3403,26 @@ BEGIN
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_before := before_date AT TIME ZONE tz_name;
 
-    -- Generate occurrences up to before_date, keeping only the last N in a sliding window.
-    -- This caps memory at O(count) instead of O(N) for rules with many occurrences.
+    -- Generate all occurrences up to before_date, then select the last N using ORDER BY DESC LIMIT.
+    -- This avoids O(N) array append/slice operations by letting PostgreSQL use an efficient top-N sort.
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
     -- before() must scan all occurrences to find the last N, so we pass a large output_limit.
     -- Use 1000000 to limit iteration budget while being large enough for scanning within the maxdate window.
-    results := ARRAY[]::TIMESTAMPTZ[];
-    FOR naive_occurrence IN
-        SELECT * FROM rrule.rrule_event_instances_range_tz(
-            wall_clock_start,
-            rrule_string,
-            wall_clock_start,
-            wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
-            1000000
-        )
-    LOOP
-        scan_count := scan_count + 1;
-        IF inc THEN
-            IF naive_occurrence > wall_clock_before THEN
-                CONTINUE;
-            END IF;
-        ELSE
-            IF naive_occurrence >= wall_clock_before THEN
-                CONTINUE;
-            END IF;
-        END IF;
-        results := array_append(results, naive_occurrence AT TIME ZONE tz_name);
-        -- Trim to last N elements to cap memory usage
-        IF array_length(results, 1) > count THEN
-            results := results[array_length(results, 1) - count + 1 : array_length(results, 1)];
-        END IF;
-    END LOOP;
+
+    -- Collect filtered occurrences into array for counting + selection
+    SELECT array_agg(d ORDER BY d), COUNT(*)
+    INTO results, scan_count
+    FROM rrule.rrule_event_instances_range_tz(
+        wall_clock_start,
+        rrule_string,
+        wall_clock_start,
+        wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+        1000000
+    ) AS d
+    WHERE CASE
+        WHEN inc THEN d <= wall_clock_before
+        ELSE d < wall_clock_before
+    END;
 
     -- Warn when before() scanned many occurrences on an unbounded rule,
     -- matching the safety warning that all() and between() emit at 1000.
@@ -3438,12 +3430,16 @@ BEGIN
         RAISE WARNING 'rrule: before() scanned % occurrences to find the last match. The recurrence rule has no COUNT or UNTIL and produced many results. Consider adding bounds to the rule.', scan_count;
     END IF;
 
-    -- Return all collected results (already trimmed to at most count elements)
-    IF array_length(results, 1) IS NOT NULL THEN
-        FOR idx IN 1 .. array_length(results, 1) LOOP
-            RETURN NEXT results[idx];
-        END LOOP;
-    END IF;
+    -- Return the last N occurrences using ORDER BY DESC LIMIT for efficiency
+    RETURN QUERY
+        SELECT (sub.occ AT TIME ZONE tz_name)
+        FROM (
+            SELECT unnest AS occ
+            FROM unnest(results)
+            ORDER BY unnest DESC
+            LIMIT count
+        ) sub
+        ORDER BY sub.occ ASC;
 END;
 $$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 

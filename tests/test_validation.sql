@@ -1852,4 +1852,114 @@ SELECT 'Integer overflow', 'BYMONTHDAY overflow gives descriptive error',
     assert_rrule_rejected('BYMONTHDAY overflow', 'FREQ=MONTHLY;BYMONTHDAY=99999999999', '%BYMONTHDAY value out of range%');
 
 
+-- =====================================================================
+\echo 'TEST GROUP: SKIP parameter case-insensitivity'
+\echo '====================================================================='
+
+-- Test: lowercase SKIP=omit is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=omit accepted',
+    assert_occurrences_equal(
+        'SKIP=omit lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=omit;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: mixed-case SKIP=Backward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'mixed-case SKIP=Backward accepted',
+    assert_occurrences_equal(
+        'SKIP=Backward mixed-case',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-02-28 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-04-30 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=Backward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: lowercase SKIP=forward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=forward accepted',
+    assert_occurrences_equal(
+        'SKIP=forward lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=forward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: invalid SKIP value still rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'invalid SKIP=BACKWARDS still rejected',
+    assert_rrule_rejected('SKIP=BACKWARDS', 'FREQ=MONTHLY;SKIP=BACKWARDS', '%Invalid SKIP value%');
+
+
+-- =====================================================================
+\echo 'TEST GROUP: SKIP parameter case-insensitivity'
+\echo '====================================================================='
+
+-- Test: lowercase SKIP=omit is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=omit accepted',
+    assert_occurrences_equal(
+        'SKIP=omit lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=omit;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: mixed-case SKIP=Backward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'mixed-case SKIP=Backward accepted',
+    assert_occurrences_equal(
+        'SKIP=Backward mixed-case',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-02-28 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-04-30 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=Backward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: lowercase SKIP=forward is accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'lowercase SKIP=forward accepted',
+    assert_occurrences_equal(
+        'SKIP=forward lowercase',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;SKIP=forward;COUNT=4', '2025-01-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test: invalid SKIP value still rejected
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'SKIP case', 'invalid SKIP=BACKWARDS still rejected',
+    assert_rrule_rejected('SKIP=BACKWARDS', 'FREQ=MONTHLY;SKIP=BACKWARDS', '%Invalid SKIP value%');
+
+
 ROLLBACK;

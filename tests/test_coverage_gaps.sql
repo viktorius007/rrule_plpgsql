@@ -6831,4 +6831,45 @@ SELECT
         )::TEXT)
     );
 
+-- =====================================================================
+-- Issue 1: between() 10-year window clamp
+-- =====================================================================
+
+-- Test: TIMESTAMP between() clamps end_date to dtstart + 10 years
+-- A 50-year range should be clamped, returning only occurrences within 10 years of dtstart
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 1: between() 10yr clamp',
+    'TIMESTAMP between() clamps 50yr range to 10yr',
+    assert_equals(
+        'between() 10yr clamp',
+        (SELECT COUNT(*)::TEXT FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=15',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2070-01-01 00:00:00'::TIMESTAMP,
+            TRUE
+        )),
+        '10'
+    );
+
+-- Test: TIMESTAMPTZ between() clamps end_date to dtstart + 10 years
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 1: between() 10yr clamp',
+    'TIMESTAMPTZ between() clamps 50yr range to 10yr',
+    assert_equals(
+        'between() TZ 10yr clamp',
+        (SELECT COUNT(*)::TEXT FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=15',
+            '2020-01-01 00:00:00+00'::TIMESTAMPTZ,
+            '2020-01-01 00:00:00+00'::TIMESTAMPTZ,
+            '2070-01-01 00:00:00+00'::TIMESTAMPTZ,
+            'UTC',
+            TRUE
+        )),
+        '10'
+    );
+
+
 ROLLBACK;
