@@ -1976,6 +1976,11 @@ BEGIN
   dtstart_day := date_part('day', basedate)::INT;
 
   current_base := basedate;
+
+  -- Early exit: UNTIL before dtstart means no occurrences possible
+  IF rule.until IS NOT NULL AND rule.until < basedate THEN
+    RETURN;
+  END IF;
   WHILE period_count < period_limit AND current_base < maxdate LOOP
     IF rule.freq = 'DAILY' THEN
       period_start := date_trunc('day', current_base) + (current_base::time)::interval;
@@ -2191,7 +2196,7 @@ BEGIN
     period_count := period_count + 1;
     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
     EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
-    EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
+    EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
   END LOOP;
 
   -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
@@ -2718,6 +2723,11 @@ BEGIN
 
     current_base := basedate;
 
+    -- Early exit: UNTIL before dtstart means no occurrences possible
+    IF rule.until IS NOT NULL AND rule.until < basedate::TIMESTAMPTZ THEN
+        RETURN;
+    END IF;
+
     WHILE period_count < period_limit AND current_base < maxdate LOOP
         IF rule.freq = 'DAILY' THEN
             -- Call the existing daily_set but convert to/from TIMESTAMPTZ for compatibility
@@ -2928,7 +2938,7 @@ BEGIN
         period_count := period_count + 1;
         EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count >= rule.count;
-        EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+        EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
     END LOOP;
 
     -- Warn if result set was truncated by API limit (not by rule's natural COUNT/UNTIL termination)
