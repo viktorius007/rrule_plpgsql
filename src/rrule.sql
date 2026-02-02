@@ -138,13 +138,27 @@ BEGIN
   IF repeatrule ~* 'COUNT=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer';
   END IF;
-  result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+  -- Only the cast is inside the exception block
+  BEGIN
+    result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: COUNT value out of range: must be a valid integer. Error: %',
+        SQLERRM;
+  END;
 
   -- Check for negative INTERVAL value in raw RRULE string before parsing
   IF repeatrule ~* 'INTERVAL=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: INTERVAL must be a positive integer';
   END IF;
-  result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
+  -- Only the cast is inside the exception block
+  BEGIN
+    result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: INTERVAL value out of range: must be a valid integer. Error: %',
+        SQLERRM;
+  END;
 
   result.wkst       := substring(repeatrule from 'WKST=(MO|TU|WE|TH|FR|SA|SU)(;|$)');
   -- Validate WKST: if WKST= was specified but didn't match a valid day, reject it
@@ -185,15 +199,33 @@ BEGIN
                          string_to_array( substring(repeatrule from 'BYDAY=(([+-]?[0-9]{0,2}(MO|TU|WE|TH|FR|SA|SU),?)+)(;|$)'), ','),
                          '');
 
-  result.byyearday  := array_remove(
-                         string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ','),
-                         '');
-  result.byweekno   := array_remove(
-                         string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ','),
-                         '');
-  result.bymonthday := array_remove(
-                         string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ','),
-                         '');
+  BEGIN
+    result.byyearday  := array_remove(
+                           string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ','),
+                           '');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYYEARDAY value out of range: must be valid integers. Error: %',
+        SQLERRM;
+  END;
+  BEGIN
+    result.byweekno   := array_remove(
+                           string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ','),
+                           '');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYWEEKNO value out of range: must be valid integers. Error: %',
+        SQLERRM;
+  END;
+  BEGIN
+    result.bymonthday := array_remove(
+                           string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ','),
+                           '');
+  EXCEPTION
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'Invalid RRULE: BYMONTHDAY value out of range: must be valid integers. Error: %',
+        SQLERRM;
+  END;
   result.bymonth    := array_remove(
                          string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ','),
                          '');

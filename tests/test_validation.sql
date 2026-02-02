@@ -1814,4 +1814,42 @@ SELECT 'Trailing commas', 'BYDAY trailing comma accepted',
     assert_rrule_accepted('BYDAY trailing comma', 'FREQ=WEEKLY;BYDAY=MO,WE,;COUNT=4', 4);
 
 
+-- =====================================================================
+-- TEST GROUP: Integer Overflow in RRULE Parameters
+-- =====================================================================
+-- Values exceeding INT range for COUNT, INTERVAL, BYYEARDAY, BYWEEKNO,
+-- and BYMONTHDAY should produce descriptive RRULE-specific errors
+-- instead of generic PostgreSQL "integer out of range" messages.
+
+\echo ''
+\echo '====================================================================='
+\echo 'TEST GROUP: Integer Overflow in RRULE Parameters'
+\echo '====================================================================='
+
+-- Test: COUNT overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'COUNT overflow gives descriptive error',
+    assert_rrule_rejected('COUNT overflow', 'FREQ=DAILY;COUNT=99999999999', '%COUNT value out of range%');
+
+-- Test: INTERVAL overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'INTERVAL overflow gives descriptive error',
+    assert_rrule_rejected('INTERVAL overflow', 'FREQ=DAILY;INTERVAL=99999999999', '%INTERVAL value out of range%');
+
+-- Test: BYYEARDAY overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'BYYEARDAY overflow gives descriptive error',
+    assert_rrule_rejected('BYYEARDAY overflow', 'FREQ=YEARLY;BYYEARDAY=99999999999', '%BYYEARDAY value out of range%');
+
+-- Test: BYWEEKNO overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'BYWEEKNO overflow gives descriptive error',
+    assert_rrule_rejected('BYWEEKNO overflow', 'FREQ=YEARLY;BYWEEKNO=99999999999;BYDAY=MO', '%BYWEEKNO value out of range%');
+
+-- Test: BYMONTHDAY overflow produces descriptive error
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Integer overflow', 'BYMONTHDAY overflow gives descriptive error',
+    assert_rrule_rejected('BYMONTHDAY overflow', 'FREQ=MONTHLY;BYMONTHDAY=99999999999', '%BYMONTHDAY value out of range%');
+
+
 ROLLBACK;
