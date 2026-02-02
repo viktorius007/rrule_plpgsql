@@ -89,8 +89,8 @@ Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 P
 > - **No positive assessments** — do not praise the code, say it's "well-tested", "comprehensive", or "production-ready"
 > - **No false-positive analysis** — if you investigated something and it's NOT a bug, don't mention it at all
 > - **No explanations of how the code works** — the orchestrator has CLAUDE.md for that
-> - **No recommendations or suggestions** — only report what IS wrong, not what COULD be improved
-> - **No code blocks** — the Location field is sufficient for the orchestrator to find the code
+> - **No fix approaches or code snippets** — the `Fix` field (edit count + file list) is the only fix-related output expected. Do not describe HOW to fix; only report WHAT is wrong and WHERE the fix would go.
+> - **No style suggestions or improvements** — only genuine bugs, missing validation, wrong output, or untested code paths
 > - **No summaries or conclusions** — the three sections above ARE the complete response
 
 After launching all 20 agents, **WAIT for all 20 `<task-notification>` messages**. Do NOT call TaskOutput — it will flood your context with raw transcripts and crash the session.
