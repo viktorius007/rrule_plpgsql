@@ -3175,6 +3175,75 @@ SELECT
         ))
     );
 
+-- ============================================================================
+-- 24.20: YEARLY + BYWEEKNO + BYMONTH intersection filter (BYWEEKNO-primary path)
+-- When BYMONTH is NULL, the BYWEEKNO-primary code path handles generation.
+-- BYMONTH filter must be applied as a WHERE-clause post-filter.
+-- Issue #11: This filter was missing, allowing unfiltered results through.
+-- ============================================================================
+
+-- Test 24.20a: YEARLY BYWEEKNO=10 BYMONTH=6 — ISO week 10 falls in March, not June
+-- BYWEEKNO generates March dates; BYMONTH=6 should filter all of them out → 0 results
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.20a: YEARLY BYWEEKNO=10 BYMONTH=6 (conflicting, 0 results)',
+    assert_equals(
+        'BYWEEKNO+BYMONTH conflict',
+        '0',
+        (SELECT COUNT(*)::TEXT FROM rrule."between"(
+            'FREQ=YEARLY;BYWEEKNO=10;BYMONTH=6',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2035-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ))
+    );
+
+-- Test 24.20b: YEARLY BYWEEKNO=10 BYMONTH=3 BYDAY=all — ISO week 10 falls in March
+-- BYMONTH-primary path generates March dates, BYWEEKNO filters to week 10
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.20b: YEARLY BYWEEKNO=10 BYMONTH=3 BYDAY=all (compatible)',
+    assert_occurrences_equal(
+        'BYWEEKNO+BYMONTH compatible',
+        ARRAY[
+            '2025-03-03 00:00:00'::TIMESTAMP,
+            '2025-03-04 00:00:00'::TIMESTAMP,
+            '2025-03-05 00:00:00'::TIMESTAMP,
+            '2025-03-06 00:00:00'::TIMESTAMP,
+            '2025-03-07 00:00:00'::TIMESTAMP,
+            '2025-03-08 00:00:00'::TIMESTAMP,
+            '2025-03-09 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=3;BYWEEKNO=10;BYDAY=MO,TU,WE,TH,FR,SA,SU',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ) AS occurrence)
+    );
+
+-- Test 24.20c: YEARLY BYWEEKNO=10 BYMONTH=6 BYDAY=all — week 10 is March, not June
+-- Conflicting: BYMONTH=6 filters out all March dates → 0 results
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'YEARLY Multi-BY Intersection',
+    'Test 24.20c: YEARLY BYWEEKNO=10 BYMONTH=6 BYDAY=all (conflicting, 0 results)',
+    assert_equals(
+        'BYWEEKNO+BYMONTH conflict with BYDAY',
+        '0',
+        (SELECT COUNT(*)::TEXT FROM rrule."between"(
+            'FREQ=YEARLY;BYMONTH=6;BYWEEKNO=10;BYDAY=MO,TU,WE,TH,FR,SA,SU',
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2035-12-31 00:00:00'::TIMESTAMP,
+            TRUE
+        ))
+    );
+
 
 -- ============================================================================
 -- Section 25: MONTHLY BYDAY Positive Ordinals

@@ -1844,9 +1844,10 @@ BEGIN
     OPEN curse SCROLL FOR
       SELECT r
       FROM rrule.rrule_yearly_byweekno_set(after_ts, rule,
-        CASE WHEN rule.byyearday IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
+        CASE WHEN rule.bymonth IS NOT NULL OR rule.byyearday IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
              THEN NULL ELSE max_results END) r
-      WHERE (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
+      WHERE (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
+        AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
         AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
         AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
       ORDER BY 1;
