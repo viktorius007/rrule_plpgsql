@@ -87,6 +87,7 @@ Task(
 > Evidence: [1 sentence — why this is a true issue, not a false positive]
 > Existing: [POTENTIAL_ISSUES.md issue number, or "New"]
 > Fix: [number] edits in [list of files to modify, e.g. "src/rrule.sql, src/rrule_subday.sql"] + [new test file | append to tests/test_X.sql]
+> Quadruple: [Yes|No] — Yes if the fix touches the main occurrence loop in any generator (see CLAUDE.md rule #9)
 > ```
 >
 > **How to count edits:** Each distinct code location that needs a change is 1 edit. Adding a WHERE clause to yearly_set = 1 edit. Applying the same fix to all 4 generators = 4 edits. Adding a validation check to 2 functions = 2 edits. Writing tests doesn't count as an edit — just note which test file.
@@ -119,7 +120,11 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
    - **Already resolved:** skip
 3. **Severity disagreements:** record the **highest** reported severity. Note the range if agents differ, e.g., `**Severity Assessment:** High (range: Medium–High from 3 reports)`. The highest value determines the qualification threshold.
 4. **Edit count disagreements:** record the **highest** reported edit count (conservative estimate for agent capacity planning).
-5. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: update potential issues from analysis run"`
+5. **Complexity classification:** For each entry, add `**Complexity:** simple`, `intermediate`, or `complex`:
+   - **Simple**: 1-2 edits AND Quadruple = No
+   - **Intermediate**: 3-4 edits, OR Quadruple = Yes with ≤4 edits
+   - **Complex**: 5+ edits, OR Quadruple = Yes with 5+ edits
+6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: update potential issues from analysis run"`
 
 ---
 
@@ -127,31 +132,63 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
 
 1. Read POTENTIAL_ISSUES.md. Identify all **unresolved** issues meeting their severity threshold (see table above).
 2. If none qualify, skip to Phase 5.
-3. **Group qualifying issues into fix units** using the `Fix` field (edit count and file list) from POTENTIAL_ISSUES.md. Three constraints must be balanced:
 
-   **Constraint A — Merge safety (combine overlapping files):**
-   Issues whose fix files overlap MUST be combined into one agent. Separate agents editing the same file will produce merge conflicts that are expensive to resolve.
+### Step 3.1: Classify, group, and decide concurrency
 
-   **Constraint B — Agent capacity (cap total edits per agent):**
-   A single fix agent can reliably handle up to **6 edits total** across all issues assigned to it. Each edit requires the agent to read context, apply the change, and verify. Beyond 6 edits, the agent risks context exhaustion from accumulated file reads, failed attempts, and test/lint cycles. Example: two issues each requiring 4 edits to the same generators = 8 edits = too heavy for one agent. If overlapping issues exceed 6 edits combined, accept the risk (merge safety takes priority) but expect the agent may need more turns.
+Use the `Fix` (edit count, file list) and `Complexity` fields from POTENTIAL_ISSUES.md entries.
 
-   **Constraint C — Parallelism (separate independent work):**
-   Issues with non-overlapping file lists should be separate agents to maximize parallel execution.
+**Guiding principle:** Maximize concurrency. Only fall back to sequential execution when concurrent agents would edit the same source files, causing merge conflicts or clobbered work.
 
-   **Priority order:** A > B > C. Merge safety always wins. If forced to combine heavy issues due to file overlap, accept the capacity risk rather than dealing with merge conflicts.
+**Group by file overlap:**
+- Two issues "overlap" if their fix file lists share ANY source file (e.g., both touch `src/rrule.sql`). Test files don't count — only source files that agents will edit.
+- Transitively merge: if issue A overlaps B, and B overlaps C, all three are in one overlap group.
+- Non-overlapping issues are independent and always run concurrently.
 
-   Name combined worktrees descriptively: `fix/issue-2-9` for combined, `fix/issue-11` for standalone.
-4. **Create worktrees** sequentially before launching agents:
-   ```bash
-   git worktree add /tmp/fix-issue-{N} -b fix/issue-{N}
-   ```
-   Database isolation is automatic — test.sh and lint.sh derive unique DB names from the branch.
-5. Deploy a BACKGROUND fix agent per fix unit (not necessarily per issue). **All fix agents MUST be launched with `model: "opus"`.**
+**Within an overlap group — form a sequential stream:**
+- Because these issues share source files, their agents must run sequentially on a shared worktree to avoid merge conflicts.
+- **Complex** issues (5+ edits, or Quadruple=Yes with 5+ edits): 1 issue per agent, no bundling.
+- **Intermediate** issues (3-4 edits, or Quadruple=Yes with ≤4 edits): bundle at most 2 per agent if combined edits ≤ 6.
+- **Simple** issues (1-2 edits, Quadruple=No): bundle freely up to 6 edits total per agent.
+- **Agent order:** complex agents first, then intermediate, then simple bundles. Hardest work goes first on a clean codebase.
+- The orchestrator MUST wait for one agent's `<task-notification>` (confirming its commit) before launching the next agent in the same stream.
+
+**Independent issues — run concurrently:**
+- Issues with no file overlap get their own worktree and run in parallel with everything else. Multiple independent simple issues can each get their own concurrent agent, or be bundled into one agent — orchestrator's choice based on total count.
+
+### Step 3.2: Create worktrees
+
+Create ONE worktree per stream (sequential agents share it) and one per independent concurrent agent.
+
+```bash
+git worktree add /tmp/fix-stream-{N} -b fix/stream-{N}
+```
+
+Database isolation is automatic — test.sh and lint.sh derive unique DB names from the branch.
+
+### Step 3.3: Deploy fix agents
+
+**All fix agents MUST be launched with `model: "opus"`.**
+
+**Orchestrator sequencing:**
+```
+# Independent agents (no file overlap): launch ALL concurrently
+launch all independent agents with run_in_background=true
+
+# Streams (shared files): sequential within, concurrent across streams
+for each stream (IN PARALLEL):
+    for each agent in stream.agents (SEQUENTIALLY):
+        launch agent with run_in_background=true
+        WAIT for <task-notification> from this agent
+        if agent reported Fix: No → stop this stream, record blocker
+        otherwise → continue to next agent in stream
+```
+
+Launch independent agents and the first agent of each stream simultaneously. As each stream agent completes, launch the next in that stream. Do NOT wait for all streams to finish before advancing any individual stream.
 
 **Exact tool call for each fix agent:**
 ```
 Task(
-  description="Fix: Issue {N}",
+  description="Fix: Stream {N}, Agent {M} — Issue {X}[, {Y}]",
   prompt="<paste fix template>",
   subagent_type="general-purpose",
   model="opus",
@@ -159,9 +196,13 @@ Task(
 )
 ```
 
-> **Your issue:** [paste full POTENTIAL_ISSUES.md entry]
+### Fix agent instruction template
+
+> **Your issues:** [paste full POTENTIAL_ISSUES.md entry/entries]
 >
-> **Your worktree:** `/tmp/fix-issue-{N}` — created by orchestrator, do NOT create it yourself. Run ALL commands from this directory. DB isolation is automatic.
+> **Your worktree:** `/tmp/fix-stream-{N}` — created by orchestrator, do NOT create it yourself. Run ALL commands from this directory. DB isolation is automatic.
+>
+> **Stream position:** Agent {M} of {total} in this stream. {For agent 1: "This is the first agent — the worktree starts from clean main." | For agent 2+: "Previous agents have already committed to this branch. Their changes are present in the worktree. Do NOT revert or amend previous commits."}
 >
 > **Read** CLAUDE.md (especially Development Rules) and TESTING_STANDARDS.md. Key rules:
 > - ROLLBACK not COMMIT, fixed timestamps, exact assertions, ORDER BY in array_agg
@@ -170,15 +211,15 @@ Task(
 > - Rule #10: test with INTERVAL > 1 when modifying period advancement
 >
 > **Steps:**
-> 1. `cd /tmp/fix-issue-{N}`
+> 1. `cd /tmp/fix-stream-{N}`
 > 2. Research and apply the fix
 > 3. Create/update tests per TESTING_STANDARDS.md
 > 4. Run `npm test`, `npm run lint`, `npm run lint:tests` — fix until all pass
-> 5. Commit: `fix(rrule): {description}`
+> 5. **MANDATORY: Commit before finishing.** Use `git add <specific files> && git commit -m "fix(rrule): {description}"`. If you cannot get tests to pass, commit partial work with `git commit -m "WIP: {description} — tests failing"` so progress is preserved. **An agent that exits without committing is a FAILED agent regardless of fix progress.**
 >
 > **Report format — your response must use this structure:**
 > ```
-> Issue: [number] | Fix: [Yes/No] | Branch: [name] | Commit: [hash or N/A]
+> Issue: [number(s)] | Fix: [Yes/No/Partial] | Branch: [name] | Commit: [hash or N/A]
 > Files: [list of modified files]
 > Tests: [Passed/Failed - suite count] | Lint: [pass/fail] | Lint:tests: [pass/fail]
 > ```
@@ -188,29 +229,29 @@ Task(
 > ```
 > Do not explain your approach, reasoning, or what the code does. No narrative beyond the fields above.
 
-After launching all fix agents, **WAIT for `<task-notification>` messages**. Do NOT call TaskOutput.
+After all streams complete (all agents in all streams have delivered `<task-notification>` messages), proceed to Phase 4.
 
 ---
 
 ## PHASE 4: Merge & Verify
 
 1. Return to primary checkout: `cd /Users/viktor/Documents/Projects/github/rrule_plpgsql && git checkout main`
-2. Merge each branch sequentially (least likely to conflict first): `git merge --no-ff fix/issue-{N}`
-3. Resolve any merge conflicts
+2. Merge each **stream branch** sequentially (one branch per stream, containing all commits from that stream's agents): `git merge --no-ff fix/stream-{N}`
+3. Resolve any merge conflicts (unlikely between streams since they have non-overlapping source files by construction)
 4. Run full verification: `npm test` + `npm run lint` + `npm run lint:tests` — fix until clean
-5. **Remove** fixed issues from POTENTIAL_ISSUES.md entirely (the fix commit serves as the record — no need to archive resolved entries in the file)
+5. **Remove** fixed issues from POTENTIAL_ISSUES.md entirely (the fix commit serves as the record). For partially fixed streams (agent reported `Fix: Partial` or a later agent was blocked), keep the issue entry and add a note.
 6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: remove resolved issues from fix run"`
 7. **Clean up all ephemeral artifacts** (worktrees and branches are disposable workspaces, not persistent records):
    ```bash
    # Remove worktrees
-   git worktree remove /tmp/fix-issue-{N}
-   # Delete merged fix branches
-   git branch -d fix/issue-{N}
+   git worktree remove /tmp/fix-stream-{N}
+   # Delete merged stream branches
+   git branch -d fix/stream-{N}
    # Drop isolated databases
-   dropdb --if-exists rrule_test_fix_issue_{N}
-   dropdb --if-exists rrule_lint_fix_issue_{N}
+   dropdb --if-exists rrule_test_fix_stream_{N}
+   dropdb --if-exists rrule_lint_fix_stream_{N}
    ```
-   Run cleanup for ALL fix branches from this run in a single step.
+   Run cleanup for ALL stream branches from this run in a single step.
 
 ---
 
@@ -253,4 +294,6 @@ After launching all fix agents, **WAIT for `<task-notification>` messages**. Do 
 - **NEVER use TaskOutput** — it returns full raw transcripts and will exhaust your context window. Wait for `<task-notification>` messages instead.
 - **Analysis agents return: SCOPE (bullet list), FILES (bullet list), FINDINGS (structured blocks including edit count and file list).** No prose, no praise, no false-positive analysis, no code blocks. If an agent returns verbose narrative, the prompt needs tightening.
 - **Fix agents return: 3-4 structured fields.** No narrative about approach or reasoning.
-- **Fix grouping uses edit counts and file lists, not guesswork.** The orchestrator MUST use the `Fix` field from POTENTIAL_ISSUES.md to decide grouping. Do not read source files to determine fix scope — analysis agents already provided this information.
+- **Fix grouping uses edit counts, file lists, and complexity, not guesswork.** The orchestrator MUST use the `Fix` and `Complexity` fields from POTENTIAL_ISSUES.md to decide grouping and sequencing. Do not read source files to determine fix scope — analysis agents already provided this information.
+- **Maximize concurrency, accept sequential only for correctness.** Independent issues (no shared source files) always run concurrently. Within a stream (shared source files), agents run sequentially — the orchestrator must receive a `<task-notification>` confirming a commit from agent M before launching agent M+1. Launching all agents in a stream simultaneously will cause edit conflicts on shared files.
+- **Every fix agent MUST commit before exiting.** Even if tests fail, commit with a `WIP:` prefix. An agent that exits without committing loses all its work and is considered FAILED.
