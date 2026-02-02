@@ -39,6 +39,21 @@ export PGPASSWORD="${PGPASSWORD:-postgres}"
 _BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/-.' '_' || echo "default")
 DB="${DATABASE_URL:-rrule_lint_${_BRANCH}}"
 
+# Acquire per-database lock to prevent concurrent lint runs against the same DB.
+# If another process holds the lock, exit silently (e.g., stop hook overlapping with agent).
+# Uses mkdir (atomic on all platforms) instead of flock (not available on macOS).
+LOCKDIR="/tmp/${DB}.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    # Check if the holding process is still alive; clean up stale locks
+    if [ -f "$LOCKDIR/pid" ] && kill -0 "$(cat "$LOCKDIR/pid")" 2>/dev/null; then
+        exit 0
+    fi
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null || exit 0
+fi
+echo $$ > "$LOCKDIR/pid"
+trap 'rm -rf "$LOCKDIR"' EXIT
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}PLPGSQL_CHECK LINTER${NC}"
 echo -e "${BLUE}========================================${NC}"

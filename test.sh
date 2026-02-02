@@ -44,6 +44,21 @@ _BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/-.' '_' || echo "de
 DB="${DATABASE_URL:-rrule_test_${_BRANCH}}"
 MODE="${1:---standard}"
 
+# Acquire per-database lock to prevent concurrent test runs against the same DB.
+# If another process holds the lock, exit silently (e.g., stop hook overlapping with agent).
+# Uses mkdir (atomic on all platforms) instead of flock (not available on macOS).
+LOCKDIR="/tmp/${DB}.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    # Check if the holding process is still alive; clean up stale locks
+    if [ -f "$LOCKDIR/pid" ] && kill -0 "$(cat "$LOCKDIR/pid")" 2>/dev/null; then
+        exit 0
+    fi
+    rm -rf "$LOCKDIR"
+    mkdir "$LOCKDIR" 2>/dev/null || exit 0
+fi
+echo $$ > "$LOCKDIR/pid"
+trap 'rm -rf "$LOCKDIR"' EXIT
+
 # Test suite files in execution order
 TEST_FILES=(
   "tests/test_validation.sql"
