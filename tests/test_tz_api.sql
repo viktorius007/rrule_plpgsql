@@ -2540,6 +2540,82 @@ END;
 $$;
 
 
+-- Test 21.9: after() with NULL count should raise exception
+DO $$
+DECLARE
+    result TIMESTAMPTZ;
+    caught BOOLEAN := FALSE;
+BEGIN
+    BEGIN
+        SELECT ts INTO result
+        FROM rrule."after"(
+            'FREQ=DAILY;COUNT=10',
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            '2025-01-05 00:00:00+00'::TIMESTAMPTZ,
+            NULL::INT,
+            'UTC',
+            FALSE
+        ) ts
+        LIMIT 1;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE '%count parameter is required and cannot be NULL%' THEN
+                caught := TRUE;
+            ELSE
+                RAISE EXCEPTION 'Wrong error message: %', SQLERRM;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'after() with NULL count raises exception',
+        caught,
+        CASE WHEN caught THEN 'Exception raised as expected' ELSE 'No exception raised' END,
+        'Exception raised as expected'
+    );
+
+    RAISE NOTICE 'Test 21.9: after() NULL count - caught: %', caught;
+END;
+$$;
+
+-- Test 21.10: before() with NULL count should raise exception
+DO $$
+DECLARE
+    result TIMESTAMPTZ;
+    caught BOOLEAN := FALSE;
+BEGIN
+    BEGIN
+        SELECT ts INTO result
+        FROM rrule."before"(
+            'FREQ=DAILY;COUNT=10',
+            '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
+            '2025-01-15 00:00:00+00'::TIMESTAMPTZ,
+            NULL::INT,
+            'UTC',
+            FALSE
+        ) ts
+        LIMIT 1;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE '%count parameter is required and cannot be NULL%' THEN
+                caught := TRUE;
+            ELSE
+                RAISE EXCEPTION 'Wrong error message: %', SQLERRM;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Edge Cases TZ',
+        'before() with NULL count raises exception',
+        caught,
+        CASE WHEN caught THEN 'Exception raised as expected' ELSE 'No exception raised' END,
+        'Exception raised as expected'
+    );
+
+    RAISE NOTICE 'Test 21.10: before() NULL count - caught: %', caught;
+END;
+$$;
+
 -- Fail transaction if any tests failed
 DO $$
 DECLARE
