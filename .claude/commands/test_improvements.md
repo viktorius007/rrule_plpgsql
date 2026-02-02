@@ -75,7 +75,15 @@ Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 P
 > Location: [file:line or file:function]
 > Evidence: [1 sentence — why this is a true issue, not a false positive]
 > Existing: [POTENTIAL_ISSUES.md issue number, or "New"]
+> Fix scope: [files that would need modification to fix this, e.g. "src/rrule.sql (yearly_set only)" or "src/rrule.sql + src/rrule_subday.sql (all 4 generators)" or "tests/test_tz_api.sql (new section)"]
+> Fix complexity: [Low|Medium|High]
 > ```
+>
+> **Fix complexity scale:**
+> - **Low**: 1-2 line change in 1-2 files, or appending tests to an existing file
+> - **Medium**: Logic change in 1-3 locations, or creating a new test file
+> - **High**: Changes across 4+ locations (e.g., all generators), structural refactor, or changes with subtle interaction effects (SKIP, BYSETPOS, drift prevention)
+>
 > Separate findings with a blank line.
 >
 > ---
@@ -99,11 +107,12 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
 
 1. Collect and deduplicate all findings from the notification `<result>` tags (group by root cause, even if worded differently)
 2. For each unique finding:
-   - **Existing unresolved entry:** increment `**Reports:**` by the number of agents that found it
-   - **New:** add an entry with `**Reports:**` set to the agent count
+   - **Existing unresolved entry:** increment `**Reports:**` by the number of agents that found it. Update fix scope/complexity if new reports provide better information.
+   - **New:** add an entry with `**Reports:**` set to the agent count. Include `**Fix Scope:**` and `**Fix Complexity:**` fields from the agent findings.
    - **Already resolved:** skip
 3. **Severity disagreements:** record the **highest** reported severity. Note the range if agents differ, e.g., `**Severity Assessment:** High (range: Medium–High from 3 reports)`. The highest value determines the qualification threshold.
-4. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: update potential issues from analysis run"`
+4. **Complexity disagreements:** record the **highest** reported fix complexity (conservative estimate). If agents disagree, note it, e.g., `**Fix Complexity:** High (range: Medium–High)`.
+5. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: update potential issues from analysis run"`
 
 ---
 
@@ -111,10 +120,20 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
 
 1. Read POTENTIAL_ISSUES.md. Identify all **unresolved** issues meeting their severity threshold (see table above).
 2. If none qualify, skip to Phase 5.
-3. **Group qualifying issues into fix units.** Before creating worktrees, decide which issues to combine into a single agent vs. keep separate. The rule:
-   - **Combine** issues that modify the same lines or closely adjacent code (e.g., two fixes to the same generator loop), or that create the same new file (e.g., multiple test gaps that belong in one test file). Separate agents modifying overlapping code will produce merge conflicts.
-   - **Keep separate** issues that touch independent files or unrelated code paths. Separate agents maximize parallelism when there's no conflict risk.
-   - Name combined worktrees descriptively: `fix/issue-2-9` for combined, `fix/issue-11` for standalone.
+3. **Group qualifying issues into fix units** using the `Fix Scope` and `Fix Complexity` fields from POTENTIAL_ISSUES.md. Three constraints must be balanced:
+
+   **Constraint A — Merge safety (combine overlapping code):**
+   Issues whose fix scopes overlap (same file + nearby lines, or same generators) MUST be combined. Separate agents editing adjacent code will produce merge conflicts that are expensive to resolve.
+
+   **Constraint B — Agent capacity (don't overload a single agent):**
+   A single fix agent can handle roughly: 1 High-complexity fix, or 2 Medium-complexity fixes, or 3-4 Low-complexity fixes. Beyond this, the agent risks context exhaustion — it must read files, apply changes, write tests, and run verification. Two High-complexity fixes combined (e.g., both touching all 4 generators) will likely fail.
+
+   **Constraint C — Parallelism (separate independent work):**
+   Issues with non-overlapping fix scopes should be separate agents to maximize parallel execution.
+
+   **When constraints conflict:** Merge safety (A) takes priority over parallelism (C). If two High-complexity issues overlap in scope, combine them but accept the context risk — it's better than guaranteed merge conflicts. If they don't overlap, always keep them separate.
+
+   Name combined worktrees descriptively: `fix/issue-2-9` for combined, `fix/issue-11` for standalone.
 4. **Create worktrees** sequentially before launching agents:
    ```bash
    git worktree add /tmp/fix-issue-{N} -b fix/issue-{N}
@@ -213,5 +232,6 @@ After launching all fix agents, **WAIT for `<task-notification>` messages**. Do 
 - Track all dispatched agents before proceeding to the next phase
 - POTENTIAL_ISSUES.md is the single source of truth — never bypass it
 - **NEVER use TaskOutput** — it returns full raw transcripts and will exhaust your context window. Wait for `<task-notification>` messages instead.
-- **Analysis agents return: SCOPE (bullet list), FILES (bullet list), FINDINGS (structured blocks).** No prose, no praise, no false-positive analysis, no code blocks. If an agent returns verbose narrative, the prompt needs tightening.
+- **Analysis agents return: SCOPE (bullet list), FILES (bullet list), FINDINGS (structured blocks including Fix scope and Fix complexity).** No prose, no praise, no false-positive analysis, no code blocks. If an agent returns verbose narrative, the prompt needs tightening.
 - **Fix agents return: 3-4 structured fields.** No narrative about approach or reasoning.
+- **Fix grouping uses metadata, not guesswork.** The orchestrator MUST use Fix Scope and Fix Complexity from POTENTIAL_ISSUES.md to decide grouping. Do not read source files to determine fix scope — analysis agents already provided this information.
