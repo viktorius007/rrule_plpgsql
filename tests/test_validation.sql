@@ -1771,4 +1771,47 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 SELECT 'Duplicate parameters', 'Non-duplicate rule still works',
     assert_rrule_accepted('Non-duplicate params', 'FREQ=MONTHLY;BYMONTH=1,6;BYMONTHDAY=15;COUNT=4', 4);
 
+-- =====================================================================
+-- TEST GROUP: Trailing Comma Tolerance in BYxxx Parameters
+-- =====================================================================
+-- Trailing commas in BYxxx values should be silently ignored.
+-- Without array_remove cleanup, trailing commas produce empty string
+-- elements that cause cast errors or confusing validation failures.
+
+\echo ''
+\echo '====================================================================='
+\echo 'TEST GROUP: Trailing Comma Tolerance in BYxxx Parameters'
+\echo '====================================================================='
+
+-- Test: BYMONTH with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYMONTH trailing comma accepted',
+    assert_rrule_accepted('BYMONTH trailing comma', 'FREQ=YEARLY;BYMONTH=1,6,;COUNT=4', 4);
+
+-- Test: BYMONTHDAY with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYMONTHDAY trailing comma accepted',
+    assert_rrule_accepted('BYMONTHDAY trailing comma', 'FREQ=MONTHLY;BYMONTHDAY=1,15,;COUNT=4', 4);
+
+-- Test: BYYEARDAY with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYYEARDAY trailing comma accepted',
+    assert_rrule_accepted('BYYEARDAY trailing comma', 'FREQ=YEARLY;BYYEARDAY=1,100,;COUNT=4', 4);
+
+-- Test: BYWEEKNO with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYWEEKNO trailing comma accepted',
+    assert_rrule_accepted('BYWEEKNO trailing comma', 'FREQ=YEARLY;BYWEEKNO=1,20,;BYDAY=MO;COUNT=4', 4);
+
+-- Test: BYSETPOS with trailing comma
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYSETPOS trailing comma accepted',
+    assert_rrule_accepted('BYSETPOS trailing comma', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1,;COUNT=4', 4);
+
+-- Test: BYDAY with trailing comma (already had array_remove - regression test)
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Trailing commas', 'BYDAY trailing comma accepted',
+    assert_rrule_accepted('BYDAY trailing comma', 'FREQ=WEEKLY;BYDAY=MO,WE,;COUNT=4', 4);
+
+
 ROLLBACK;

@@ -185,11 +185,21 @@ BEGIN
                          string_to_array( substring(repeatrule from 'BYDAY=(([+-]?[0-9]{0,2}(MO|TU|WE|TH|FR|SA|SU),?)+)(;|$)'), ','),
                          '');
 
-  result.byyearday  := string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ',');
-  result.byweekno   := string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ',');
-  result.bymonthday := string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ',');
-  result.bymonth    := string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ',');
-  result.bysetpos   := string_to_array(substring(repeatrule from 'BYSETPOS=(([+-]?[0-9]{1,3},?)+)(;|$)'), ',');
+  result.byyearday  := array_remove(
+                         string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.byweekno   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.bymonthday := array_remove(
+                         string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.bymonth    := array_remove(
+                         string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ','),
+                         '');
+  result.bysetpos   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYSETPOS=(([+-]?[0-9]{1,3},?)+)(;|$)'), ','),
+                         '');
 
   -- Deduplicate BYYEARDAY and BYWEEKNO arrays to prevent duplicate occurrence generation
   -- (e.g., BYYEARDAY=100,100 or BYWEEKNO=1,1 would otherwise produce duplicates)
@@ -206,9 +216,15 @@ BEGIN
           ORDER BY val, idx) sub;
   END IF;
 
-  result.bysecond   := string_to_array(substring(repeatrule from 'BYSECOND=([0-9,+-]+)(;|$)'), ',');
-  result.byminute   := string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ',');
-  result.byhour     := string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ',');
+  result.bysecond   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYSECOND=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.byminute   := array_remove(
+                         string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ','),
+                         '');
+  result.byhour     := array_remove(
+                         string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ','),
+                         '');
 
   -- Deduplicate BYHOUR, BYMINUTE, BYSECOND arrays to prevent duplicate timestamp generation
   -- (e.g., BYHOUR=9,9,10 should not emit hour 9 twice in rrule_day_time_set)
