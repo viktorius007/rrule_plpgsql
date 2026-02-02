@@ -14,11 +14,40 @@ const fs = require('fs');
 const path = require('path');
 
 /**
+ * Strip SET/RESET session state commands from SQL content.
+ * Used for both inlined files and the core export.
+ *
+ * Removes SET timezone, SET search_path, and RESET commands that would
+ * leak into connection pool sessions after installation completes.
+ *
+ * @param {string} sql - Raw SQL content
+ * @returns {string} SQL with session state commands removed
+ */
+function stripSessionState(sql) {
+  return sql
+    .split('\n')
+    .map(line => {
+      const trimmed = line.trim();
+      if (/^SET\s+(timezone|search_path)\s*/i.test(trimmed)) {
+        return '';
+      }
+      if (/^RESET\s+/i.test(trimmed)) {
+        return '';
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+/**
  * Build driver-safe SQL from a psql install file by stripping psql
  * meta-commands (\set, \echo, \ir, etc.) and inlining \ir file references.
  *
  * The original install files use psql-specific commands for CLI users.
  * This function produces SQL that any PostgreSQL driver can execute directly.
+ *
+ * Retains BEGIN/COMMIT to keep installation atomic. Strips SET/RESET session
+ * state commands to prevent leaking into connection pool sessions.
  *
  * @param {string} installFile - Filename of the install script (e.g. 'install.sql')
  * @param {string} baseDir - Directory containing the SQL files
@@ -30,19 +59,21 @@ function buildDriverSafeSQL(installFile, baseDir) {
     .split('\n')
     .map(line => {
       const trimmed = line.trim();
-      // Replace \ir with inlined file contents
+      // Replace \ir with inlined file contents (also strip SET/RESET from inlined files)
       if (trimmed.startsWith('\\ir ')) {
         const includeFile = trimmed.substring(4).trim();
-        return fs.readFileSync(path.join(baseDir, includeFile), 'utf8');
+        const inlined = fs.readFileSync(path.join(baseDir, includeFile), 'utf8');
+        return stripSessionState(inlined);
       }
       // Strip other psql meta-commands (lines starting with backslash)
       if (trimmed.startsWith('\\')) {
         return '';
       }
-      // Strip transaction control statements (BEGIN/COMMIT) that break
-      // outer transaction control when drivers wrap SQL in their own transaction.
-      // Also strip RESET statements meant for psql post-transaction cleanup.
-      if (/^(BEGIN|COMMIT)\s*;/i.test(trimmed)) {
+      // Strip SET/RESET session state commands (timezone, search_path) that
+      // leak into connection pool sessions after installation completes.
+      // These are only needed for psql CLI context; drivers should not
+      // modify session state as a side effect of installing functions.
+      if (/^SET\s+(timezone|search_path)\s*/i.test(trimmed)) {
         return '';
       }
       if (/^RESET\s+/i.test(trimmed)) {
@@ -73,7 +104,7 @@ const SQL = {
   installWithSubday: buildDriverSafeSQL('install_with_subday.sql', srcDir),
 
   /** Core RRULE functions only (no schema setup - for advanced use cases) */
-  core: fs.readFileSync(path.join(srcDir, 'rrule.sql'), 'utf8'),
+  core: stripSessionState(fs.readFileSync(path.join(srcDir, 'rrule.sql'), 'utf8')),
 };
 
 module.exports = { SQL };
