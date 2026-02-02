@@ -60,6 +60,7 @@ TEST_FILES=(
   "tests/test_internal_functions.sql"
   "tests/test_consensus_gaps.sql"
   "tests/test_consensus_gaps_2.sql"
+  "tests/test_dual_path_consistency.sql"
 )
 
 # Additional test files that require sub-day frequency support
