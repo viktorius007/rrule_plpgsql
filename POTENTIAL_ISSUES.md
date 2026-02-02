@@ -35,6 +35,7 @@ The SKIP=OMIT inner loop in MONTHLY/YEARLY branches advances `current_base` by I
 **Category:** Edge Cases & Boundary Conditions
 **Severity Assessment:** Medium
 **Reports:** 4
+**Status:** Resolved in commit 0d1e439
 
 When `UNTIL < dtstart`, the generators enter the main loop and execute at least one period before checking the UNTIL condition. Adding an early-exit check (`IF rule.until IS NOT NULL AND rule.until < basedate THEN RETURN; END IF;`) would avoid unnecessary computation. Affects all 4 generators (TIMESTAMP, TZ, subday TIMESTAMP, subday TZ).
 
@@ -90,10 +91,13 @@ The DoS caps for MINUTELY and SECONDLY are now INTERVAL-aware. `calculate_safe_i
 **Category:** Dual-Path Consistency
 **Severity Assessment:** Medium
 **Reports:** 3
+**Status:** Resolved in commit dd434bd
 
 All BYSETPOS tests use the TIMESTAMP API. No tests verify BYSETPOS behavior through the TIMESTAMPTZ API during DST transitions (spring forward gaps, fall back overlaps). The architecture is sound (TZ conversion happens at the outermost layer, after BYSETPOS), but this is untested.
 
 **Location:** `tests/test_bysetpos.sql` (all TIMESTAMP), `tests/test_tz_api.sql` (no BYSETPOS).
+
+**Resolution:** Added 3 BYSETPOS+TIMESTAMPTZ DST tests in `tests/test_dual_path_consistency.sql`.
 
 ---
 
@@ -117,10 +121,13 @@ The subday TIMESTAMP generator declares `rule rrule.rrule_parts;` (no %ROWTYPE) 
 **Category:** Edge Cases & Boundary Conditions
 **Severity Assessment:** Medium
 **Reports:** 4
+**Status:** Resolved in commit dd434bd
 
 ISO 8601 Week 1 can start in late December of the previous year. The `rrule_yearly_byweekno_set()` function is tested for single years, but no multi-year YEARLY loop test exists for BYWEEKNO to verify the year-advancement loop handles cross-year weeks correctly.
 
 **Location:** `src/rrule.sql` `rrule_yearly_byweekno_set()` and YEARLY loop.
+
+**Resolution:** Added 6 multi-year BYWEEKNO tests in `tests/test_dual_path_consistency.sql` covering BYWEEKNO=1 COUNT=5, BYWEEKNO=53 COUNT=3, and INTERVAL=2.
 
 ---
 
@@ -129,10 +136,13 @@ ISO 8601 Week 1 can start in late December of the previous year. The `rrule_year
 **Category:** Safety & Security
 **Severity Assessment:** Low
 **Reports:** 4
+**Status:** Resolved in commit 0d1e439
 
 If a frequency set function returns zero results for a period, `current` retains its previous value. The outer loop exit condition `EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until` then checks a stale value. This doesn't cause incorrect results (other exit conditions prevent runaway), but wastes iterations when the rule has exceeded UNTIL but the last non-empty period was before UNTIL.
 
 **Location:** `src/rrule.sql` line 2182, `src/rrule_subday.sql` line 463.
+
+**Resolution:** Changed outer loop UNTIL exit to use `current_base` instead of `current` in all 4 generators.
 
 ---
 
@@ -141,12 +151,13 @@ If a frequency set function returns zero results for a period, `current` retains
 **Category:** Integration & Real-World Usage
 **Severity Assessment:** Critical
 **Reports:** 1
+**Status:** Resolved in commit 8cef4f6
 
 The npm package exports `SQL.install` and `SQL.installWithSubday` with embedded `BEGIN;` and `COMMIT;` statements from the install scripts. When driver users wrap installation in their own transaction (as documented in INSTALLATION.md), the inner `COMMIT` commits the outer transaction prematurely. If an error occurs after install completes but before the user's intended `COMMIT`, the schema changes are already committed and cannot be rolled back. The `SQL.core` export does not have this issue.
 
 **Location:** `index.js` `buildDriverSafeSQL()` function, `src/install.sql:27,186`, `src/install_with_subday.sql:46,186`.
 
-**Note:** Some drivers (TypeORM, Knex with `.transacting()`) automatically wrap queries in transactions, making this bug even more likely. The fix should strip BEGIN/COMMIT from the driver-safe output in `buildDriverSafeSQL()`.
+**Resolution:** `buildDriverSafeSQL()` now strips standalone BEGIN/COMMIT and RESET statements from driver-safe output.
 
 ---
 
@@ -155,12 +166,13 @@ The npm package exports `SQL.install` and `SQL.installWithSubday` with embedded 
 **Category:** Functional Correctness
 **Severity Assessment:** High
 **Reports:** 1
+**Status:** Resolved in commit 1af5794
 
 The `yearly_set()` function's BYWEEKNO-primary code path (lines 1841-1852) applies WHERE-clause filters for BYYEARDAY, BYMONTHDAY, and BYDAY, but is missing a filter for BYMONTH. When `FREQ=YEARLY;BYWEEKNO=10;BYMONTH=6` is evaluated, `rrule_yearly_byweekno_set()` generates all dates in ISO week 10 (typically March), but the BYMONTH=6 filter is never applied. Per RFC 5545 intersection semantics, this should return 0 results.
 
 **Location:** `src/rrule.sql` `yearly_set()` lines 1841-1852.
 
-**Note:** The BYMONTH-primary path (line 1837) correctly applies BYWEEKNO as a filter. The test at `test_coverage_gaps.sql:2776` only tests the BYMONTH-primary ordering (`BYMONTH=1;BYWEEKNO=2`), not the BYWEEKNO-primary ordering. SPEC_COMPLIANCE.md claims this combination is "Fully supported."
+**Resolution:** Added `test_bymonth_rule()` filter to BYWEEKNO-primary path and updated max_results NULL propagation. Added 3 tests in `tests/test_coverage_gaps.sql`.
 
 ---
 
@@ -170,12 +182,15 @@ The `yearly_set()` function's BYWEEKNO-primary code path (lines 1841-1852) appli
 **Severity Assessment:** High
 **Severity Range:** Medium-High from 3 reports
 **Reports:** 3
+**Status:** Resolved in commit b52eb30
 
 The TIMESTAMPTZ `after()` and `before()` functions accept a `count` parameter with no DEFAULT value. The validation only checks `count <= 0` but not `count IS NULL`. When NULL is passed:
 - `after()`: The exit condition `EXIT WHEN occurrence_count >= count` evaluates to NULL, never triggering. The function returns up to 1000 results instead of raising an error.
 - `before()`: The array trimming condition `IF array_length(results, 1) > count` evaluates to NULL, preventing trimming and allowing unbounded memory growth up to the iteration limit.
 
 **Location:** `src/rrule.sql` lines 3148 (after validation), 3181 (after exit), 3231 (before validation), 3269 (before trim).
+
+**Resolution:** Added explicit NULL check raising exception in both functions. Added 2 tests in `tests/test_tz_api.sql`.
 
 ---
 
@@ -203,10 +218,13 @@ This breaks API parity. Users cannot easily switch between APIs. Code using posi
 **Category:** Dual-Path Consistency
 **Severity Assessment:** Medium
 **Reports:** 2
+**Status:** Resolved in commit dd434bd
 
 No tests verify that the TIMESTAMP API (with `TZID=` in string) produces equivalent results to the TIMESTAMPTZ API (with explicit timezone parameter) for the same rule and timezone. The two paths use completely different generators (`rrule_event_instances_range()` vs `rrule_event_instances_range_tz()`), so divergence is plausible but undetected.
 
 **Location:** `tests/` (no cross-API comparison tests exist).
+
+**Resolution:** Added 8 cross-API parity tests in `tests/test_dual_path_consistency.sql` covering DAILY/WEEKLY/MONTHLY with and without DST transitions.
 
 ---
 
