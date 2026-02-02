@@ -119,6 +119,21 @@ BEGIN
     RAISE EXCEPTION 'Invalid RRULE: Duplicate FREQ parameter. Only one FREQ is allowed per RRULE.  RFC 5545 Section 3.3.10: Each rule part MUST only be specified once.';
   END IF;
 
+  -- Reject duplicate parameters per RFC 5545 Section 3.3.10:
+  -- "Each rule part MUST only be specified once."
+  DECLARE
+    _dup_params TEXT[] := ARRAY['COUNT', 'UNTIL', 'INTERVAL', 'WKST', 'TZID', 'RSCALE', 'SKIP',
+                                'BYDAY', 'BYMONTH', 'BYMONTHDAY', 'BYYEARDAY', 'BYWEEKNO', 'BYSETPOS',
+                                'BYHOUR', 'BYMINUTE', 'BYSECOND'];
+    _dup_param TEXT;
+  BEGIN
+    FOREACH _dup_param IN ARRAY _dup_params LOOP
+      IF (SELECT COUNT(*) FROM regexp_matches(repeatrule, '(^|;)' || _dup_param || '=', 'g')) > 1 THEN
+        RAISE EXCEPTION 'Invalid RRULE: Duplicate % parameter. RFC 5545 Section 3.3.10: Each rule part MUST only be specified once.', _dup_param;
+      END IF;
+    END LOOP;
+  END;
+
   -- Check for negative COUNT value in raw RRULE string before parsing
   IF repeatrule ~* 'COUNT=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer';

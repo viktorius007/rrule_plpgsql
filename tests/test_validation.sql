@@ -1693,4 +1693,82 @@ BEGIN
     END;
 END $$;
 
+
+
+-- ============================================================================
+-- Issue 35: Duplicate BYxxx parameters silently ignored
+-- ============================================================================
+\echo ''
+\echo '--- Issue 35: Duplicate RRULE parameters ---'
+
+-- Test: Duplicate COUNT raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate COUNT rejected',
+    assert_rrule_rejected('Duplicate COUNT', 'FREQ=DAILY;COUNT=3;COUNT=5', '%Duplicate COUNT%');
+
+-- Test: Duplicate UNTIL raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate UNTIL rejected',
+    assert_rrule_rejected('Duplicate UNTIL', 'FREQ=DAILY;UNTIL=20250301T000000Z;UNTIL=20250401T000000Z', '%Duplicate UNTIL%');
+
+-- Test: Duplicate INTERVAL raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate INTERVAL rejected',
+    assert_rrule_rejected('Duplicate INTERVAL', 'FREQ=DAILY;INTERVAL=2;INTERVAL=3;COUNT=5', '%Duplicate INTERVAL%');
+
+-- Test: Duplicate WKST raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate WKST rejected',
+    assert_rrule_rejected('Duplicate WKST', 'FREQ=WEEKLY;WKST=MO;WKST=SU;COUNT=3', '%Duplicate WKST%');
+
+-- Test: Duplicate TZID raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate TZID rejected',
+    assert_rrule_rejected('Duplicate TZID', 'FREQ=DAILY;TZID=US/Eastern;TZID=US/Pacific;COUNT=3', '%Duplicate TZID%');
+
+-- Test: Duplicate BYDAY raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYDAY rejected',
+    assert_rrule_rejected('Duplicate BYDAY', 'FREQ=WEEKLY;BYDAY=MO,WE;BYDAY=TU,TH;COUNT=5', '%Duplicate BYDAY%');
+
+-- Test: Duplicate BYMONTH raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYMONTH rejected',
+    assert_rrule_rejected('Duplicate BYMONTH', 'FREQ=YEARLY;BYMONTH=1;BYMONTH=6;COUNT=5', '%Duplicate BYMONTH%');
+
+-- Test: Duplicate BYMONTHDAY raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYMONTHDAY rejected',
+    assert_rrule_rejected('Duplicate BYMONTHDAY', 'FREQ=MONTHLY;BYMONTHDAY=1;BYMONTHDAY=15;COUNT=5', '%Duplicate BYMONTHDAY%');
+
+-- Test: Duplicate BYYEARDAY raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYYEARDAY rejected',
+    assert_rrule_rejected('Duplicate BYYEARDAY', 'FREQ=YEARLY;BYYEARDAY=1;BYYEARDAY=100;COUNT=5', '%Duplicate BYYEARDAY%');
+
+-- Test: Duplicate BYWEEKNO raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYWEEKNO rejected',
+    assert_rrule_rejected('Duplicate BYWEEKNO', 'FREQ=YEARLY;BYWEEKNO=1;BYWEEKNO=20;BYDAY=MO;COUNT=5', '%Duplicate BYWEEKNO%');
+
+-- Test: Duplicate BYSETPOS raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate BYSETPOS rejected',
+    assert_rrule_rejected('Duplicate BYSETPOS', 'FREQ=MONTHLY;BYDAY=MO,TU;BYSETPOS=1;BYSETPOS=-1;COUNT=5', '%Duplicate BYSETPOS%');
+
+-- Test: Duplicate RSCALE raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate RSCALE rejected',
+    assert_rrule_rejected('Duplicate RSCALE', 'FREQ=MONTHLY;RSCALE=GREGORIAN;RSCALE=GREGORIAN;SKIP=BACKWARD;BYMONTHDAY=31;COUNT=3', '%Duplicate RSCALE%');
+
+-- Test: Duplicate SKIP raises exception
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Duplicate SKIP rejected',
+    assert_rrule_rejected('Duplicate SKIP', 'FREQ=MONTHLY;RSCALE=GREGORIAN;SKIP=BACKWARD;SKIP=FORWARD;BYMONTHDAY=31;COUNT=3', '%Duplicate SKIP%');
+
+-- Test: Non-duplicate parameters still work (regression check)
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Duplicate parameters', 'Non-duplicate rule still works',
+    assert_rrule_accepted('Non-duplicate params', 'FREQ=MONTHLY;BYMONTH=1,6;BYMONTHDAY=15;COUNT=4', 4);
+
 ROLLBACK;
