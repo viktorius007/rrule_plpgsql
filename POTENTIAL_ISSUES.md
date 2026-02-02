@@ -64,66 +64,6 @@ This breaks API parity. Users cannot easily switch between APIs. Code using posi
 
 ---
 
-## Issue 4: Inconsistent NULL check in TIMESTAMPTZ generators vs TIMESTAMP generators
-
-**Category:** Dual-Path Consistency
-**Severity Assessment:** Medium
-**Severity Range:** Low-Medium from 7 reports
-**Reports:** 7
-
-The subday TIMESTAMPTZ generator includes `current IS NOT NULL AND` in UNTIL exit conditions, while the standard TIMESTAMPTZ generator and TIMESTAMP generators do not include this guard. While `current` should never be NULL inside a FOR loop iterating over set-returning function results, the inconsistency indicates the four generators diverged from a common template (violating Development Rule #9).
-
-**Location:** `src/rrule.sql` lines 1987, 2006, 2029, 2099 (TIMESTAMP) vs `src/rrule_subday.sql` lines 535, 560, 589, 631, 665, 703, 733, 749, 765 (subday TZ includes guard).
-
-**Fix:** 9 edits in `src/rrule_subday.sql` (remove redundant NULL checks to align with standard generators)
-
----
-
-## Issue 5: WEEKLY/DAILY frequency passes max_results before post-filters causing missing results
-
-**Category:** Edge Cases & Boundary Conditions
-**Severity Assessment:** High
-**Severity Range:** Medium-High from 5 reports
-**Reports:** 5
-
-The WEEKLY branch in the generators calls `weekly_set(current_base, rule, ...)` with a max_results limit, then applies BYYEARDAY/BYMONTHDAY/BYMONTH post-filters. This violates Development Rule #11. Confirmed as a correctness bug: `FREQ=WEEKLY;BYDAY=SU,MO,TU,WE,TH,FR,SA;BYMONTH=2;COUNT=3` starting 2025-01-27 returns `[Sun Feb 2, Mon Feb 3, Sun Feb 9]` instead of `[Sat Feb 1, Sun Feb 2, Mon Feb 3]` because `rrule_week_byday_set` exits early (max_results=3) before generating Sat Feb 1. Same pattern exists for the DAILY branch. Additionally, `yearly_set` passes max_results to `monthly_set` in the 12-month scan path, but `monthly_set` may apply BYSETPOS internally, creating the same under-generation issue.
-
-**Location:** `src/rrule.sql` lines 2001-2004 (WEEKLY, all 4 generators), daily_set line ~1430, yearly_set line ~1884.
-
-**Fix:** 6 edits in `src/rrule.sql`, `src/rrule_subday.sql` (pass NULL for max_results when post-filters present in WEEKLY/DAILY branches, and pass NULL to monthly_set in yearly_set when BYSETPOS present) + tests in `tests/test_rrule_functions.sql`
-
----
-
-## Issue 6: No BYSETPOS + SKIP interaction test coverage
-
-**Category:** Cross-Cutting Concerns
-**Severity Assessment:** Medium
-**Reports:** 2
-
-No tests verify BYSETPOS behavior when SKIP=FORWARD or SKIP=BACKWARD produce dates that overlap with other BYxxx rules. For example, `FREQ=MONTHLY;BYMONTHDAY=30,31;SKIP=FORWARD;BYSETPOS=1,-1` could produce duplicate forwarded dates that affect BYSETPOS position selection. BYSETPOS position selection depends on input cardinality — if duplicates aren't properly removed before BYSETPOS, position indices will be off.
-
-**Location:** `tests/` (no BYSETPOS + SKIP combination tests).
-
-**Fix:** 0 edits in src + new tests in `tests/test_bysetpos.sql` or `tests/test_skip_support.sql`
-
----
-
-## Issue 7: NULL date range parameters not validated in between()/after()/before()
-
-**Category:** Input Validation
-**Severity Assessment:** Medium
-**Reports:** 2
-
-The `between()`, `after()`, and `before()` functions validate NULL for `rrule_string` and `dtstart` but NOT for date range parameters (`start_date`/`end_date`, `after_date`, `before_date`). Passing NULL produces confusing behavior (empty results or PostgreSQL cast errors) without a descriptive error message.
-
-**Location:** `src/rrule.sql` lines 2315-2368 (between TIMESTAMP), 2377-2428 (after TIMESTAMP), 2438-2509 (before TIMESTAMP), and TIMESTAMPTZ equivalents.
-
-**Note:** PostgreSQL handles NULL gracefully (comparisons with NULL return NULL, preventing matches), so results are technically correct (empty set). The gap is user experience, not correctness.
-
-**Fix:** 6 edits in `src/rrule.sql` (add NULL checks for date range params in 6 functions) + tests in `tests/test_validation.sql`
-
----
-
 ## Issue 8: overlaps() has no TIMESTAMP API variant
 
 **Category:** Integration & Real-World Usage
@@ -149,22 +89,6 @@ The `buildDriverSafeSQL()` function in `index.js` uses `trimmed.startsWith('\\')
 **Location:** `index.js` line 39.
 
 **Note:** No current SQL files trigger this. A safer approach would be to explicitly match known meta-commands.
-
----
-
-## Issue 10: CREATE TYPE rrule_parts not idempotent, breaks direct SQL reload
-
-**Category:** Upgrade & Install
-**Severity Assessment:** High
-**Reports:** 2
-
-`CREATE TYPE rrule_parts` at `src/rrule.sql:48` has no idempotency guard. PostgreSQL does not support `CREATE OR REPLACE TYPE` for composite types, so reloading `rrule.sql` or using `SQL.core` without first dropping the schema fails with "ERROR: type rrule_parts already exists". The `DOMAIN rrule` at line 2230 uses `IF NOT EXISTS`, creating inconsistent reinstall behavior.
-
-**Location:** `src/rrule.sql:48` (CREATE TYPE) vs `src/rrule.sql:2230` (DOMAIN with IF NOT EXISTS).
-
-**Note:** Mitigated by `install.sql` doing `DROP SCHEMA CASCADE` before loading. Only affects direct `rrule.sql` loading or `SQL.core` usage without schema drop.
-
-**Fix:** 1 edit in `src/rrule.sql` (wrap CREATE TYPE in DO block with existence check) + no test needed
 
 ---
 
