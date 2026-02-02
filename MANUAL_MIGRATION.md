@@ -168,8 +168,8 @@ Once you've verified everything works:
 BEGIN;
 
 -- Drop the old rrule schema
--- No CASCADE needed - all dependencies have been moved to rrule_update
-DROP SCHEMA rrule;
+-- CASCADE is required to drop the schema's own functions, types, and domains
+DROP SCHEMA rrule CASCADE;
 
 -- Rename rrule_update to rrule
 ALTER SCHEMA rrule_update RENAME TO rrule;
@@ -262,7 +262,7 @@ SELECT COUNT(*) as event_count FROM my_daily_schedule;
 
 -- 5. If tests pass, drop old schema and rename
 \echo 'Tests passed, proceeding with migration...'
-DROP SCHEMA rrule;  -- No CASCADE needed - dependencies moved to rrule_update
+DROP SCHEMA rrule CASCADE;  -- CASCADE required to drop the schema's own functions/types
 ALTER SCHEMA rrule_update RENAME TO rrule;
 
 -- 6. Update views back to 'rrule' schema reference
