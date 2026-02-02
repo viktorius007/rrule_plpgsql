@@ -108,14 +108,19 @@ After launching all fix agents, **WAIT for `<task-notification>` messages**. Do 
 2. Merge each branch sequentially (least likely to conflict first): `git merge --no-ff fix/issue-{N}`
 3. Resolve any merge conflicts
 4. Run full verification: `npm test` + `npm run lint` + `npm run lint:tests` — fix until clean
-5. Mark fixed issues in POTENTIAL_ISSUES.md: `**Status:** Resolved in commit {hash}`
-6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: mark resolved issues from fix run"`
-7. Clean up:
+5. **Remove** fixed issues from POTENTIAL_ISSUES.md entirely (the fix commit serves as the record — no need to archive resolved entries in the file)
+6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: remove resolved issues from fix run"`
+7. **Clean up all ephemeral artifacts** (worktrees and branches are disposable workspaces, not persistent records):
    ```bash
+   # Remove worktrees
    git worktree remove /tmp/fix-issue-{N}
+   # Delete merged fix branches
+   git branch -d fix/issue-{N}
+   # Drop isolated databases
    dropdb --if-exists rrule_test_fix_issue_{N}
    dropdb --if-exists rrule_lint_fix_issue_{N}
    ```
+   Run cleanup for ALL fix branches from this run in a single step.
 
 ---
 
