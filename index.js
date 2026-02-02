@@ -39,6 +39,15 @@ function buildDriverSafeSQL(installFile, baseDir) {
       if (trimmed.startsWith('\\')) {
         return '';
       }
+      // Strip transaction control statements (BEGIN/COMMIT) that break
+      // outer transaction control when drivers wrap SQL in their own transaction.
+      // Also strip RESET statements meant for psql post-transaction cleanup.
+      if (/^(BEGIN|COMMIT)\s*;/i.test(trimmed)) {
+        return '';
+      }
+      if (/^RESET\s+/i.test(trimmed)) {
+        return '';
+      }
       return line;
     })
     .join('\n');
