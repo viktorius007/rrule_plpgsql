@@ -1624,10 +1624,11 @@ BEGIN
     END IF;
   END IF;
 
-  -- Pass max_results down to helper functions
+  -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
+  -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
   IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r
-                INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r
+    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+                INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
                     ORDER BY 1;
   ELSIF rule.bymonthday IS NOT NULL THEN
     OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
@@ -1840,8 +1841,11 @@ BEGIN
       FOR occurrence IN
         SELECT r FROM rrule.rrule_week_byday_set(week_start, rule.byday, rule.wkst, remaining) r ORDER BY 1
       LOOP
-        -- Only return occurrences that are still in the same year
-        IF date_part('year', occurrence) = date_part('year', after_ts) THEN
+        -- Only return occurrences that belong to the target ISO year.
+        -- Use isoyear on occurrences but calendar year on after_ts, because
+        -- ISO weeks at year boundaries can span two calendar years (e.g.,
+        -- ISO week 1 of 2026 starts on 2025-12-29).
+        IF date_part('isoyear', occurrence) = date_part('year', after_ts) THEN
           RETURN NEXT occurrence;
           result_count := result_count + 1;
           EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
@@ -1850,7 +1854,7 @@ BEGIN
       EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
     ELSE
       -- No BYDAY specified - return the week start date
-      IF date_part('year', week_start) = date_part('year', after_ts) THEN
+      IF date_part('isoyear', week_start) = date_part('year', after_ts) THEN
         RETURN NEXT week_start;
         result_count := result_count + 1;
         EXIT WHEN max_results IS NOT NULL AND result_count >= max_results;
@@ -1907,8 +1911,9 @@ BEGIN
   IF rule.bymonth IS NOT NULL THEN
     -- BYMONTH primary
     -- Pass NULL max_results when post-filters may reject candidates
+    -- Use DISTINCT to deduplicate when SKIP=FORWARD overflows into adjacent BYMONTH months
     OPEN curse SCROLL FOR
-      SELECT r
+      SELECT DISTINCT r
       FROM rrule.rrule_yearly_bymonth_set(after_ts, rr,
         CASE WHEN rule.byweekno IS NOT NULL OR rule.byyearday IS NOT NULL
              THEN NULL ELSE max_results END) r
@@ -2600,10 +2605,9 @@ BEGIN
     -- Note: rrule_event_instances_range is STRICT (NULL returns no rows), so we
     -- pass 50000000 which is large enough to be uncapped yet safe from integer
     -- overflow in calculate_safe_iteration_limit (max multiplier 40x = 2B < INT_MAX).
-    SELECT occurrence, cnt INTO previous_occurrence, scan_count
+    SELECT occurrence INTO previous_occurrence
     FROM (
-        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence,
-               COUNT(*) OVER () AS cnt
+        SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence
         FROM rrule.rrule_event_instances_range(
             dtstart_utc,
             rrule_string,
@@ -2618,6 +2622,23 @@ BEGIN
     END
     ORDER BY occurrence DESC
     LIMIT 1;
+
+    -- Only compute scan_count for the warning when rule is unbounded.
+    -- This is a separate query to avoid COUNT(*) OVER() in the main query,
+    -- which would force PostgreSQL to materialize all rows before LIMIT 1.
+    IF NOT has_bound THEN
+        SELECT COUNT(*)::BIGINT INTO scan_count
+        FROM (
+            SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP AS occurrence
+            FROM rrule.rrule_event_instances_range(
+                dtstart_utc,
+                rrule_string,
+                dtstart_utc,
+                maxdate_utc,
+                1000000
+            ) d
+        ) sub;
+    END IF;
 
     -- Warn when before() scanned many occurrences on an unbounded rule,
     -- matching the safety warning that all() and between() emit at 1000.
@@ -2644,6 +2665,10 @@ RETURNS INTEGER AS $$
 DECLARE
     occurrence_count INTEGER;
 BEGIN
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
@@ -3456,6 +3481,10 @@ CREATE OR REPLACE FUNCTION rrule.count(
 DECLARE
     occurrence_count INTEGER;
 BEGIN
+    IF rrule_string IS NULL THEN
+        RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required. Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY.  RFC 5545 Section 3.3.10: "FREQ rule part is REQUIRED"';
+    END IF;
+
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;

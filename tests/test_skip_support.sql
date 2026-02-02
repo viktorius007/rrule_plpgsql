@@ -985,4 +985,20 @@ SELECT
          ) AS occurrence)
     );
 
+-- Issue 40: SKIP=FORWARD with BYMONTH deduplication
+-- FREQ=YEARLY;BYMONTH=4,5;BYMONTHDAY=31;SKIP=FORWARD produces May 1 from April's
+-- forward (April has 30 days) and should not duplicate when May is also a BYMONTH.
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 40: YEARLY SKIP=FORWARD BYMONTH dedup no duplicates',
+    CASE WHEN (
+        SELECT COUNT(*) = COUNT(DISTINCT occurrence)
+        FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=4,5;BYMONTHDAY=31;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=6',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence
+    ) THEN 'PASS'
+    ELSE 'FAIL: duplicate dates found in SKIP=FORWARD BYMONTH result'
+    END;
+
 ROLLBACK;

@@ -1961,5 +1961,66 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 SELECT 'SKIP case', 'invalid SKIP=BACKWARDS still rejected',
     assert_rrule_rejected('SKIP=BACKWARDS', 'FREQ=MONTHLY;SKIP=BACKWARDS', '%Invalid SKIP value%');
 
+-- Issue 38: count() NULL rrule_string guard
+\echo ''
+\echo 'TEST GROUP: Issue 38 - count() NULL rrule guard'
+\echo '====================================================================='
+
+-- Helper: assert count() with NULL rrule raises FREQ required (TIMESTAMP)
+CREATE OR REPLACE FUNCTION assert_count_null_rejected_ts(
+    test_name TEXT,
+    expected_error_pattern TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    cnt INTEGER;
+BEGIN
+    BEGIN
+        SELECT rrule."count"(NULL::VARCHAR, '2025-01-01 00:00:00'::TIMESTAMP) INTO cnt;
+        RAISE EXCEPTION 'FAIL [%]: count(NULL) was accepted when it should have been rejected', test_name;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE expected_error_pattern THEN
+                RETURN 'PASS [' || test_name || ']';
+            ELSE
+                RAISE EXCEPTION 'FAIL [%]: Wrong error message. Expected pattern: %, Got: %',
+                    test_name, expected_error_pattern, SQLERRM;
+            END IF;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper: assert count() with NULL rrule raises FREQ required (TIMESTAMPTZ)
+CREATE OR REPLACE FUNCTION assert_count_null_rejected_tz(
+    test_name TEXT,
+    expected_error_pattern TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    cnt INTEGER;
+BEGIN
+    BEGIN
+        SELECT rrule."count"(NULL::TEXT, '2025-01-01 00:00:00+00'::TIMESTAMPTZ) INTO cnt;
+        RAISE EXCEPTION 'FAIL [%]: count(NULL) was accepted when it should have been rejected', test_name;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE expected_error_pattern THEN
+                RETURN 'PASS [' || test_name || ']';
+            ELSE
+                RAISE EXCEPTION 'FAIL [%]: Wrong error message. Expected pattern: %, Got: %',
+                    test_name, expected_error_pattern, SQLERRM;
+            END IF;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'NULL rrule', 'TIMESTAMP count(NULL) raises FREQ required',
+    assert_count_null_rejected_ts('count NULL TS', '%FREQ parameter is required%');
+
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'NULL rrule', 'TIMESTAMPTZ count(NULL) raises FREQ required',
+    assert_count_null_rejected_tz('count NULL TZ', '%FREQ parameter is required%');
+
 
 ROLLBACK;

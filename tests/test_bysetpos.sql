@@ -600,6 +600,25 @@ VALUES (
     )
 );
 
+-- Issue 41: monthly_set INTERSECT should not limit inner generators
+-- BYDAY+BYMONTHDAY intersection should return correct results regardless of max_results
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'INTERSECT',
+    'Issue 41: BYDAY+BYMONTHDAY INTERSECT returns correct dates',
+    assert_occurrences_equal(
+        'BYDAY+BYMONTHDAY INTERSECT',
+        ARRAY[
+            '2025-01-06 00:00:00'::TIMESTAMP,
+            '2025-10-06 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYDAY=MO;BYMONTHDAY=6;COUNT=2',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------
 \echo ''

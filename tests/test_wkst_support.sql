@@ -754,4 +754,25 @@ VALUES ('BYWEEKNO=-1 with YEARLY returns last ISO week occurrences',
 );
 
 
+\echo ''
+\echo 'TEST GROUP: Issue 34 - BYWEEKNO isoyear filter for cross-boundary ISO weeks'
+\echo '====================================================================='
+
+-- Issue 34: ISO week 1 of 2026 starts on 2025-12-29 (Mon).
+-- Dates in that week (Dec 29-31 2025) belong to ISO year 2026.
+-- Using date_part('year') would exclude them; date_part('isoyear') includes them.
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('Issue 34: BYWEEKNO=1 cross-boundary ISO week included',
+    assert_occurrences_equal(
+        'BYWEEKNO=1 isoyear filter',
+        ARRAY[
+            '2026-01-01 00:00:00'::TIMESTAMP,
+            '2026-01-02 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=1;BYDAY=TH,FR;COUNT=2', '2026-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+
 ROLLBACK;
