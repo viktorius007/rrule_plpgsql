@@ -2214,7 +2214,7 @@ BEGIN
     ELSE
       -- Provide helpful error message for sub-day frequencies
       IF rule.freq IN ('HOURLY', 'MINUTELY', 'SECONDLY') THEN
-        RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql. See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
+        RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql (or SQL.installWithSubday for npm users). See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
       ELSE
         RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY. For sub-day frequencies, see INCLUDING_SUBDAY_OPERATIONS.md', rule.freq;
       END IF;
@@ -2537,7 +2537,7 @@ BEGIN
             rrule_string,
             dtstart_utc,
             maxdate_utc,
-            50000000
+            1000000
         ) d
     ) sub
     WHERE CASE
@@ -2984,7 +2984,7 @@ BEGIN
         ELSE
             -- Provide helpful error message for sub-day frequencies
             IF rule.freq IN ('HOURLY', 'MINUTELY', 'SECONDLY') THEN
-              RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql. See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
+              RAISE EXCEPTION 'Frequency "%" is not supported in standard installation. Sub-day frequencies (HOURLY, MINUTELY, SECONDLY) are disabled by default for security. To enable them, use: psql -d your_database -f src/install_with_subday.sql (or SQL.installWithSubday for npm users). See INCLUDING_SUBDAY_OPERATIONS.md for security considerations.', rule.freq;
             ELSE
               RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY. For sub-day frequencies, see INCLUDING_SUBDAY_OPERATIONS.md', rule.freq;
             END IF;
@@ -3327,7 +3327,7 @@ BEGIN
     -- This caps memory at O(count) instead of O(N) for rules with many occurrences.
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
     -- before() must scan all occurrences to find the last N, so we pass a large output_limit.
-    -- Use 50000000 (safe from integer overflow in calculate_safe_iteration_limit's 40x multiplier).
+    -- Use 1000000 to limit iteration budget while being large enough for scanning within the maxdate window.
     results := ARRAY[]::TIMESTAMPTZ[];
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
@@ -3335,7 +3335,7 @@ BEGIN
             rrule_string,
             wall_clock_start,
             wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
-            50000000
+            1000000
         )
     LOOP
         scan_count := scan_count + 1;

@@ -6780,4 +6780,55 @@ SELECT
         )::TEXT)
     );
 
+-- Test Issue 31: before() iteration budget is reasonable
+-- Verify before() still works correctly with reduced max_count (1M instead of 50M)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 31: before() iteration budget',
+    'TIMESTAMP: before() finds last occurrence with reduced budget',
+    assert_equals(
+        'before() with reduced budget',
+        '2025-12-01 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=MONTHLY;COUNT=24',
+            '2024-01-01 00:00:00'::TIMESTAMP,
+            '2026-01-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test Issue 31: TIMESTAMPTZ before() with reduced budget
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 31: before() iteration budget',
+    'TIMESTAMPTZ: before() finds last occurrence with reduced budget',
+    assert_equals(
+        'TZ before() with reduced budget',
+        '2025-12-01 15:00:00+00',
+        (SELECT (rrule."before"(
+            'FREQ=MONTHLY;COUNT=24',
+            '2024-01-01 10:00:00-05'::TIMESTAMPTZ,
+            '2026-01-01 10:00:00-05'::TIMESTAMPTZ,
+            1,
+            'America/New_York',
+            FALSE
+        ))::TEXT)
+    );
+
+-- Test Issue 31: before() with DAILY rule over long range still works
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 31: before() iteration budget',
+    'DAILY before() over multi-year range finds correct last occurrence',
+    assert_equals(
+        'DAILY before() multi-year',
+        '2024-12-31 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=DAILY;COUNT=1000',
+            '2022-04-07 00:00:00'::TIMESTAMP,
+            '2025-06-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
 ROLLBACK;

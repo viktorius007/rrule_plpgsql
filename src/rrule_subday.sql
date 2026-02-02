@@ -515,6 +515,7 @@ DECLARE
     current TIMESTAMP;
     period_start TIMESTAMP;
     min_in_period TIMESTAMP;
+    prev_period_max_ts TIMESTAMP := NULL;
     rule rrule.rrule_parts%ROWTYPE;
 BEGIN
     SELECT * INTO rule FROM rrule.parse_rrule_parts( basedate::TIMESTAMPTZ, repeatrule );
@@ -794,7 +795,7 @@ BEGIN
             current_base := current_base + make_interval(secs => rule.interval);
 
         ELSE
-            RAISE EXCEPTION 'Unsupported frequency: %', rule.freq;
+            RAISE EXCEPTION 'Unsupported frequency: %. Valid values are: DAILY, WEEKLY, MONTHLY, YEARLY, HOURLY, MINUTELY, SECONDLY', rule.freq;
         END IF;
         period_count := period_count + 1;
         EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
