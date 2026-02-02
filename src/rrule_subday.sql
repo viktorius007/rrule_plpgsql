@@ -268,7 +268,7 @@ BEGIN
     ELSIF rule.freq = 'WEEKLY' THEN
       period_start := rrule.get_week_start(current_base, rule.wkst) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
-      FOR current IN SELECT w FROM rrule.weekly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) w WHERE w >= min_in_period LOOP
+      FOR current IN SELECT w FROM rrule.weekly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) w WHERE w >= min_in_period LOOP
         -- Time boundary checks apply regardless of BYxxx filters
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
         EXIT WHEN current > maxdate;
@@ -542,7 +542,7 @@ BEGIN
                          ELSE NULL END) d
                 WHERE d::TIMESTAMP >= min_in_period
             LOOP
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
@@ -560,14 +560,14 @@ BEGIN
             FOR current IN
                 SELECT w::TIMESTAMP
                 FROM rrule.weekly_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) w
                 WHERE w::TIMESTAMP >= min_in_period
             LOOP
                 -- Time boundary checks apply regardless of BYxxx filters
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 IF rrule.test_byyearday_rule(current::TIMESTAMPTZ, rule.byyearday)
                    AND rrule.test_bymonthday_rule(current::TIMESTAMPTZ, rule.bymonthday)
@@ -596,7 +596,7 @@ BEGIN
                          ELSE NULL END) m
                 WHERE m::TIMESTAMP >= min_in_period
             LOOP
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
@@ -662,7 +662,7 @@ BEGIN
                          ELSE NULL END) y
                 WHERE y::TIMESTAMP >= min_in_period
             LOOP
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
@@ -730,7 +730,7 @@ BEGIN
             period_start := date_trunc('hour', current_base);
             min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN SELECT h::TIMESTAMP FROM rrule.hourly_set(current_base::TIMESTAMPTZ, rule) h WHERE h::TIMESTAMP >= min_in_period LOOP
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
@@ -746,7 +746,7 @@ BEGIN
             period_start := date_trunc('minute', current_base);
             min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN SELECT m::TIMESTAMP FROM rrule.minutely_set(current_base::TIMESTAMPTZ, rule) m WHERE m::TIMESTAMP >= min_in_period LOOP
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
@@ -762,7 +762,7 @@ BEGIN
             period_start := date_trunc('second', current_base);
             min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
             FOR current IN SELECT s::TIMESTAMP FROM rrule.secondly_set(current_base::TIMESTAMPTZ, rule) s WHERE s::TIMESTAMP >= min_in_period LOOP
-                EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
+                EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
