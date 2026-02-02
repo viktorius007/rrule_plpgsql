@@ -433,6 +433,173 @@ VALUES (
 );
 
 ------------------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------------------
+-- Category 7: BYSETPOS + SKIP Interaction Tests
+------------------------------------------------------------------------------------------------------
+\echo ''
+\echo '==================================================================='
+\echo 'Category 7: BYSETPOS + SKIP Interaction Tests'
+\echo '==================================================================='
+
+-- Test 7.1: SKIP=FORWARD deduplication before BYSETPOS
+-- BYMONTHDAY=30,31 in February: both 30 and 31 are invalid, SKIP=FORWARD moves both to Mar 1.
+-- After deduplication, Feb produces only 1 candidate (Mar 1), so BYSETPOS=1 and -1 both select it.
+-- Jan: 30,31 → BYSETPOS=1,-1 → Jan 30, Jan 31 (2 results)
+-- Feb: both forward to Mar 1 → deduped to 1 candidate → BYSETPOS=1,-1 both select Mar 1 (1 result)
+-- Mar: 30,31 → BYSETPOS=1,-1 → Mar 30, Mar 31 (2 results)
+-- Apr: 30 exists, 31 forwards to May 1 → BYSETPOS=1,-1 → Apr 30, May 1 (need 1 more for COUNT=6)
+-- COUNT=6 stops after 6 total
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'BYSETPOS+SKIP',
+    'SKIP=FORWARD dedup before BYSETPOS (BYMONTHDAY=30,31;BYSETPOS=1,-1)',
+    assert_occurrences_equal(
+        'SKIP=FORWARD dedup before BYSETPOS',
+        ARRAY[
+            '2025-01-30 10:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP,
+            '2025-03-30 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-04-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=30,31;SKIP=FORWARD;RSCALE=GREGORIAN;BYSETPOS=1,-1;COUNT=6',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 7.2: SKIP=BACKWARD deduplication before BYSETPOS
+-- BYMONTHDAY=30,31 in February: both invalid, SKIP=BACKWARD moves both to Feb 28.
+-- After deduplication, Feb produces 1 candidate (Feb 28).
+-- Jan: 30,31 → Jan 30, Jan 31
+-- Feb: both backward to Feb 28 → 1 candidate → Feb 28
+-- Mar: 30,31 → Mar 30, Mar 31
+-- Apr: 30 exists, 31 backward to Apr 30 → deduped to 1 candidate → Apr 30
+-- COUNT=6 stops after 6 total
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'BYSETPOS+SKIP',
+    'SKIP=BACKWARD dedup before BYSETPOS (BYMONTHDAY=30,31;BYSETPOS=1,-1)',
+    assert_occurrences_equal(
+        'SKIP=BACKWARD dedup before BYSETPOS',
+        ARRAY[
+            '2025-01-30 10:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-03-30 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-04-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=30,31;SKIP=BACKWARD;RSCALE=GREGORIAN;BYSETPOS=1,-1;COUNT=6',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 7.3: YEARLY SKIP=FORWARD + BYSETPOS on leap day
+-- BYMONTHDAY=29 in February: invalid in non-leap years, SKIP=FORWARD moves to Mar 1.
+-- BYSETPOS=1 selects the single candidate each year.
+-- 2024 (leap): Feb 29 exists → selected
+-- 2025-2027 (non-leap): Feb 29 → forwarded to Mar 1 → selected
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'BYSETPOS+SKIP',
+    'YEARLY SKIP=FORWARD leap day + BYSETPOS=1',
+    assert_occurrences_equal(
+        'YEARLY SKIP=FORWARD leap day BYSETPOS',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP,
+            '2026-03-01 10:00:00'::TIMESTAMP,
+            '2027-03-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;SKIP=FORWARD;RSCALE=GREGORIAN;BYSETPOS=1;COUNT=4',
+            '2024-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 7.4: YEARLY SKIP=BACKWARD + BYSETPOS on leap day
+-- BYMONTHDAY=29 in February: invalid in non-leap years, SKIP=BACKWARD moves to Feb 28.
+-- 2024 (leap): Feb 29 exists → selected
+-- 2025-2027 (non-leap): Feb 29 → backward to Feb 28 → selected
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'BYSETPOS+SKIP',
+    'YEARLY SKIP=BACKWARD leap day + BYSETPOS=1',
+    assert_occurrences_equal(
+        'YEARLY SKIP=BACKWARD leap day BYSETPOS',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2026-02-28 10:00:00'::TIMESTAMP,
+            '2027-02-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;SKIP=BACKWARD;RSCALE=GREGORIAN;BYSETPOS=1;COUNT=4',
+            '2024-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 7.5: SKIP=FORWARD + BYSETPOS with INTERVAL > 1
+-- INTERVAL=2 skips every other month. Starting Jan 2025: Jan, Mar, May, Jul, Sep, Nov.
+-- All odd months have 31 days, so BYMONTHDAY=30,31 are both valid — no SKIP forwarding needed.
+-- BYSETPOS=1,-1 selects first (30) and last (31) from each active month.
+-- COUNT=6 → Jan 30, Jan 31, Mar 30, Mar 31, May 30, May 31
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'BYSETPOS+SKIP',
+    'SKIP=FORWARD + BYSETPOS + INTERVAL=2',
+    assert_occurrences_equal(
+        'SKIP=FORWARD BYSETPOS INTERVAL=2',
+        ARRAY[
+            '2025-01-30 10:00:00'::TIMESTAMP,
+            '2025-01-31 10:00:00'::TIMESTAMP,
+            '2025-03-30 10:00:00'::TIMESTAMP,
+            '2025-03-31 10:00:00'::TIMESTAMP,
+            '2025-05-30 10:00:00'::TIMESTAMP,
+            '2025-05-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=30,31;SKIP=FORWARD;RSCALE=GREGORIAN;BYSETPOS=1,-1;COUNT=6',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test 7.6: SKIP=BACKWARD + BYSETPOS with INTERVAL=3 (hits Feb)
+-- INTERVAL=3 starting Feb 2025: Feb, May, Aug, Nov, Feb 2026...
+-- Feb 2025: BYMONTHDAY=30,31 both invalid → BACKWARD to Feb 28 (deduped: 1 candidate)
+--   BYSETPOS=1,-1 both select Feb 28 → 1 result
+-- May 2025: 30,31 both valid → BYSETPOS=1,-1 → May 30, May 31
+-- Aug 2025: 30,31 both valid → BYSETPOS=1,-1 → Aug 30, Aug 31
+-- COUNT=5 stops at 5 total
+INSERT INTO bysetpos_test_results (test_category, test_name, status)
+VALUES (
+    'BYSETPOS+SKIP',
+    'SKIP=BACKWARD + BYSETPOS + INTERVAL=3 (hits Feb)',
+    assert_occurrences_equal(
+        'SKIP=BACKWARD BYSETPOS INTERVAL=3 hits Feb',
+        ARRAY[
+            '2025-02-28 10:00:00'::TIMESTAMP,
+            '2025-05-30 10:00:00'::TIMESTAMP,
+            '2025-05-31 10:00:00'::TIMESTAMP,
+            '2025-08-30 10:00:00'::TIMESTAMP,
+            '2025-08-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=30,31;SKIP=BACKWARD;RSCALE=GREGORIAN;BYSETPOS=1,-1;COUNT=5',
+            '2025-02-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------
 \echo ''
