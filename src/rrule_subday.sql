@@ -81,7 +81,7 @@ BEGIN
     RETURN;
   END IF;
 
-  IF rule.bymonthday IS NOT NULL AND NOT date_part('day', after_ts) = ANY (rule.bymonthday) THEN
+  IF rule.bymonthday IS NOT NULL AND NOT rrule.test_bymonthday_rule(after_ts, rule.bymonthday) THEN
     RETURN;
   END IF;
 
@@ -125,7 +125,7 @@ BEGIN
     RETURN;
   END IF;
 
-  IF rule.bymonthday IS NOT NULL AND NOT date_part('day', after_ts) = ANY (rule.bymonthday) THEN
+  IF rule.bymonthday IS NOT NULL AND NOT rrule.test_bymonthday_rule(after_ts, rule.bymonthday) THEN
     RETURN;
   END IF;
 
@@ -168,7 +168,7 @@ BEGIN
     RETURN;
   END IF;
 
-  IF rule.bymonthday IS NOT NULL AND NOT date_part('day', after_ts) = ANY (rule.bymonthday) THEN
+  IF rule.bymonthday IS NOT NULL AND NOT rrule.test_bymonthday_rule(after_ts, rule.bymonthday) THEN
     RETURN;
   END IF;
 
@@ -217,6 +217,7 @@ DECLARE
   current TIMESTAMP WITH TIME ZONE;
   period_start TIMESTAMP WITH TIME ZONE;
   min_in_period TIMESTAMP WITH TIME ZONE;
+  prev_period_max_ts TIMESTAMP WITH TIME ZONE := NULL;
   rule rrule.rrule_parts%ROWTYPE;
 BEGIN
   SELECT * INTO rule FROM rrule.parse_rrule_parts(basedate, repeatrule);
@@ -252,7 +253,7 @@ BEGIN
     IF rule.freq = 'DAILY' THEN
       period_start := date_trunc('day', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
-      FOR current IN SELECT d FROM rrule.daily_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) d WHERE d >= min_in_period LOOP
+      FOR current IN SELECT d FROM rrule.daily_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) d WHERE d >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
         EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
@@ -290,9 +291,11 @@ BEGIN
     ELSIF rule.freq = 'MONTHLY' THEN
       period_start := date_trunc('month', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
-      FOR current IN SELECT m FROM rrule.monthly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) m WHERE m >= min_in_period LOOP
+      FOR current IN SELECT m FROM rrule.monthly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) m WHERE m >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
         EXIT WHEN current > maxdate;
+        -- Cross-period dedup: SKIP=FORWARD can push dates into the next period
+        CONTINUE WHEN prev_period_max_ts IS NOT NULL AND current = prev_period_max_ts;
         occurrence_count := occurrence_count + 1;
         EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
         IF current >= mindate THEN
@@ -300,6 +303,7 @@ BEGIN
           emitted_count := emitted_count + 1;
           EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
         END IF;
+        prev_period_max_ts := current;
       END LOOP;
       current_base := current_base + make_interval(months => rule.interval);
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
@@ -311,13 +315,13 @@ BEGIN
         LOOP
           EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
           IF rule.skip = 'OMIT' THEN
-            period_count := period_count + 1;
+            -- Do NOT increment period_count here — the outer loop handles it.
+            -- Skipped months should not count against the iteration budget.
             current_base := current_base + make_interval(months => rule.interval);
             current_base := date_trunc('month', current_base)
               + make_interval(days => LEAST(dtstart_day,
                   date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
               + (basedate::time)::interval;
-            EXIT WHEN period_count >= period_limit;
             EXIT WHEN current_base > maxdate;
             EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
           ELSIF rule.skip = 'FORWARD' THEN
@@ -348,7 +352,7 @@ BEGIN
     ELSIF rule.freq = 'YEARLY' THEN
       period_start := date_trunc('year', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
-      FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) y WHERE y >= min_in_period LOOP
+      FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) y WHERE y >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
         EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
@@ -372,7 +376,8 @@ BEGIN
         LOOP
           EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
           IF rule.skip = 'OMIT' THEN
-            period_count := period_count + 1;
+            -- Do NOT increment period_count here — the outer loop handles it.
+            -- Skipped years should not count against the iteration budget.
             current_base := current_base + make_interval(years => rule.interval);
             current_base := date_trunc('year', current_base)
               + make_interval(months => date_part('month', basedate)::INT - 1)
@@ -381,7 +386,6 @@ BEGIN
                     + make_interval(months => date_part('month', basedate)::INT)
                     - INTERVAL '1 day'))::INT) - 1)
               + (basedate::time)::interval;
-            EXIT WHEN period_count >= period_limit;
             EXIT WHEN current_base > maxdate;
             EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
           ELSIF rule.skip = 'FORWARD' THEN
@@ -536,7 +540,7 @@ BEGIN
             FOR current IN
                 SELECT d::TIMESTAMP
                 FROM rrule.daily_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) d
@@ -590,7 +594,7 @@ BEGIN
             FOR current IN
                 SELECT m::TIMESTAMP
                 FROM rrule.monthly_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) m
@@ -598,6 +602,8 @@ BEGIN
             LOOP
                 EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
+                -- Cross-period dedup: SKIP=FORWARD can push dates into the next period
+                CONTINUE WHEN prev_period_max_ts IS NOT NULL AND current = prev_period_max_ts;
                 occurrence_count := occurrence_count + 1;
                 EXIT WHEN rule.count IS NOT NULL AND occurrence_count > rule.count;
                 IF current >= mindate THEN
@@ -605,6 +611,7 @@ BEGIN
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                 END IF;
+                prev_period_max_ts := current;
             END LOOP;
             current_base := current_base + make_interval(months => rule.interval);
             IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
@@ -616,13 +623,13 @@ BEGIN
               LOOP
                 EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
                 IF rule.skip = 'OMIT' THEN
-                  period_count := period_count + 1;
+                  -- Do NOT increment period_count here — the outer loop handles it.
+                  -- Skipped months should not count against the iteration budget.
                   current_base := current_base + make_interval(months => rule.interval);
                   current_base := date_trunc('month', current_base)
                     + make_interval(days => LEAST(dtstart_day,
                         date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
                     + (basedate::time)::interval;
-                  EXIT WHEN period_count >= period_limit;
                   EXIT WHEN current_base > maxdate;
                   EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
                 ELSIF rule.skip = 'FORWARD' THEN
@@ -656,7 +663,7 @@ BEGIN
             FOR current IN
                 SELECT y::TIMESTAMP
                 FROM rrule.yearly_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) y
@@ -685,7 +692,8 @@ BEGIN
               LOOP
                 EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
                 IF rule.skip = 'OMIT' THEN
-                  period_count := period_count + 1;
+                  -- Do NOT increment period_count here — the outer loop handles it.
+                  -- Skipped years should not count against the iteration budget.
                   current_base := current_base + make_interval(years => rule.interval);
                   current_base := date_trunc('year', current_base)
                     + make_interval(months => date_part('month', basedate)::INT - 1)
@@ -694,7 +702,6 @@ BEGIN
                           + make_interval(months => date_part('month', basedate)::INT)
                           - INTERVAL '1 day'))::INT) - 1)
                     + (basedate::time)::interval;
-                  EXIT WHEN period_count >= period_limit;
                   EXIT WHEN current_base > maxdate;
                   EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
                 ELSIF rule.skip = 'FORWARD' THEN

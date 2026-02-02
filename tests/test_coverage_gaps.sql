@@ -6558,4 +6558,47 @@ BEGIN
     END IF;
 END $$;
 
+
+-- ============================================================================
+-- SECTION: Issue 14 — TIMESTAMP after() with sparse rules
+-- after() previously used max_count=2, causing insufficient period_limit
+-- for sparse rules where the target date is far from dtstart.
+-- ============================================================================
+\echo ''
+\echo '--- Issue 14: TIMESTAMP after() sparse rule coverage ---'
+
+-- Test: after() with FREQ=DAILY;COUNT=365 and after_date 100 days from dtstart.
+-- With the old max_count=2, period_limit=80 daily periods, the generator couldn't
+-- reach day 100. With max_count=1000, period_limit=40000, this works.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 14: after() sparse rules',
+    'after() finds daily occurrence >80 periods from dtstart',
+    assert_equals(
+        'after() daily far from dtstart',
+        '2020-04-11 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=DAILY;COUNT=365',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2020-04-10 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test: after() far from dtstart with FREQ=WEEKLY
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 14: after() sparse rules',
+    'after() finds weekly occurrence 2 years from dtstart',
+    assert_equals(
+        'after() weekly 2yr',
+        '2022-01-05 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=WEEKLY;BYDAY=WE',
+            '2020-01-01 00:00:00'::TIMESTAMP,
+            '2022-01-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
 ROLLBACK;

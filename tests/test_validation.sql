@@ -1602,4 +1602,95 @@ BEGIN
     END IF;
 END $$;
 
+
+-- ============================================================================
+-- Issue 17: RSCALE case-insensitive parsing + parse-failure detection
+-- ============================================================================
+\echo ''
+\echo '--- Issue 17: RSCALE regex and parse-failure ---'
+
+-- Test: lowercase RSCALE=gregorian should be accepted (case-insensitive)
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT
+    'RSCALE parsing',
+    'Lowercase RSCALE=gregorian accepted',
+    assert_equals(
+        'lowercase RSCALE',
+        'true',
+        (SELECT (COUNT(*) > 0)::TEXT
+         FROM rrule."all"(
+            'FREQ=MONTHLY;RSCALE=gregorian;SKIP=BACKWARD;BYMONTHDAY=31;COUNT=3',
+            '2025-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- Test: mixed case RSCALE=Gregorian should be accepted
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT
+    'RSCALE parsing',
+    'Mixed case RSCALE=Gregorian accepted',
+    assert_equals(
+        'mixed case RSCALE',
+        'true',
+        (SELECT (COUNT(*) > 0)::TEXT
+         FROM rrule."all"(
+            'FREQ=MONTHLY;RSCALE=Gregorian;SKIP=BACKWARD;BYMONTHDAY=31;COUNT=3',
+            '2025-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- Test: RSCALE with non-alphabetic value raises parse-failure exception
+DO $$
+DECLARE
+    result_count INT;
+    err_msg TEXT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."all"(
+            'FREQ=MONTHLY;RSCALE=123;COUNT=3',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        );
+        INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
+            'RSCALE parsing',
+            'RSCALE=123 raises parse-failure exception',
+            'FAIL: expected exception but got ' || result_count || ' results'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
+                'RSCALE parsing',
+                'RSCALE=123 raises parse-failure exception',
+                CASE WHEN err_msg LIKE '%RSCALE%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
+            );
+    END;
+END $$;
+
+-- Test: RSCALE=hebrew (lowercase, unsupported) still raises proper exception
+DO $$
+DECLARE
+    result_count INT;
+    err_msg TEXT;
+BEGIN
+    BEGIN
+        SELECT COUNT(*) INTO result_count FROM rrule."all"(
+            'FREQ=MONTHLY;RSCALE=hebrew;SKIP=BACKWARD;BYMONTHDAY=31;COUNT=3',
+            '2025-01-31 00:00:00'::TIMESTAMP
+        );
+        INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
+            'RSCALE parsing',
+            'RSCALE=hebrew raises unsupported exception',
+            'FAIL: expected exception but got ' || result_count || ' results'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            GET STACKED DIAGNOSTICS err_msg = MESSAGE_TEXT;
+            INSERT INTO validation_test_results (test_category, test_name, status) VALUES (
+                'RSCALE parsing',
+                'RSCALE=hebrew raises unsupported exception',
+                CASE WHEN err_msg LIKE '%Unsupported RSCALE%' THEN 'PASS' ELSE 'FAIL: wrong error: ' || LEFT(err_msg, 100) END
+            );
+    END;
+END $$;
+
 ROLLBACK;
