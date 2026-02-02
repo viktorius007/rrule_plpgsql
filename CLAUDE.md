@@ -123,6 +123,8 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 12. **Run manual spot-checks from plans:** When a plan specifies manual verification queries, run them as a final step even if the test suite passes. Tests validate expected values set during development — spot-checks validate against the original specification.
 
+13. **Parallel Agent Git Isolation:** When launching multiple agents that edit files in parallel, each agent MUST use `git worktree add /tmp/{branch-name} -b {branch-name}` to get its own isolated working directory. Agents sharing a single checkout will clobber each other's uncommitted changes, switch branches out from under each other, and commit to wrong branches. After agents complete, merge worktree branches sequentially onto main from the primary checkout. Clean up worktrees with `git worktree remove`.
+
 ## RRULE Parameters Supported
 
 FREQ, COUNT, UNTIL, INTERVAL, BYDAY (with ordinals like 2MO/-1FR), BYMONTHDAY, BYMONTH, BYYEARDAY, BYWEEKNO, BYSETPOS, WKST, TZID, SKIP (OMIT/BACKWARD/FORWARD), RSCALE (GREGORIAN only)
