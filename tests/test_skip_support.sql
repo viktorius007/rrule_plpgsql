@@ -804,4 +804,98 @@ SELECT
          ) AS occurrence)
     );
 
+
+-- ============================================================================
+-- Issue 29: SKIP=FORWARD drift loop must increment period_count
+-- ============================================================================
+\echo ''
+\echo '--- Issue 29: SKIP=FORWARD period_count enforcement ---'
+
+-- MONTHLY SKIP=FORWARD with INTERVAL=1: every month on the 31st, forwarded months
+-- should still count against period_limit. COUNT=6 starting Jan 31 2025.
+-- Jan 31 -> Jan 31, Feb 31 -> Mar 1 (FORWARD), Mar 31 -> Mar 31, Apr 31 -> May 1,
+-- May 31 -> May 31, Jun 31 -> Jul 1
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 29: MONTHLY;BYMONTHDAY=31;SKIP=FORWARD;COUNT=6 period_count',
+    assert_occurrences_equal(
+        'FORWARD MONTHLY period_count',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-01 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;BYMONTHDAY=31;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=6',
+            '2025-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- MONTHLY SKIP=FORWARD with INTERVAL=2: every 2 months on the 31st.
+-- Jan 31 -> Jan 31, Mar 31 -> Mar 31, May 31 -> May 31, Jul 31 -> Jul 31,
+-- Sep 31 -> Oct 1 (FORWARD), Nov 31 -> Dec 1 (FORWARD)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 29: MONTHLY;INTERVAL=2;BYMONTHDAY=31;SKIP=FORWARD;COUNT=6',
+    assert_occurrences_equal(
+        'FORWARD MONTHLY INTERVAL=2 period_count',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP,
+            '2025-07-31 00:00:00'::TIMESTAMP,
+            '2025-10-01 00:00:00'::TIMESTAMP,
+            '2025-12-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=31;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=6',
+            '2025-01-31 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- YEARLY SKIP=FORWARD: Feb 29 yearly, non-leap years forward to Mar 1.
+-- 2024-02-29 (leap), 2025-03-01 (FORWARD), 2026-03-01 (FORWARD), 2027-03-01 (FORWARD), 2028-02-29 (leap)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 29: YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=FORWARD;COUNT=5 period_count',
+    assert_occurrences_equal(
+        'FORWARD YEARLY period_count',
+        ARRAY[
+            '2024-02-29 00:00:00'::TIMESTAMP,
+            '2025-03-01 00:00:00'::TIMESTAMP,
+            '2026-03-01 00:00:00'::TIMESTAMP,
+            '2027-03-01 00:00:00'::TIMESTAMP,
+            '2028-02-29 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=5',
+            '2024-02-29 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- YEARLY SKIP=FORWARD with INTERVAL=2: Feb 29 every 2 years.
+-- 2024-02-29 (leap), 2026-03-01 (FORWARD), 2028-02-29 (leap), 2030-03-01 (FORWARD)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'Issue 29: YEARLY;INTERVAL=2;BYMONTHDAY=29;BYMONTH=2;SKIP=FORWARD;COUNT=4',
+    assert_occurrences_equal(
+        'FORWARD YEARLY INTERVAL=2 period_count',
+        ARRAY[
+            '2024-02-29 00:00:00'::TIMESTAMP,
+            '2026-03-01 00:00:00'::TIMESTAMP,
+            '2028-02-29 00:00:00'::TIMESTAMP,
+            '2030-03-01 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;BYMONTHDAY=29;BYMONTH=2;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=4',
+            '2024-02-29 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
 ROLLBACK;
