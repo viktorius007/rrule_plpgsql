@@ -92,34 +92,6 @@ The `buildDriverSafeSQL()` function in `index.js` uses `trimmed.startsWith('\\')
 
 ---
 
-## Issue 11: npm package strips RESET commands but retains SET commands, risking session state leakage
-
-**Category:** Upgrade & Install
-**Severity Assessment:** Medium
-**Reports:** 3
-
-`buildDriverSafeSQL()` in `index.js` strips `RESET` commands that follow COMMIT, but `SET timezone` and `SET search_path` commands inside the transaction are retained. In connection-pooled environments, these SET commands persist in the session after installation completes, potentially affecting subsequent queries.
-
-**Location:** `index.js:48-50`.
-
-**Fix:** 1 edit in `index.js` + test
-
----
-
-## Issue 12: SKIP drift prevention may exhaust period_limit prematurely with large INTERVAL
-
-**Category:** Edge Cases & Boundary Conditions
-**Severity Assessment:** Medium
-**Reports:** 2
-
-In MONTHLY/YEARLY generators, the SKIP=OMIT loop increments `period_count` multiple times per interval advancement when months are skipped. For rules like `FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=31;SKIP=OMIT`, each skipped month consumes a period count, potentially exhausting `period_limit` before the requested COUNT is reached.
-
-**Location:** `src/rrule.sql:2058-2069, 2130-2143` (and equivalents in all 4 generators).
-
-**Fix:** 4 edits in `src/rrule.sql`, `src/rrule_subday.sql` + test in `tests/test_skip_support.sql` with INTERVAL=2
-
----
-
 ## Issue 13: BYDAY uses array_remove for empty strings but other BYxxx parameters do not
 
 **Category:** Input Validation
@@ -134,78 +106,6 @@ Only BYDAY parsing uses `array_remove(result, '')` to clean up empty strings fro
 
 ---
 
-## Issue 14: TIMESTAMP after() passes max_count=2 causing insufficient period_limit for sparse rules
-
-**Category:** Functional Correctness
-**Severity Assessment:** High
-**Severity Range:** Medium-High from 4 reports
-**Reports:** 4
-
-The TIMESTAMP `after()` function passes `max_count=2` to the internal generator. `calculate_safe_iteration_limit('DAILY', NULL, 2)` returns only 80, meaning the generator scans at most 80 daily periods. For sparse rules like `FREQ=DAILY;BYMONTHDAY=31;BYMONTH=1` (matches ~1/365 days), or when after_date is more than ~80 days from dtstart, the generator exhausts period_limit and returns NULL despite valid occurrences existing. Multi-occurrence-per-period rules (e.g., `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR`) also suffer: the generator may truncate candidates within a period because max_count=2 limits the output. The TIMESTAMPTZ `after()` correctly uses `max_count=1000` and does not have this issue.
-
-**Location:** `src/rrule.sql:2447` (TIMESTAMP `after()` function).
-
-**Fix:** 1 edit in `src/rrule.sql` + append to `tests/test_coverage_gaps.sql`
-
----
-
-## Issue 15: Subday generators use weaker max_results guard, missing bymonthday/bymonth checks
-
-**Category:** Cross-Cutting Concerns
-**Severity Assessment:** Medium
-**Severity Range:** Low-Medium from 14 reports
-**Reports:** 14
-
-The subday generators in `rrule_subday.sql` pass `max_results` to `daily_set`, `monthly_set`, and `yearly_set` when only `rule.bysetpos IS NULL`, omitting the `AND rule.bymonthday IS NULL AND rule.bymonth IS NULL` guards present in the main `rrule.sql` generators. This violates CLAUDE.md rules #9 (quadruple generator maintenance) and #11 (never limit before post-filters). For rules combining sub-day time expansion (BYHOUR/BYMINUTE/BYSECOND) with BYMONTH or BYMONTHDAY, this truncates candidates per-day, producing wrong occurrence selection. Example: `FREQ=DAILY;BYMONTH=1;BYHOUR=9,10,11;COUNT=6` skips 11AM on Jan 1 and includes 9AM on Jan 3 instead of filling Jan 1 and Jan 2 completely.
-
-**Location:** `src/rrule_subday.sql:255` (DAILY), `293` (MONTHLY), `351` (YEARLY) in TIMESTAMP generator; `539` (DAILY), `593` (MONTHLY), `659` (YEARLY) in TZ generator.
-
-**Fix:** 6 edits in `src/rrule_subday.sql` + append to `tests/test_subday_correctness.sql`
-
----
-
-## Issue 16: Sub-day set functions use naive BYMONTHDAY check that rejects negative values
-
-**Category:** Functional Correctness
-**Severity Assessment:** Medium
-**Reports:** 2
-
-The sub-day frequency set functions (`hourly_set`, `minutely_set`, `secondly_set`) use `date_part('day', after_ts) = ANY(rule.bymonthday)` for the BYMONTHDAY filter. This only matches positive day-of-month values. Negative BYMONTHDAY values (e.g., `BYMONTHDAY=-1` for last day of month) never match because `date_part('day', ...)` returns 1-31 while the array contains negative integers. The correct approach (used by `daily_set` and other frequency handlers) is to call `rrule.test_bymonthday_rule()` which resolves negative indices relative to month length.
-
-**Location:** `src/rrule_subday.sql:84, 128, 171` (hourly_set, minutely_set, secondly_set).
-
-**Fix:** 3 edits in `src/rrule_subday.sql` + append to `tests/test_subday_correctness.sql`
-
----
-
-## Issue 17: RSCALE regex only matches uppercase, no parse-failure detection
-
-**Category:** Input Validation
-**Severity Assessment:** Medium
-**Reports:** 2
-
-The RSCALE regex `RSCALE=([A-Z]+)` only matches uppercase values. If a user passes `RSCALE=hebrew` (lowercase), the regex returns NULL, and there is no parse-failure detection (unlike all other BYxxx parameters which have `IF result.X IS NULL AND repeatrule ~ 'X=' THEN RAISE EXCEPTION` guards). Lowercase RSCALE is silently ignored rather than rejected with a descriptive error. `RSCALE=HEBREW` is properly rejected (matched by regex, fails validation), but `RSCALE=hebrew` bypasses validation entirely.
-
-**Location:** `src/rrule.sql:142` (RSCALE parsing) and `src/rrule.sql:222-256` (parse-failure detection block, RSCALE absent).
-
-**Fix:** 2 edits in `src/rrule.sql` (case-insensitive regex + parse-failure detection) + append to `tests/test_validation.sql`
-
----
-
-## Issue 18: SKIP=FORWARD with BYMONTHDAY produces cross-period duplicate dates
-
-**Category:** Cross-Cutting Concerns
-**Severity Assessment:** Medium
-**Reports:** 3
-
-When `rrule_month_bymonthday_set` forwards an invalid date to the first of the next month (e.g., Feb 31 -> Mar 1 with SKIP=FORWARD), and the next period also generates that same date via a different BYMONTHDAY value (e.g., BYMONTHDAY=1), the date is emitted twice. Example: `FREQ=MONTHLY;BYMONTHDAY=1,31;SKIP=FORWARD` — February's set emits Feb 1 and Mar 1 (forwarded from Feb 31); March's set emits Mar 1 and Mar 31. Mar 1 appears twice, inflating occurrence_count and potentially stopping COUNT-limited rules one result early. The `seen_dates` deduplication in `rrule_month_bymonthday_set` only operates within a single month's call, not across periods. Same issue exists in `rrule_yearly_bymonth_set` when FORWARD pushes dates across BYMONTH boundaries.
-
-**Location:** `src/rrule.sql:rrule_month_bymonthday_set` (lines 770-782) and generator MONTHLY branches in all 4 generators.
-
-**Fix:** 4 edits in `src/rrule.sql`, `src/rrule_subday.sql` (add cross-period dedup in MONTHLY/YEARLY branches of all generators) + append to `tests/test_skip_support.sql`
-
----
-
 ## Issue 19: overlaps() false-positive with duration-expanded adjusted_mindate for single events
 
 **Category:** Functional Correctness
@@ -217,48 +117,6 @@ Both `overlaps()` functions (TIMESTAMP and TIMESTAMPTZ) apply the duration-expan
 **Location:** `src/rrule.sql:2655` and `src/rrule.sql:3501`.
 
 **Fix:** 2 edits in `src/rrule.sql` + append to `tests/test_coverage_gaps.sql`
-
----
-
-## Issue 20: installManual.sh does not replace hardcoded rrule. schema-qualified references
-
-**Category:** Upgrade & Install
-**Severity Assessment:** High
-**Reports:** 2
-
-`installManual.sh` sed replacements only handle `SET search_path` and `nspname = 'rrule'` but miss all 140+ hardcoded `rrule.` schema-qualified references in function bodies (e.g., `rrule.parse_rrule_parts`, `rrule.weekday_to_number`, `rrule."all"`). Functions created in `rrule_update` will call the OLD `rrule` schema at runtime, producing a broken hybrid installation. After dropping the old schema per the migration guide, all functions fail.
-
-**Location:** `src/installManual.sh:49-52`.
-
-**Fix:** 1 edit in `src/installManual.sh` + verification test or manual verification script
-
----
-
-## Issue 21: npm SQL.core export includes SET search_path without processing
-
-**Category:** Integration & Real-World Usage
-**Severity Assessment:** Medium
-**Reports:** 3
-
-The `SQL.core` export in `index.js` reads `src/rrule.sql` raw via `fs.readFileSync` without passing through `buildDriverSafeSQL`. This means `SET search_path = rrule, public;` (line 43 of rrule.sql) is included verbatim. When users execute `SQL.core` via any PostgreSQL driver, the session's `search_path` is permanently changed to `rrule, public`, affecting all subsequent queries. In connection-pooled environments, this silently corrupts other requests sharing the same connection. This also breaks the documented custom-schema usage pattern in INSTALLATION.md.
-
-**Location:** `index.js:76`, `src/rrule.sql:43`.
-
-**Fix:** 1 edit in `index.js` (apply stripping or strip SET search_path specifically) + update documentation
-
----
-
-## Issue 22: npm buildDriverSafeSQL strips BEGIN/COMMIT making install non-atomic
-
-**Category:** Upgrade & Install
-**Severity Assessment:** Medium
-**Reports:** 2
-
-`buildDriverSafeSQL()` strips `BEGIN;` and `COMMIT;`, making the entire installation run in autocommit mode. The DO block executes `DROP SCHEMA IF EXISTS rrule CASCADE` which commits immediately. If a later CREATE statement fails (syntax error, connection drop), the schema is already dropped with no transaction to roll back, leaving the database in a broken state with no usable rrule schema.
-
-**Location:** `index.js:45-46`.
-
-**Fix:** 1 edit in `index.js` (retain BEGIN/COMMIT or document that callers must wrap in a transaction) + update documentation
 
 ---
 
@@ -329,20 +187,6 @@ The SKIP regex `SKIP=(OMIT|BACKWARD|FORWARD)` is case-sensitive. `SKIP=backward`
 **Location:** `src/rrule.sql:145`.
 
 **Fix:** 1 edit in `src/rrule.sql` + append to `tests/test_validation.sql`
-
----
-
-## Issue 28: TIMESTAMPTZ overlaps() inefficient delegation through between()
-
-**Category:** Performance
-**Severity Assessment:** Low
-**Reports:** 3
-
-The TIMESTAMPTZ `overlaps()` function delegates to `rrule."between"()` which materializes results before LIMIT 1 takes effect. The TIMESTAMP `overlaps()` calls `rrule_event_instances_range()` directly with LIMIT 1, streaming results efficiently. For rules with many occurrences in the adjusted range, the TIMESTAMPTZ variant is significantly slower.
-
-**Location:** `src/rrule.sql:3504-3507` (TIMESTAMPTZ overlaps) vs `src/rrule.sql:2662` (TIMESTAMP overlaps).
-
-**Fix:** 1 edit in `src/rrule.sql` (use `rrule_event_instances_range_tz` directly with LIMIT 1) + append to `tests/test_tz_api.sql`
 
 ---
 
