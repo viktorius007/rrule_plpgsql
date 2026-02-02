@@ -14,24 +14,29 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Strip SET/RESET session state commands from SQL content.
+ * Strip SET/RESET timezone commands from SQL content.
  * Used for both inlined files and the core export.
  *
- * Removes SET timezone, SET search_path, and RESET commands that would
- * leak into connection pool sessions after installation completes.
+ * Removes SET timezone and RESET timezone commands that would leak into
+ * connection pool sessions after installation completes.
+ *
+ * Preserves SET search_path and RESET search_path because these are
+ * required for CREATE FUNCTION statements to target the rrule schema.
+ * Without search_path, functions are created in the caller's default
+ * schema (typically public), breaking all schema-qualified internal calls.
  *
  * @param {string} sql - Raw SQL content
- * @returns {string} SQL with session state commands removed
+ * @returns {string} SQL with timezone session state commands removed
  */
 function stripSessionState(sql) {
   return sql
     .split('\n')
     .map(line => {
       const trimmed = line.trim();
-      if (/^SET\s+(timezone|search_path)\s*/i.test(trimmed)) {
+      if (/^SET\s+timezone\s*/i.test(trimmed)) {
         return '';
       }
-      if (/^RESET\s+/i.test(trimmed)) {
+      if (/^RESET\s+timezone\s*/i.test(trimmed)) {
         return '';
       }
       return line;
@@ -59,7 +64,7 @@ function buildDriverSafeSQL(installFile, baseDir) {
     .split('\n')
     .map(line => {
       const trimmed = line.trim();
-      // Replace \ir with inlined file contents (also strip SET/RESET from inlined files)
+      // Replace \ir with inlined file contents (also strip SET/RESET timezone from inlined files)
       if (trimmed.startsWith('\\ir ')) {
         const includeFile = trimmed.substring(4).trim();
         const inlined = fs.readFileSync(path.join(baseDir, includeFile), 'utf8');
@@ -69,14 +74,16 @@ function buildDriverSafeSQL(installFile, baseDir) {
       if (trimmed.startsWith('\\')) {
         return '';
       }
-      // Strip SET/RESET session state commands (timezone, search_path) that
-      // leak into connection pool sessions after installation completes.
-      // These are only needed for psql CLI context; drivers should not
-      // modify session state as a side effect of installing functions.
-      if (/^SET\s+(timezone|search_path)\s*/i.test(trimmed)) {
+      // Strip SET/RESET timezone commands that leak into connection pool
+      // sessions after installation completes. These are only needed for
+      // psql CLI context; drivers should not modify session state as a
+      // side effect of installing functions.
+      // Preserves SET/RESET search_path which is required for CREATE
+      // FUNCTION statements to target the rrule schema.
+      if (/^SET\s+timezone\s*/i.test(trimmed)) {
         return '';
       }
-      if (/^RESET\s+/i.test(trimmed)) {
+      if (/^RESET\s+timezone\s*/i.test(trimmed)) {
         return '';
       }
       return line;
