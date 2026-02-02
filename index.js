@@ -14,19 +14,19 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Strip SET/RESET timezone commands from SQL content.
+ * Strip SET/RESET session state commands from SQL content.
  * Used for both inlined files and the core export.
  *
- * Removes SET timezone and RESET timezone commands that would leak into
- * connection pool sessions after installation completes.
+ * Removes SET/RESET timezone and SET/RESET search_path commands that
+ * would leak into connection pool sessions after installation completes.
  *
- * Preserves SET search_path and RESET search_path because these are
- * required for CREATE FUNCTION statements to target the rrule schema.
- * Without search_path, functions are created in the caller's default
- * schema (typically public), breaking all schema-qualified internal calls.
+ * For install exports, search_path is required for CREATE FUNCTION
+ * statements to target the rrule schema -- but the install scripts
+ * already include RESET search_path at the end.  The core export has
+ * no such reset, so stripping SET search_path here prevents the leak.
  *
  * @param {string} sql - Raw SQL content
- * @returns {string} SQL with timezone session state commands removed
+ * @returns {string} SQL with session state commands removed
  */
 function stripSessionState(sql) {
   return sql
@@ -37,6 +37,12 @@ function stripSessionState(sql) {
         return '';
       }
       if (/^RESET\s+timezone\s*/i.test(trimmed)) {
+        return '';
+      }
+      if (/^SET\s+search_path\s*/i.test(trimmed)) {
+        return '';
+      }
+      if (/^RESET\s+search_path\s*/i.test(trimmed)) {
         return '';
       }
       return line;
@@ -78,8 +84,8 @@ function buildDriverSafeSQL(installFile, baseDir) {
       // sessions after installation completes. These are only needed for
       // psql CLI context; drivers should not modify session state as a
       // side effect of installing functions.
-      // Preserves SET/RESET search_path which is required for CREATE
-      // FUNCTION statements to target the rrule schema.
+      // Note: search_path is NOT stripped here because install scripts
+      // need it for CREATE FUNCTION and already include RESET search_path.
       if (/^SET\s+timezone\s*/i.test(trimmed)) {
         return '';
       }
