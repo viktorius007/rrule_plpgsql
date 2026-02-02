@@ -1474,6 +1474,115 @@ VALUES ('INTERVAL Upper Bound', 'INTERVAL=999999 (should be rejected)',
 );
 
 ------------------------------------------------------------------------------------------------------
+-- Test 12: NULL date range parameters in between()/after()/before()
+------------------------------------------------------------------------------------------------------
+
+-- Helper to test NULL parameter rejection in API functions
+CREATE OR REPLACE FUNCTION assert_null_param_rejected(
+    test_name TEXT,
+    call_sql TEXT,
+    expected_error_pattern TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    dummy TIMESTAMP;
+BEGIN
+    BEGIN
+        EXECUTE call_sql INTO dummy;
+        RAISE EXCEPTION 'FAIL [%]: NULL parameter was accepted when it should have been rejected', test_name;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE expected_error_pattern THEN
+                RETURN 'PASS [' || test_name || ']';
+            ELSE
+                RAISE EXCEPTION 'FAIL [%]: Wrong error message. Expected pattern: %, Got: %',
+                    test_name, expected_error_pattern, SQLERRM;
+            END IF;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Test 12.1: between() TIMESTAMP - NULL start_date
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'between() TIMESTAMP - NULL start_date',
+    assert_null_param_rejected(
+        'between() NULL start_date',
+        $$SELECT * FROM rrule."between"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP, '2025-01-10 10:00:00'::TIMESTAMP) LIMIT 1$$,
+        '%start_date is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.2: between() TIMESTAMP - NULL end_date
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'between() TIMESTAMP - NULL end_date',
+    assert_null_param_rejected(
+        'between() NULL end_date',
+        $$SELECT * FROM rrule."between"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP, '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP) LIMIT 1$$,
+        '%end_date is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.3: after() TIMESTAMP - NULL after_date
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'after() TIMESTAMP - NULL after_date',
+    assert_null_param_rejected(
+        'after() NULL after_date',
+        $$SELECT rrule."after"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP)$$,
+        '%after_date is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.4: before() TIMESTAMP - NULL before_date
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'before() TIMESTAMP - NULL before_date',
+    assert_null_param_rejected(
+        'before() NULL before_date',
+        $$SELECT rrule."before"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP)$$,
+        '%before_date is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.5: between() TIMESTAMPTZ - NULL range_start
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'between() TIMESTAMPTZ - NULL range_start',
+    assert_null_param_rejected(
+        'between() TIMESTAMPTZ NULL range_start',
+        $$SELECT * FROM rrule."between"('FREQ=DAILY;COUNT=3'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, NULL::TIMESTAMPTZ, '2025-01-10 10:00:00+00'::TIMESTAMPTZ) LIMIT 1$$,
+        '%range_start is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.6: between() TIMESTAMPTZ - NULL range_end
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'between() TIMESTAMPTZ - NULL range_end',
+    assert_null_param_rejected(
+        'between() TIMESTAMPTZ NULL range_end',
+        $$SELECT * FROM rrule."between"('FREQ=DAILY;COUNT=3'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, NULL::TIMESTAMPTZ) LIMIT 1$$,
+        '%range_end is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.7: after() TIMESTAMPTZ - NULL after_date
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'after() TIMESTAMPTZ - NULL after_date',
+    assert_null_param_rejected(
+        'after() TIMESTAMPTZ NULL after_date',
+        $$SELECT * FROM rrule."after"('FREQ=DAILY;COUNT=3'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, NULL::TIMESTAMPTZ, 1) LIMIT 1$$,
+        '%after_date is required and cannot be NULL%'
+    )
+);
+
+-- Test 12.8: before() TIMESTAMPTZ - NULL before_date
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('NULL Date Params', 'before() TIMESTAMPTZ - NULL before_date',
+    assert_null_param_rejected(
+        'before() TIMESTAMPTZ NULL before_date',
+        $$SELECT * FROM rrule."before"('FREQ=DAILY;COUNT=3'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, NULL::TIMESTAMPTZ, 1) LIMIT 1$$,
+        '%before_date is required and cannot be NULL%'
+    )
+);
+
+------------------------------------------------------------------------------------------------------
 -- Check if all tests passed
 ------------------------------------------------------------------------------------------------------
 

@@ -45,26 +45,36 @@ SET search_path = rrule, public;
 -- Create a composite type for the parts of the RRULE.
 -- Note: This file is designed to be loaded via install.sql which drops/recreates
 -- the entire schema. For updates, reinstall using install.sql.
-CREATE TYPE rrule_parts AS (
-  base TIMESTAMP WITH TIME ZONE,
-  until TIMESTAMP WITH TIME ZONE,
-  freq TEXT,
-  count INT,
-  interval INT,
-  bysecond INT[],
-  byminute INT[],
-  byhour INT[],
-  bymonthday INT[],
-  byyearday INT[],
-  byweekno INT[],
-  byday TEXT[],
-  bymonth INT[],
-  bysetpos INT[],
-  wkst TEXT,
-  tzid TEXT,
-  rscale TEXT,  -- RFC 7529: Calendar system ('GREGORIAN', etc.)
-  skip TEXT     -- RFC 7529: 'OMIT', 'BACKWARD', 'FORWARD' (default: 'OMIT')
-);
+-- Idempotent: only create if the type does not already exist.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_type t
+        JOIN pg_namespace n ON t.typnamespace = n.oid
+        WHERE t.typname = 'rrule_parts' AND n.nspname = 'rrule'
+    ) THEN
+        CREATE TYPE rrule_parts AS (
+          base TIMESTAMP WITH TIME ZONE,
+          until TIMESTAMP WITH TIME ZONE,
+          freq TEXT,
+          count INT,
+          interval INT,
+          bysecond INT[],
+          byminute INT[],
+          byhour INT[],
+          bymonthday INT[],
+          byyearday INT[],
+          byweekno INT[],
+          byday TEXT[],
+          bymonth INT[],
+          bysetpos INT[],
+          wkst TEXT,
+          tzid TEXT,
+          rscale TEXT,  -- RFC 7529: Calendar system ('GREGORIAN', etc.)
+          skip TEXT     -- RFC 7529: 'OMIT', 'BACKWARD', 'FORWARD' (default: 'OMIT')
+        );
+    END IF;
+END $$;
 
 
 -- Create a function to parse the RRULE into its composite type
@@ -2342,6 +2352,14 @@ BEGIN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
+    IF start_date IS NULL THEN
+        RAISE EXCEPTION 'start_date is required and cannot be NULL';
+    END IF;
+
+    IF end_date IS NULL THEN
+        RAISE EXCEPTION 'end_date is required and cannot be NULL';
+    END IF;
+
     max_count := 1000;
 
     -- Extract TZID from rrule string
@@ -2401,6 +2419,10 @@ BEGIN
 
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
+    IF after_date IS NULL THEN
+        RAISE EXCEPTION 'after_date is required and cannot be NULL';
     END IF;
 
     -- Extract TZID from rrule string
@@ -2464,6 +2486,10 @@ BEGIN
 
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
+    IF before_date IS NULL THEN
+        RAISE EXCEPTION 'before_date is required and cannot be NULL';
     END IF;
 
     -- Extract TZID from rrule string
@@ -3071,6 +3097,14 @@ BEGIN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
+    IF range_start IS NULL THEN
+        RAISE EXCEPTION 'range_start is required and cannot be NULL';
+    END IF;
+
+    IF range_end IS NULL THEN
+        RAISE EXCEPTION 'range_end is required and cannot be NULL';
+    END IF;
+
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
@@ -3143,6 +3177,10 @@ BEGIN
 
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
+    IF after_date IS NULL THEN
+        RAISE EXCEPTION 'after_date is required and cannot be NULL';
     END IF;
 
     -- Determine timezone
@@ -3225,6 +3263,10 @@ BEGIN
 
     IF dtstart IS NULL THEN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
+    END IF;
+
+    IF before_date IS NULL THEN
+        RAISE EXCEPTION 'before_date is required and cannot be NULL';
     END IF;
 
     -- Determine timezone
