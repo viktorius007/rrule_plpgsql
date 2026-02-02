@@ -452,6 +452,146 @@ VALUES (
 );
 
 ------------------------------------------------------------------------------------------------------
+-- Issue 2: UNTIL before dtstart early exit optimization
+------------------------------------------------------------------------------------------------------
+
+-- Test 6.1: UNTIL before dtstart returns empty result set (TIMESTAMP API, DAILY)
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'UNTIL Early Exit',
+    'DAILY UNTIL before dtstart returns empty',
+    assert_occurrences_equal(
+        'DAILY UNTIL < dtstart',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=DAILY;UNTIL=20240101T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 6.2: UNTIL before dtstart returns empty (WEEKLY)
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'UNTIL Early Exit',
+    'WEEKLY UNTIL before dtstart returns empty',
+    assert_occurrences_equal(
+        'WEEKLY UNTIL < dtstart',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=WEEKLY;UNTIL=20240601T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 6.3: UNTIL before dtstart returns empty (MONTHLY)
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'UNTIL Early Exit',
+    'MONTHLY UNTIL before dtstart returns empty',
+    assert_occurrences_equal(
+        'MONTHLY UNTIL < dtstart',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;UNTIL=20240601T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 6.4: UNTIL before dtstart returns empty (YEARLY)
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'UNTIL Early Exit',
+    'YEARLY UNTIL before dtstart returns empty',
+    assert_occurrences_equal(
+        'YEARLY UNTIL < dtstart',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;UNTIL=20200101T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 6.5: UNTIL before dtstart returns empty (TIMESTAMPTZ API)
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'UNTIL Early Exit',
+    'TIMESTAMPTZ DAILY UNTIL before dtstart returns empty',
+    assert_equals(
+        'TZ DAILY UNTIL < dtstart',
+        '0',
+        (SELECT COUNT(*)::TEXT
+         FROM rrule."all"('FREQ=DAILY;UNTIL=20240101T000000Z', '2025-01-01 00:00:00-05'::TIMESTAMPTZ, 'America/New_York'))
+    )
+);
+
+-- Test 6.6: UNTIL equal to dtstart returns the dtstart occurrence (boundary check)
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'UNTIL Early Exit',
+    'UNTIL equal to dtstart returns dtstart',
+    assert_occurrences_equal(
+        'UNTIL = dtstart',
+        ARRAY['2025-01-01 00:00:00'::TIMESTAMP],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=DAILY;UNTIL=20250101T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+------------------------------------------------------------------------------------------------------
+-- Issue 9: Stale current in outer loop UNTIL exit (sparse rules)
+------------------------------------------------------------------------------------------------------
+
+-- Test 7.1: MONTHLY BYMONTHDAY=31 with UNTIL in a short-month period
+-- Months without day 31: Feb, Apr, Jun, Sep, Nov
+-- With UNTIL=2025-04-30, only Jan 31 and Mar 31 should appear
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Stale Current Fix',
+    'MONTHLY BYMONTHDAY=31 UNTIL in short month',
+    assert_occurrences_equal(
+        'BYMONTHDAY=31 UNTIL=Apr30',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;UNTIL=20250430T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 7.2: MONTHLY BYMONTHDAY=31 INTERVAL=2 with UNTIL (tests INTERVAL > 1)
+-- Starting Jan 2025, every 2 months on day 31: Jan 31, Mar 31, May 31, Jul 31
+-- UNTIL=2025-06-30 means only Jan 31, Mar 31, May 31
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Stale Current Fix',
+    'MONTHLY BYMONTHDAY=31 INTERVAL=2 UNTIL',
+    assert_occurrences_equal(
+        'BYMONTHDAY=31 INTERVAL=2 UNTIL=Jun30',
+        ARRAY[
+            '2025-01-31 00:00:00'::TIMESTAMP,
+            '2025-03-31 00:00:00'::TIMESTAMP,
+            '2025-05-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=2;UNTIL=20250630T000000Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 7.3: YEARLY BYDAY=MO with UNTIL - sparse yearly rule
+-- First Monday of each year. 2025: Jan 6, 2026: Jan 5
+-- UNTIL=2025-12-31 means only 2025 occurrences
+INSERT INTO optimization_test_results (test_category, test_name, status)
+VALUES (
+    'Stale Current Fix',
+    'YEARLY BYDAY with UNTIL exits correctly',
+    assert_occurrences_equal(
+        'YEARLY BYDAY UNTIL',
+        ARRAY[
+            '2025-01-06 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYDAY=MO;BYSETPOS=1;BYMONTH=1;UNTIL=20251231T235959Z', '2025-01-01'::TIMESTAMP) AS occurrence)
+    )
+);
+
+------------------------------------------------------------------------------------------------------
 -- Print Test Results
 ------------------------------------------------------------------------------------------------------
 \echo ''
