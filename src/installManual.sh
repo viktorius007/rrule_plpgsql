@@ -49,7 +49,17 @@ echo "Installing RRULE functions to rrule_update schema..."
 sed \
   -e 's/SET search_path = rrule,/SET search_path = rrule_update,/g' \
   -e "s/nspname = 'rrule'/nspname = 'rrule_update'/g" \
+  -e 's/rrule\./rrule_update./g' \
   "$SCRIPT_DIR/rrule.sql" | psql -d "$DATABASE"
+
+# Install rrule_subday.sql if it exists (for sub-day frequency support)
+if [ -f "$SCRIPT_DIR/rrule_subday.sql" ]; then
+  echo "Installing sub-day frequency overrides to rrule_update schema..."
+  sed \
+    -e 's/SET search_path = rrule,/SET search_path = rrule_update,/g' \
+    -e 's/rrule\./rrule_update./g' \
+    "$SCRIPT_DIR/rrule_subday.sql" | psql -d "$DATABASE"
+fi
 
 echo ""
 echo "==================================================================="
