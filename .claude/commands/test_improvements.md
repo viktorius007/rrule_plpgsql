@@ -111,12 +111,16 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
 
 1. Read POTENTIAL_ISSUES.md. Identify all **unresolved** issues meeting their severity threshold (see table above).
 2. If none qualify, skip to Phase 5.
-3. **Create worktrees** sequentially before launching agents:
+3. **Group qualifying issues into fix units.** Before creating worktrees, decide which issues to combine into a single agent vs. keep separate. The rule:
+   - **Combine** issues that modify the same lines or closely adjacent code (e.g., two fixes to the same generator loop), or that create the same new file (e.g., multiple test gaps that belong in one test file). Separate agents modifying overlapping code will produce merge conflicts.
+   - **Keep separate** issues that touch independent files or unrelated code paths. Separate agents maximize parallelism when there's no conflict risk.
+   - Name combined worktrees descriptively: `fix/issue-2-9` for combined, `fix/issue-11` for standalone.
+4. **Create worktrees** sequentially before launching agents:
    ```bash
    git worktree add /tmp/fix-issue-{N} -b fix/issue-{N}
    ```
    Database isolation is automatic — test.sh and lint.sh derive unique DB names from the branch.
-4. Deploy a BACKGROUND fix agent per qualifying issue:
+5. Deploy a BACKGROUND fix agent per fix unit (not necessarily per issue):
 
 > **Your issue:** [paste full POTENTIAL_ISSUES.md entry]
 >
