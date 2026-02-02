@@ -32,7 +32,9 @@ You are an ORCHESTRATOR. You coordinate and dispatch subagents, track their resu
 
 ## PHASE 1: Parallel Analysis
 
-Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 PARALLEL subagents per category (20 total), each with this instruction:
+Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 PARALLEL subagents per category (20 total), each with the instruction template below.
+
+### Analysis agent instruction template
 
 > **Read** CLAUDE.md, TESTING_STANDARDS.md, POTENTIAL_ISSUES.md, and the test files in `tests/`.
 >
@@ -40,13 +42,52 @@ Read TESTING_FRAMEWORK.md for the full category list (10 categories). Deploy 2 P
 >
 > **Do NOT write to any files.**
 >
-> **Report** each finding as:
-> - Severity: [Low/Medium/High/Critical]
-> - Location: [file:line]
-> - Description: [1-2 sentences]
-> - Explanation: [why this is a true issue, not a false positive]
-> - Existing issue: [POTENTIAL_ISSUES.md issue number, or "New"]
-> - Confidence: [Low/Medium/High]
+> ---
+>
+> ## OUTPUT FORMAT — follow exactly
+>
+> Your response has three sections in this order. No other content.
+>
+> ### Section 1: Scope
+> A bullet list of what you examined. One bullet per area. No prose.
+> ```
+> SCOPE:
+> - [area examined, e.g. "parse_rrule_parts() validation for all BYxxx ranges"]
+> - [area examined]
+> ```
+>
+> ### Section 2: Files read
+> A bullet list of source and test files you actually opened.
+> ```
+> FILES:
+> - src/rrule.sql (lines 1800-1900, 2300-2500)
+> - tests/test_validation.sql
+> ```
+>
+> ### Section 3: Findings
+> If you found ZERO issues, write: `FINDINGS: None`
+>
+> If you found issues, list each one in this exact format:
+> ```
+> FINDING: [1-2 sentence description of the bug or gap]
+> Severity: [Low|Medium|High|Critical]
+> Confidence: [Low|Medium|High]
+> Location: [file:line or file:function]
+> Evidence: [1 sentence — why this is a true issue, not a false positive]
+> Existing: [POTENTIAL_ISSUES.md issue number, or "New"]
+> ```
+> Separate findings with a blank line.
+>
+> ---
+>
+> ## WHAT NOT TO INCLUDE
+>
+> - **No positive assessments** — do not praise the code, say it's "well-tested", "comprehensive", or "production-ready"
+> - **No false-positive analysis** — if you investigated something and it's NOT a bug, don't mention it at all
+> - **No explanations of how the code works** — the orchestrator has CLAUDE.md for that
+> - **No recommendations or suggestions** — only report what IS wrong, not what COULD be improved
+> - **No code blocks** — the Location field is sufficient for the orchestrator to find the code
+> - **No summaries or conclusions** — the three sections above ARE the complete response
 
 After launching all 20 agents, **WAIT for all 20 `<task-notification>` messages**. Do NOT call TaskOutput — it will flood your context with raw transcripts and crash the session.
 
@@ -94,9 +135,17 @@ After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) upd
 > 4. Run `npm test`, `npm run lint`, `npm run lint:tests` — fix until all pass
 > 5. Commit: `fix(rrule): {description}`
 >
-> **Report:**
-> - Issue: [number] | Fix applied: [Yes/No] | Branch: [name]
-> - Files modified: [list] | Tests: [Passed/Failed - count] | Commit: [hash or N/A]
+> **Report format — your response must use this structure:**
+> ```
+> Issue: [number] | Fix: [Yes/No] | Branch: [name] | Commit: [hash or N/A]
+> Files: [list of modified files]
+> Tests: [Passed/Failed - suite count] | Lint: [pass/fail] | Lint:tests: [pass/fail]
+> ```
+> If the fix FAILED or tests don't pass, add one line:
+> ```
+> Blocker: [1 sentence describing what went wrong]
+> ```
+> Do not explain your approach, reasoning, or what the code does. No narrative beyond the fields above.
 
 After launching all fix agents, **WAIT for `<task-notification>` messages**. Do NOT call TaskOutput.
 
@@ -157,7 +206,8 @@ After launching all fix agents, **WAIT for `<task-notification>` messages**. Do 
 ## CONSTRAINTS
 
 - Orchestrator delegates ALL code analysis and fixes — never write code yourself
-- All subagents return SUCCINCT SUMMARIES ONLY
 - Track all dispatched agents before proceeding to the next phase
 - POTENTIAL_ISSUES.md is the single source of truth — never bypass it
 - **NEVER use TaskOutput** — it returns full raw transcripts and will exhaust your context window. Wait for `<task-notification>` messages instead.
+- **Analysis agents return: SCOPE (bullet list), FILES (bullet list), FINDINGS (structured blocks).** No prose, no praise, no false-positive analysis, no code blocks. If an agent returns verbose narrative, the prompt needs tightening.
+- **Fix agents return: 3-4 structured fields.** No narrative about approach or reasoning.
