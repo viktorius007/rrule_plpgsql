@@ -3145,10 +3145,12 @@ BEGIN
     PERFORM rrule.validate_timezone(tz_name);
 
     -- Validate count
-    IF count IS NOT NULL AND count <= 0 THEN
+    IF count IS NULL THEN
+      RAISE EXCEPTION 'count parameter is required and cannot be NULL';
+    END IF;
+    IF count <= 0 THEN
       RETURN;
     END IF;
-
     -- Ensure deterministic wall-clock calculations in target timezone
     PERFORM set_config('TimeZone', tz_name, true);
 
@@ -3228,10 +3230,12 @@ BEGIN
     has_bound := (rrule_string ~* '(^|;)COUNT=' OR rrule_string ~* '(^|;)UNTIL=');
 
     -- Validate count
-    IF count IS NOT NULL AND count <= 0 THEN
+    IF count IS NULL THEN
+      RAISE EXCEPTION 'count parameter is required and cannot be NULL';
+    END IF;
+    IF count <= 0 THEN
       RETURN;
     END IF;
-
     -- Ensure deterministic wall-clock calculations in target timezone
     PERFORM set_config('TimeZone', tz_name, true);
 
