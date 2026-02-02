@@ -124,21 +124,6 @@ Only BYDAY parsing uses `array_remove(result, '')` to clean up empty strings fro
 
 ---
 
-## Issue 19: overlaps() false-positive with duration-expanded adjusted_mindate for single events
-
-**Category:** Functional Correctness
-**Severity Assessment:** Medium
-**Reports:** 9
-
-Both `overlaps()` functions (TIMESTAMP and TIMESTAMPTZ) apply the duration-expanded `adjusted_mindate` to the single-event NULL-rrule check. This causes false-positive overlap detection when the event ends before the query window but the gap is smaller than the event duration. Example: Event [Jan 1, Jan 10] (9-day duration), query range [Jan 11, Jan 20]: `adjusted_mindate = Jan 2` (Jan 11 - 9 days). Check yields `dtstart(Jan 1) < maxdate(Jan 20) AND dtend(Jan 10) >= adjusted_mindate(Jan 2) = TRUE`, but the event does not actually overlap the range.
-
-**Location:** `src/rrule.sql:2664` and `src/rrule.sql:3514`.
-
-**Fix:** 2 edits in `src/rrule.sql` + append to `tests/test_coverage_gaps.sql`
-**Complexity:** simple
-
----
-
 ## Issue 23: installManual.sh does not handle rrule_subday.sql
 
 **Category:** Upgrade & Install
@@ -172,36 +157,6 @@ The manual migration script only pipes `rrule.sql` through sed and psql. There i
 
 ---
 
-## Issue 25: after() maxdate anchored to dtstart+10y instead of after_date+10y
-
-**Category:** Edge Cases & Boundary Conditions
-**Severity Assessment:** Medium
-**Reports:** 9
-
-Both TIMESTAMP and TIMESTAMPTZ `after()` cap the generator maxdate at `dtstart + 10 years`, not `GREATEST(dtstart, after_date) + 10 years`. For rules with COUNT > 10 (e.g., `FREQ=YEARLY;COUNT=20`), calling `after(rule, dtstart, after_date)` where after_date is more than 10 years from dtstart silently returns NULL instead of the correct occurrence.
-
-**Location:** `src/rrule.sql:2447` (TIMESTAMP after), `src/rrule.sql:3222` (TIMESTAMPTZ after).
-
-**Fix:** 2 edits in `src/rrule.sql` + append to `tests/test_coverage_gaps.sql`
-**Complexity:** simple
-
----
-
-## Issue 26: Subday TZ generator ELSE branch provides generic error message
-
-**Category:** Dual-Path Consistency
-**Severity Assessment:** Low
-**Reports:** 5
-
-The subday TZ generator (line 785) says only `'Unsupported frequency: %'` without enumerating valid frequencies, while the other three generators provide frequency-specific guidance (valid values list or sub-day install hint).
-
-**Location:** `src/rrule_subday.sql:785`.
-
-**Fix:** 1 edit in `src/rrule_subday.sql`
-**Complexity:** simple
-
----
-
 ## Issue 27: SKIP regex is case-sensitive, lowercase values rejected instead of accepted
 
 **Category:** Input Validation
@@ -214,82 +169,6 @@ The SKIP regex `SKIP=(OMIT|BACKWARD|FORWARD)` is case-sensitive. `SKIP=backward`
 
 **Fix:** 1 edit in `src/rrule.sql` + append to `tests/test_validation.sql`
 **Complexity:** simple
-
----
-
-## Issue 29: SKIP=FORWARD drift loop does not increment period_count
-
-**Category:** Safety & Security
-**Severity Assessment:** Low
-**Reports:** 7
-
-In MONTHLY/YEARLY generators, the SKIP=FORWARD path advances the date and emits occurrences without incrementing `period_count`, while the outer loop checks `period_count < period_limit`. This weakens DoS protection for FORWARD rules, allowing more iterations than `period_limit` intends. The maxdate/UNTIL checks prevent infinite loops but the iteration budget is bypassed.
-
-**Location:** `src/rrule.sql:2089-2110` (MONTHLY FORWARD), `src/rrule.sql:2163-2187` (YEARLY FORWARD), and equivalents in all 4 generators.
-
-**Fix:** 8 edits in `src/rrule.sql`, `src/rrule_subday.sql` + append to `tests/test_skip_support.sql`
-**Complexity:** complex
-
----
-
-## Issue 30: Error message references psql-specific install path for npm users
-
-**Category:** Upgrade & Install
-**Severity Assessment:** Low
-**Reports:** 3
-
-The RAISE EXCEPTION message for sub-day frequencies says "use: psql -d your_database -f src/install_with_subday.sql" which is inaccessible to npm users. Should mention `SQL.installWithSubday` as an alternative.
-
-**Location:** `src/rrule.sql:2211` and `src/rrule.sql:2973`.
-
-**Fix:** 2 edits in `src/rrule.sql`
-**Complexity:** simple
-
----
-
-## Issue 31: before() max_count=50M allows excessive iteration budget
-
-**Category:** Safety & Security
-**Severity Assessment:** Low
-**Reports:** 5
-
-The TIMESTAMP `before()` function passes `max_count=50000000` to the generator, resulting in `calculate_safe_iteration_limit` returning up to 2 billion for DAILY frequency. While the maxdate bound prevents unbounded scanning, a far-future before_date with an unbounded DAILY rule could generate significant CPU load.
-
-**Location:** `src/rrule.sql:2525` (TIMESTAMP before), `src/rrule.sql:3324` (TIMESTAMPTZ before).
-
-**Fix:** 2 edits in `src/rrule.sql` + append to `tests/test_coverage_gaps.sql`
-**Complexity:** simple
-
----
-
-## Issue 32: Subday TZ generator missing prev_period_max_ts variable declaration
-
-**Category:** Cross-Cutting Concerns
-**Severity Assessment:** Critical
-**Severity Range:** High-Critical from 8 reports
-**Reports:** 8
-
-The subday TZ generator (`rrule_event_instances_range_tz` in `rrule_subday.sql`) references `prev_period_max_ts` at lines 606 and 614 in the MONTHLY branch for cross-period SKIP=FORWARD deduplication, but the variable is not declared in the DECLARE block (lines 501-512). The other three generators all declare this variable (rrule.sql:1972, rrule.sql:2737, rrule_subday.sql:220). This causes a PL/pgSQL error when the function is created or first invoked, breaking the MONTHLY frequency path through the TIMESTAMPTZ API when subday frequencies are installed. The CI linter (`lint.sh`) does not catch this because it only installs `install.sql`, not `install_with_subday.sql`.
-
-**Location:** `src/rrule_subday.sql:501-512` (DECLARE block missing `prev_period_max_ts`), referenced at lines 606 and 614.
-
-**Fix:** 1 edit in `src/rrule_subday.sql` (add `prev_period_max_ts TIMESTAMP := NULL;` to DECLARE block) + append to `tests/test_subday_correctness.sql`
-**Complexity:** simple
-
----
-
-## Issue 33: npm stripSessionState strips SET search_path required for schema-qualified installation
-
-**Category:** Integration & Real-World Usage
-**Severity Assessment:** Critical
-**Reports:** 4
-
-`SQL.install`, `SQL.installWithSubday`, and `SQL.core` all strip the file-level `SET search_path = rrule, public;` from `rrule.sql` (and `rrule_subday.sql`) via the `stripSessionState` function. This causes all unqualified `CREATE FUNCTION` statements (~25+ functions including `parse_rrule_parts`, `daily_set`, `weekly_set`, `monthly_set`, `yearly_set`, and all TIMESTAMP API functions) to be created in the caller's default schema (typically `public`) instead of the `rrule` schema. Internal calls use `rrule.` qualification (e.g., `rrule.parse_rrule_parts()`), so every function call fails at runtime with "function does not exist". No npm integration tests exist to catch this.
-
-**Location:** `index.js:31` (`stripSessionState` regex `/^SET\s+(timezone|search_path)\s*/i`) and `index.js:66` (applied to inlined files).
-
-**Fix:** 1 edit in `index.js` (exclude `search_path` from stripping or selectively preserve it) + new npm integration test + update `index.d.ts` and `INSTALLATION.md` for `SQL.core` documentation
-**Complexity:** intermediate
 
 ---
 
@@ -424,19 +303,4 @@ MANUAL_MIGRATION.md Step 5 instructs `DROP SCHEMA rrule;` without CASCADE, which
 **Location:** `MANUAL_MIGRATION.md:172` and `MANUAL_MIGRATION.md:265`.
 
 **Fix:** 2 edits in `MANUAL_MIGRATION.md`
-**Complexity:** simple
-
----
-
-## Issue 43: lint.sh does not lint subday installation
-
-**Category:** Upgrade & Install
-**Severity Assessment:** Medium
-**Reports:** 2
-
-`lint.sh` only installs `install.sql` (line 106) and never installs `install_with_subday.sql`. Functions defined in `rrule_subday.sql` (including overridden generators) are never checked by `plpgsql_check`, allowing bugs like the missing `prev_period_max_ts` declaration (Issue 32) to go undetected. CI only validates standard-install functions.
-
-**Location:** `lint.sh:106`.
-
-**Fix:** 1 edit in `lint.sh` (add second lint pass with `install_with_subday.sql`)
 **Complexity:** simple
