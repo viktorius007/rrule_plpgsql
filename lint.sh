@@ -5,6 +5,10 @@
 # Validates all rrule functions using the plpgsql_check PostgreSQL extension.
 # This catches semantic errors, type mismatches, and other issues before runtime.
 #
+# Runs two lint passes:
+#   Pass 1: Standard installation (install.sql) — DAILY/WEEKLY/MONTHLY/YEARLY
+#   Pass 2: Subday installation (install_with_subday.sql) — includes HOURLY/MINUTELY/SECONDLY
+#
 # Usage:
 #   ./lint.sh              # Run linter
 #   npm run lint           # Run via npm
@@ -93,19 +97,29 @@ check_extension() {
   echo -e "${GREEN}✓ plpgsql_check extension available${NC}"
 }
 
-# Setup lint database
+# Setup lint database with a given install script
+# $1 = install script filename (default: install.sql)
+# Returns 0 on success, 1 on failure
 setup_database() {
+  local install_script="${1:-install.sql}"
   echo ""
-  echo -e "${YELLOW}Setting up lint database...${NC}"
+  echo -e "${YELLOW}Setting up lint database (${install_script})...${NC}"
 
   # Drop and recreate database
   psql -d postgres -c "DROP DATABASE IF EXISTS $DB" > /dev/null 2>&1 || true
   psql -d postgres -c "CREATE DATABASE $DB" > /dev/null
 
-  # Install rrule schema (install.sql expects to be run from src/ directory)
-  (cd src && psql -d "$DB" -f install.sql > /dev/null 2>&1)
-
-  echo -e "${GREEN}✓ Lint database ready${NC}"
+  # Install rrule schema (install scripts expect to be run from src/ directory)
+  # Capture output so install errors are visible and detectable
+  local install_output
+  if install_output=$(cd src && psql -d "$DB" -f "$install_script" 2>&1); then
+    echo -e "${GREEN}✓ Lint database ready${NC}"
+    return 0
+  else
+    echo -e "${RED}ERROR: Installation failed for ${install_script}${NC}"
+    echo "$install_output" | tail -10
+    return 1
+  fi
 }
 
 # Run linter
@@ -129,18 +143,54 @@ cleanup() {
   echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 
+# Run a single lint pass
+# $1 = pass label (e.g., "Pass 1: standard installation")
+# $2 = install script filename
+# Returns 0 on success, 1 on failure
+run_lint_pass() {
+  local label="$1"
+  local install_script="$2"
+
+  echo ""
+  echo -e "${BLUE}=== Lint ${label} ===${NC}"
+
+  if ! setup_database "$install_script"; then
+    echo -e "${RED}${label} FAILED (installation error)${NC}"
+    return 1
+  fi
+
+  if run_lint; then
+    echo -e "${GREEN}${label} PASSED${NC}"
+    return 0
+  else
+    echo -e "${RED}${label} FAILED${NC}"
+    return 1
+  fi
+}
+
 # Main
 main() {
   check_postgres
   check_extension
-  setup_database
 
   local exit_code=0
-  if run_lint; then
-    echo -e "${GREEN}✅ LINTING PASSED${NC}"
-  else
-    echo -e "${RED}❌ LINTING FAILED${NC}"
+
+  # === Lint pass 1: standard installation ===
+  if ! run_lint_pass "pass 1: standard installation" "install.sql"; then
     exit_code=1
+  fi
+
+  # === Lint pass 2: subday installation ===
+  if ! run_lint_pass "pass 2: subday installation" "install_with_subday.sql"; then
+    exit_code=1
+  fi
+
+  # Final summary
+  echo ""
+  if [ $exit_code -eq 0 ]; then
+    echo -e "${GREEN}LINTING PASSED (both standard and subday)${NC}"
+  else
+    echo -e "${RED}LINTING FAILED${NC}"
   fi
 
   cleanup
