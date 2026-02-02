@@ -1869,7 +1869,7 @@ BEGIN
     -- YEARLY BYDAY ordinals (no BYMONTH/BYWEEKNO): ordinals apply across the year
     OPEN curse SCROLL FOR
       SELECT r
-      FROM rrule.rrule_year_byday_set(after_ts, rule.byday, max_results) r
+      FROM rrule.rrule_year_byday_set(after_ts, rule.byday, CASE WHEN rule.bymonthday IS NULL THEN max_results ELSE NULL END) r
       WHERE (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
       ORDER BY 1;
 
@@ -1987,7 +1987,7 @@ BEGIN
       period_start := date_trunc('day', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT d FROM rrule.daily_set(current_base, rule,
-                                                     CASE WHEN rule.bysetpos IS NULL
+                                                     CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                                                           THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
                                                           ELSE NULL END) d WHERE d >= min_in_period LOOP
           EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
@@ -2005,7 +2005,7 @@ BEGIN
       period_start := rrule.get_week_start(current_base, rule.wkst) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT w FROM rrule.weekly_set(current_base, rule,
-                                                      CASE WHEN rule.bysetpos IS NULL
+                                                      CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                                                            THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
                                                            ELSE NULL END) w WHERE w >= min_in_period LOOP
         -- Time boundary checks apply regardless of BYxxx filters
@@ -2029,7 +2029,7 @@ BEGIN
       period_start := date_trunc('month', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT m FROM rrule.monthly_set(current_base, rule,
-                                                       CASE WHEN rule.bysetpos IS NULL
+                                                       CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                                                             THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
                                                             ELSE NULL END) m WHERE m >= min_in_period LOOP
           EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
@@ -2099,7 +2099,7 @@ BEGIN
       period_start := date_trunc('year', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
       FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule,
-                                                      CASE WHEN rule.bysetpos IS NULL
+                                                      CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                                                            THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
                                                            ELSE NULL END) y WHERE y >= min_in_period LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
@@ -2737,7 +2737,7 @@ BEGIN
             FOR current IN
                 SELECT d::TIMESTAMP
                 FROM rrule.daily_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) d
@@ -2762,7 +2762,7 @@ BEGIN
             FOR current IN
                 SELECT w::TIMESTAMP
                 FROM rrule.weekly_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) w
@@ -2793,7 +2793,7 @@ BEGIN
             FOR current IN
                 SELECT m::TIMESTAMP
                 FROM rrule.monthly_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) m
@@ -2859,7 +2859,7 @@ BEGIN
             FOR current IN
                 SELECT y::TIMESTAMP
                 FROM rrule.yearly_set(current_base::TIMESTAMPTZ, rule,
-                    CASE WHEN rule.bysetpos IS NULL
+                    CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
                          ELSE NULL END) y

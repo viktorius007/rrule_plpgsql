@@ -368,7 +368,7 @@ INSERT INTO test_results VALUES (19, 'WEEKLY with BYDAY=MO,FR and BYMONTH=1',
             '2025-01-24 10:00:00'::TIMESTAMP,  -- Friday
             '2025-01-27 10:00:00'::TIMESTAMP,  -- Monday
             '2025-01-31 10:00:00'::TIMESTAMP,  -- Friday
-            '2026-01-05 10:00:00'::TIMESTAMP   -- Monday (next January)
+            '2026-01-02 10:00:00'::TIMESTAMP   -- Friday (next January)
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=WEEKLY;BYDAY=MO,FR;BYMONTH=1;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
     ));
@@ -499,6 +499,40 @@ INSERT INTO test_results VALUES (26, 'YEARLY BYDAY=MO BYSETPOS=1,-1 without BYMO
             '2026-12-28 10:00:00'::TIMESTAMP   -- Last Monday of 2026
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"('FREQ=YEARLY;BYDAY=MO;BYSETPOS=1,-1;COUNT=4', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+
+-- Test 27: WEEKLY+BYMONTH post-filter must not limit candidate generation (Issue #5)
+-- weekly_set generates all 7 days of the week; BYMONTH post-filter keeps only February days.
+-- If max_results is passed to weekly_set before the post-filter, candidates are truncated
+-- and the first matching day (Sat Feb 1) is missed.
+INSERT INTO test_results VALUES (27, 'WEEKLY BYDAY=all + BYMONTH=2 post-filter (Issue #5)',
+    assert_occurrences_equal(
+        'WEEKLY BYDAY=all + BYMONTH=2 post-filter',
+        ARRAY[
+            '2025-02-01 10:00:00'::TIMESTAMP,  -- Sat Feb 1
+            '2025-02-02 10:00:00'::TIMESTAMP,  -- Sun Feb 2
+            '2025-02-03 10:00:00'::TIMESTAMP   -- Mon Feb 3
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;BYDAY=SU,MO,TU,WE,TH,FR,SA;BYMONTH=2;COUNT=3',
+            '2025-01-27 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+
+-- Test 29: WEEKLY+BYMONTH with INTERVAL=2 (Issue #5, Development Rule #10)
+-- Verifies the fix works correctly with non-unit intervals
+INSERT INTO test_results VALUES (28, 'WEEKLY BYDAY=MO,WE,FR + BYMONTH=3 INTERVAL=2 (Issue #5)',
+    assert_occurrences_equal(
+        'WEEKLY BYDAY=MO,WE,FR + BYMONTH=3 INTERVAL=2',
+        ARRAY[
+            '2025-03-03 10:00:00'::TIMESTAMP,  -- Mon Mar 3
+            '2025-03-05 10:00:00'::TIMESTAMP,  -- Wed Mar 5
+            '2025-03-07 10:00:00'::TIMESTAMP   -- Fri Mar 7
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;BYMONTH=3;COUNT=3',
+            '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
     ));
 
 -- ============================================================================
