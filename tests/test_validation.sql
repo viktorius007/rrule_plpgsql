@@ -1390,14 +1390,21 @@ VALUES ('Frequency Validation', 'FREQ=BIWEEKLY (should be rejected)',
 );
 
 -- Test 10.3: HOURLY not supported in standard installation
-INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('Frequency Validation', 'FREQ=HOURLY standard install (should be rejected)',
-    assert_rrule_rejected(
-        'FREQ=HOURLY standard rejected',
-        'FREQ=HOURLY;COUNT=3',
-        '%not supported in standard installation%'
-    )
-);
+-- Only run this test if subday frequencies are NOT installed (hourly_set doesn't exist)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'hourly_set'
+                 AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'rrule')) THEN
+    INSERT INTO validation_test_results (test_category, test_name, status)
+    VALUES ('Frequency Validation', 'FREQ=HOURLY standard install (should be rejected)',
+        assert_rrule_rejected(
+            'FREQ=HOURLY standard rejected',
+            'FREQ=HOURLY;COUNT=3',
+            '%not supported in standard installation%'
+        )
+    );
+  END IF;
+END $$;
 
 -- Test 10.4: Unsupported RSCALE value should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
