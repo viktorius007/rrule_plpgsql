@@ -16,7 +16,8 @@
   "scripts": {
     "test": "./test.sh",
     "lint": "./lint.sh",
-    "lint:tests": "./lint-tests.sh"
+    "lint:tests": "./lint-tests.sh",
+    "generate:matrix-tests": "node scripts/generate-matrix-tests.js > tests/matrix/test_generated_matrix.sql"
   },
   "repository": {
     "type": "git",

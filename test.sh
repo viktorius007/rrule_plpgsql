@@ -80,15 +80,18 @@ TEST_FILES=(
   "tests/matrix/test_freq_byxxx_matrix.sql"
   "tests/matrix/test_api_boundary_matrix.sql"
   "tests/matrix/test_rejection_matrix.sql"
+  "tests/matrix/test_generated_matrix.sql"
   "tests/parity/test_4_generator_parity.sql"
   "tests/branches/test_yearly_set_branches.sql"
   "tests/branches/test_skip_branches.sql"
+  "tests/branches/test_branch_coverage.sql"
   "tests/security/test_budget_enforcement.sql"
 )
 
 # Additional test files that require sub-day frequency support
 SUBDAY_TEST_FILES=(
   "tests/test_subday_correctness.sql"
+  "tests/parity/test_standard_subday_parity.sql"
 )
 
 # Counters
