@@ -34,23 +34,7 @@ Issues pending fix or verification. Format includes: description, category, seve
 
 ---
 
-## Issue 51: yearly_set CROSS JOIN always evaluates all 12 months
-
-**Category:** Performance
-**Severity:** Low | **Reports:** 2 | **Verified:** Yes | **Status:** Blocked
-
-`yearly_set` without BYMONTH opens a cursor over `generate_series(1,12) CROSS JOIN LATERAL monthly_set`. All 12 months execute even if earlier months produced enough results for `max_results`.
-
-**Evidence:** Code inspection confirms at lines 1891-1901.
-
-**Note:** Performance optimization. Impact is 12 monthly_set calls per year regardless of how many results are needed.
-
-**Location:** `src/rrule.sql:1891-1901`.
-
-**Fix:** Track running count and break early when max_results reached
-**Complexity:** simple
-
-**Blocker:** 2026-02-03 — Fix attempt caused test regressions. The cursor-based approach with early exit breaks existing tests. Needs deeper investigation into yearly_set interaction with BYSETPOS and other modifiers.
+(No open issues)
 
 ---
 
