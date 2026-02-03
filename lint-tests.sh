@@ -2,13 +2,8 @@
 #
 # Static SQL Linter for rrule_plpgsql coding standards
 #
-# Enforces project conventions defined in CLAUDE.md Development Rules
-# against all .sql files. Pure bash — no database connection required.
-#
 # Usage:
-#   ./lint-tests.sh          # Run all checks
-#   npm run lint:tests       # Run via npm
-#
+#   ./lint-tests.sh       # Run all checks
 
 set -e
 
@@ -52,28 +47,26 @@ report_rule_result() {
   echo ""
 }
 
-# Helper: filter grep -n output to exclude comment lines.
-# Input: "lineno:content" lines from grep -n
-# Filters out lines where content starts with -- or * (SQL comments / block comment bodies)
-filter_comments() {
-  grep -v '^[0-9]*:[[:space:]]*--' | grep -v '^[0-9]*:[[:space:]]*\*' || true
+# Check if line content starts with SQL comment (-- or *)
+is_comment() {
+  [[ "$1" =~ ^[[:space:]]*(--|\[*]) ]]
 }
 
 # --- Check functions ---
-# All rules enforced here are defined in CLAUDE.md Development Rules.
-# Test file checks enforce Rule 8 (Testing Standards).
-# Source file checks enforce Rules 2, 5, 6, and 7.
 
 # Rule 8: No COMMIT in test files
 check_no_commit() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "COMMIT; found — use ROLLBACK instead"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -iE 'COMMIT[[:space:]]*;' | grep -viE 'ROLLBACK' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    [[ "$content" =~ ROLLBACK ]] && continue
+    report_violation "$file" "$lineno" "COMMIT; found — use ROLLBACK instead"
+    count=$((count + 1))
+  done < <(grep -niE 'COMMIT[[:space:]]*;' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No COMMIT in test files (Rule 8)" "$count"
 }
 
@@ -98,139 +91,134 @@ check_transaction_wrapper() {
 # Rule 8: No NOW() in test files
 check_no_now() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "NOW() found — use fixed reference timestamps"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -iE 'NOW[[:space:]]*\(\)' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    report_violation "$file" "$lineno" "NOW() found — use fixed reference timestamps"
+    count=$((count + 1))
+  done < <(grep -niE 'NOW[[:space:]]*\(\)' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No NOW() in test files (Rule 8)" "$count"
 }
 
 # Rule 8: No always-true assertions
 check_no_always_true_assertions() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "COUNT(*) >= 0 is always true — use exact assertions"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -E 'COUNT[[:space:]]*\([[:space:]]*\*[[:space:]]*\)[[:space:]]*>=[[:space:]]*0' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    report_violation "$file" "$lineno" "COUNT(*) >= 0 is always true — use exact assertions"
+    count=$((count + 1))
+  done < <(grep -nE 'COUNT[[:space:]]*\([[:space:]]*\*[[:space:]]*\)[[:space:]]*>=[[:space:]]*0' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No always-true assertions (Rule 8)" "$count"
 }
 
 # Rule 8: array_agg must have ORDER BY
 check_array_agg_order_by() {
   local count=0
-  for file in tests/test_*.sql; do
-    # Find line numbers containing array_agg(
-    while IFS= read -r lineno; do
-      # Check if this line is a comment
-      local line_content
-      line_content=$(sed -n "${lineno}p" "$file")
-      if echo "$line_content" | grep -qE '^[[:space:]]*--'; then
-        continue
-      fi
-      if echo "$line_content" | grep -qE '^[[:space:]]*\*'; then
-        continue
-      fi
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
 
-      # Look ahead 10 lines for ORDER BY within the array_agg call
-      local lookahead
-      lookahead=$(sed -n "${lineno},$((lineno + 10))p" "$file")
-      if ! echo "$lookahead" | grep -qi 'ORDER BY'; then
-        report_violation "$file" "$lineno" "array_agg() without ORDER BY"
-        count=$((count + 1))
-      fi
-    done < <(grep -nE 'array_agg[[:space:]]*\(' "$file" | filter_comments | sed 's/:.*//' || true)
-  done
+    # Look ahead 10 lines for ORDER BY
+    local lookahead
+    lookahead=$(sed -n "${lineno},$((lineno + 10))p" "$file")
+    if ! [[ "$lookahead" =~ [Oo][Rr][Dd][Ee][Rr][[:space:]]+[Bb][Yy] ]]; then
+      report_violation "$file" "$lineno" "array_agg() without ORDER BY"
+      count=$((count + 1))
+    fi
+  done < <(grep -nE 'array_agg[[:space:]]*\(' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "array_agg must have ORDER BY (Rule 8)" "$count"
 }
 
 # Rule 8: No permanent tables in test files
 check_no_permanent_tables() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "CREATE TABLE without TEMP/TEMPORARY — use CREATE TEMP TABLE"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -iE 'CREATE[[:space:]]+TABLE' | grep -viE 'CREATE[[:space:]]+(TEMP|TEMPORARY)[[:space:]]+TABLE' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    # Skip if TEMP or TEMPORARY present
+    [[ "$content" =~ [Tt][Ee][Mm][Pp]([Oo][Rr][Aa][Rr][Yy])?[[:space:]]+[Tt][Aa][Bb][Ll][Ee] ]] && continue
+    report_violation "$file" "$lineno" "CREATE TABLE without TEMP/TEMPORARY — use CREATE TEMP TABLE"
+    count=$((count + 1))
+  done < <(grep -niE 'CREATE[[:space:]]+TABLE' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No permanent tables in test files (Rule 8)" "$count"
 }
 
 # Rule 2: Schema-qualified API calls in test files
 check_schema_qualification() {
   local count=0
-  # Public API function names that must be schema-qualified
-  # Uses POSIX character classes for macOS compatibility
-  local api_funcs='"all"[[:space:]]*\(|"between"[[:space:]]*\(|"after"[[:space:]]*\(|"before"[[:space:]]*\(|"next"[[:space:]]*\(|"most_recent"[[:space:]]*\(|"count"[[:space:]]*\(|"overlaps"[[:space:]]*\('
+  local api_pattern='"(all|between|after|before|next|most_recent|count|overlaps)"[[:space:]]*\('
 
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      local content="${line_info#*:}"
-      # Skip comment lines
-      if echo "$content" | grep -qE '^[[:space:]]*--'; then continue; fi
-      if echo "$content" | grep -qE '^[[:space:]]*\*'; then continue; fi
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
 
-      # Strip all rrule."func"( patterns from the line, then check if any
-      # unqualified API calls remain. Uses POSIX classes for BSD sed compat.
-      local stripped
-      stripped=$(echo "$content" | sed 's/rrule[[:space:]]*\.[[:space:]]*"[a-z_]*"[[:space:]]*(//g')
-      if echo "$stripped" | grep -qE "$api_funcs"; then
-        report_violation "$file" "$lineno" "Unqualified API call — use rrule.\"func\"() prefix"
-        count=$((count + 1))
-      fi
-    done < <(grep -nE "$api_funcs" "$file" || true)
-  done
+    # Strip all rrule."func"( patterns, then check if unqualified calls remain
+    local stripped="${content//rrule./}"
+    # If stripping rrule. removed the match, it was qualified
+    if [[ "$stripped" == "$content" ]]; then
+      report_violation "$file" "$lineno" "Unqualified API call — use rrule.\"func\"() prefix"
+      count=$((count + 1))
+    fi
+  done < <(grep -nE "$api_pattern" tests/test_*.sql 2>/dev/null || true)
   report_rule_result "Schema-qualified API calls in test files (Rule 2)" "$count"
 }
 
 # Rule 5: No = NULL / <> NULL / != NULL in source files
 check_null_comparison() {
   local count=0
-  for file in src/*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      local content="${line_info#*:}"
-      # Exclude := NULL (PL/pgSQL assignment) and DEFAULT NULL
-      if echo "$content" | grep -qE ':=[[:space:]]*NULL|DEFAULT[[:space:]]+NULL'; then
-        continue
-      fi
-      report_violation "$file" "$lineno" "Use IS NULL / IS NOT NULL instead of =/!=/<> NULL"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -E '([^:!<>])=[[:space:]]*NULL|<>[[:space:]]*NULL|!=[[:space:]]*NULL' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    # Exclude := NULL and DEFAULT NULL
+    [[ "$content" =~ :=.*NULL ]] && continue
+    [[ "$content" =~ DEFAULT[[:space:]]+NULL ]] && continue
+    report_violation "$file" "$lineno" "Use IS NULL / IS NOT NULL instead of =/!=/<> NULL"
+    count=$((count + 1))
+  done < <(grep -nE '([^:!<>])=[[:space:]]*NULL|<>[[:space:]]*NULL|!=[[:space:]]*NULL' src/*.sql 2>/dev/null || true)
   report_rule_result "No = NULL / <> NULL / != NULL in source files (Rule 5)" "$count"
 }
 
 # Rule 5: IMMUTABLE only for pure-computation helpers
-# Allowed: weekday_to_number, byweekno_matches, calculate_safe_iteration_limit, version,
-#          _restore_monthly_base, _restore_yearly_base (date arithmetic only)
 check_immutable_usage() {
   local count=0
-  # Functions explicitly allowed to be IMMUTABLE (CLAUDE.md Rule 5)
   local allowed_funcs='weekday_to_number|byweekno_matches|calculate_safe_iteration_limit|version|_restore_monthly_base|_restore_yearly_base'
 
-  for file in src/*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      # Look backward up to 50 lines for the CREATE FUNCTION declaration
-      local start=$((lineno > 50 ? lineno - 50 : 1))
-      local context
-      context=$(sed -n "${start},${lineno}p" "$file")
-      # Check if this IMMUTABLE belongs to an allowed function
-      if echo "$context" | grep -qE "FUNCTION[[:space:]]+\"?(${allowed_funcs})\"?[[:space:]]*\("; then
-        continue
-      fi
-      report_violation "$file" "$lineno" "IMMUTABLE found — use STABLE or VOLATILE"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -iE '\bIMMUTABLE\b' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+
+    # Look backward up to 50 lines for allowed function
+    local start=$((lineno > 50 ? lineno - 50 : 1))
+    local context
+    context=$(sed -n "${start},${lineno}p" "$file")
+    if [[ "$context" =~ FUNCTION[[:space:]]+\"?(${allowed_funcs})\"?[[:space:]]*\( ]]; then
+      continue
+    fi
+    report_violation "$file" "$lineno" "IMMUTABLE found — use STABLE or VOLATILE"
+    count=$((count + 1))
+  done < <(grep -niE '\bIMMUTABLE\b' src/*.sql 2>/dev/null || true)
   report_rule_result "IMMUTABLE only for pure-computation helpers (Rule 5)" "$count"
 }
 
@@ -241,9 +229,11 @@ check_no_subday_in_standard_install() {
   if [ -f "$file" ]; then
     while IFS= read -r line_info; do
       local lineno="${line_info%%:*}"
+      local content="${line_info#*:}"
+      is_comment "$content" && continue
       report_violation "$file" "$lineno" "Sub-day frequency reference in standard install"
       count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -E 'HOURLY|MINUTELY|SECONDLY' || true)
+    done < <(grep -nE 'HOURLY|MINUTELY|SECONDLY' "$file" 2>/dev/null || true)
   fi
   report_rule_result "No sub-day frequencies in standard install (Rule 6)" "$count"
 }
@@ -251,100 +241,83 @@ check_no_subday_in_standard_install() {
 # Rule 7: inc defaults to FALSE
 check_inc_default_false() {
   local count=0
-  for file in src/*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "inc parameter must DEFAULT FALSE"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -iE '\binc\b.*DEFAULT[[:space:]]+TRUE' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    report_violation "$file" "$lineno" "inc parameter must DEFAULT FALSE"
+    count=$((count + 1))
+  done < <(grep -niE '\binc\b.*DEFAULT[[:space:]]+TRUE' src/*.sql 2>/dev/null || true)
   report_rule_result "inc defaults to FALSE (Rule 7)" "$count"
 }
 
 # Rule 8: No unconditional PASS in WHEN OTHERS exception handlers
-# Exception handlers should verify the error message content, not blindly pass
 check_when_others_without_message_check() {
   local count=0
-  for file in tests/test_*.sql; do
-    # Find WHEN OTHERS blocks that have 'PASS' without CASE/IF on err_msg
-    # Look for the pattern: WHEN OTHERS followed within 5 lines by a bare 'PASS'
-    # without an intervening CASE or IF on err_msg
-    local in_when_others=0
-    local when_others_line=0
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      local content="${line_info#*:}"
-      # Skip comment lines
-      if echo "$content" | grep -qE '^[[:space:]]*--'; then continue; fi
+  # Find WHEN OTHERS blocks first, then analyze (not iterating every line)
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
 
-      if echo "$content" | grep -qiE 'WHEN[[:space:]]+OTHERS[[:space:]]+THEN'; then
-        in_when_others=1
-        when_others_line=$lineno
-      fi
+    # Look ahead 10 lines for the pattern
+    local lookahead
+    lookahead=$(sed -n "${lineno},$((lineno + 10))p" "$file")
 
-      if [ "$in_when_others" -eq 1 ]; then
-        # Check if we found a CASE/IF checking err_msg (good pattern)
-        if echo "$content" | grep -qiE 'CASE[[:space:]]+WHEN[[:space:]]+err_msg|IF[[:space:]]+err_msg'; then
-          in_when_others=0
-          continue
-        fi
-        # Check if we found bare 'PASS' without err_msg check (bad pattern)
-        if echo "$content" | grep -qE "'PASS'" && ! echo "$content" | grep -qiE 'err_msg'; then
-          report_violation "$file" "$when_others_line" "WHEN OTHERS handler unconditionally returns PASS — check err_msg content"
-          count=$((count + 1))
-          in_when_others=0
-          continue
-        fi
-        # Reset after END block
-        if echo "$content" | grep -qiE '^[[:space:]]*END[[:space:]]*;'; then
-          in_when_others=0
-        fi
-      fi
-    done < <(grep -n '.' "$file")
-  done
+    # Good if it has CASE/IF checking err_msg
+    [[ "$lookahead" =~ (CASE[[:space:]]+WHEN|IF)[[:space:]]+err_msg ]] && continue
+
+    # Bad if it has 'PASS' without err_msg check
+    if [[ "$lookahead" =~ \'PASS\' ]] && ! [[ "$lookahead" =~ err_msg.*\'PASS\' ]]; then
+      report_violation "$file" "$lineno" "WHEN OTHERS handler unconditionally returns PASS — check err_msg content"
+      count=$((count + 1))
+    fi
+  done < <(grep -niE 'WHEN[[:space:]]+OTHERS[[:space:]]+THEN' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No unconditional PASS in WHEN OTHERS handlers (Rule 8)" "$count"
 }
 
 # Rule 8: No MIN(...) IS NOT NULL loose assertions
-# MIN(col) IS NOT NULL only proves at least one row is non-NULL, not all rows
 check_min_is_not_null() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "MIN(...) IS NOT NULL is a loose assertion — use COUNT(*) FILTER (WHERE col IS NOT NULL)"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -E 'MIN[[:space:]]*\([^)]+\)[[:space:]]+IS[[:space:]]+NOT[[:space:]]+NULL' || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    report_violation "$file" "$lineno" "MIN(...) IS NOT NULL is a loose assertion — use COUNT(*) FILTER (WHERE col IS NOT NULL)"
+    count=$((count + 1))
+  done < <(grep -nE 'MIN[[:space:]]*\([^)]+\)[[:space:]]+IS[[:space:]]+NOT[[:space:]]+NULL' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No MIN(...) IS NOT NULL loose assertions (Rule 8)" "$count"
 }
 
-# Rule 8: No Unicode emoji in test files (use ASCII [PASS]/[FAIL] instead)
+# Rule 8: No Unicode emoji in test files
 check_no_emoji() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      report_violation "$file" "$lineno" "Unicode emoji found — use ASCII [PASS]/[FAIL] instead"
-      count=$((count + 1))
-    done < <(grep -n '[✓✗✅❌✔✘]' "$file" 2>/dev/null || true)
-  done
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    report_violation "$file" "$lineno" "Unicode emoji found — use ASCII [PASS]/[FAIL] instead"
+    count=$((count + 1))
+  done < <(grep -n '[✓✗✅❌✔✘]' tests/test_*.sql 2>/dev/null || true)
   report_rule_result "No Unicode emoji in test files (Rule 8)" "$count"
 }
 
 # Rule 8: COUNT(*)::TEXT assertion anti-pattern (advisory)
-# Non-zero count-only assertions should use exact date arrays.
-# Zero-count assertions (expected='0') and relative comparisons are acceptable.
 check_count_text_antipattern() {
   local count=0
-  for file in tests/test_*.sql; do
-    while IFS= read -r line_info; do
-      local lineno="${line_info%%:*}"
-      echo -e "  ${YELLOW}⚠${NC} ${file}:${lineno} — COUNT(*)::TEXT assertion — consider using exact date array assertion"
-      count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -E 'COUNT\(\*\)::TEXT' || true)
-  done
-  # Advisory rule: report count but always pass
+  while IFS= read -r line_info; do
+    local file="${line_info%%:*}"
+    local rest="${line_info#*:}"
+    local lineno="${rest%%:*}"
+    local content="${rest#*:}"
+    is_comment "$content" && continue
+    echo -e "  ${YELLOW}⚠${NC} ${file}:${lineno} — COUNT(*)::TEXT assertion — consider using exact date array assertion"
+    count=$((count + 1))
+  done < <(grep -nE 'COUNT\(\*\)::TEXT' tests/test_*.sql 2>/dev/null || true)
   if [ "$count" -eq 0 ]; then
     echo -e "${GREEN}✓${NC} No COUNT(*)::TEXT anti-pattern in tests (Rule 8, advisory)"
   else
@@ -355,25 +328,20 @@ check_count_text_antipattern() {
 }
 
 # Rule 8: No inline CASE PASS/FAIL assertions in unit test files (advisory)
-# Unit tests should use shared assertion helpers (assert_equals, assert_true, etc.)
-# Advisory: reports warnings but does not fail the linter. Only checked in unit test
-# files, not integration tests like test_table_operations.sql.
 check_inline_case_assertions() {
   local count=0
-  # Only check unit test files, not integration test files
   local unit_test_files="tests/test_rrule_functions.sql tests/test_tzid_support.sql"
   for file in $unit_test_files; do
     [ -f "$file" ] || continue
     while IFS= read -r line_info; do
       local lineno="${line_info%%:*}"
       local content="${line_info#*:}"
-      # Skip display/summary CASE blocks (e.g., formatting test results for output)
-      if echo "$content" | grep -qiE 'LIKE.*PASS'; then continue; fi
+      is_comment "$content" && continue
+      [[ "$content" =~ LIKE.*PASS ]] && continue
       echo -e "  ${YELLOW}⚠${NC} ${file}:${lineno} — Inline CASE PASS/FAIL — consider using shared assertion helpers"
       count=$((count + 1))
-    done < <(grep -n '.' "$file" | filter_comments | grep -E "THEN[[:space:]]*'PASS" || true)
+    done < <(grep -nE "THEN[[:space:]]*'PASS" "$file" 2>/dev/null || true)
   done
-  # Advisory rule: report count but always pass
   if [ "$count" -eq 0 ]; then
     echo -e "${GREEN}✓${NC} No inline CASE PASS/FAIL in unit tests (Rule 8, advisory)"
   else
@@ -384,7 +352,6 @@ check_inline_case_assertions() {
 }
 
 # Rule 1: parse_rrule_parts rejects duplicate FREQ
-# Verify that the source code contains the duplicate FREQ check
 check_duplicate_freq_rejection() {
   local count=0
   local file="src/rrule.sql"
@@ -398,7 +365,6 @@ check_duplicate_freq_rejection() {
 }
 
 # Rule 5: Public API functions check for NULL dtstart
-# Verify that the source code contains NULL dtstart validation
 check_null_dtstart_validation() {
   local count=0
   local file="src/rrule.sql"
