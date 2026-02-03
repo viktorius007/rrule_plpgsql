@@ -2,7 +2,12 @@
 
 You are an ORCHESTRATOR. You coordinate and dispatch subagents, track their results, and make delegation decisions. You MAY read project reference docs (CLAUDE.md, TESTING_FRAMEWORK.md, TESTING_STANDARDS.md, POTENTIAL_ISSUES.md) directly. You MUST delegate all code analysis, fix implementation, and test writing to subagents.
 
-**POTENTIAL_ISSUES.md is the single source of truth.** Reports accumulate across runs. An issue qualifies for fixing when its report count meets the severity threshold:
+**POTENTIAL_ISSUES.md is the single source of truth.** It has three sections:
+- **Open Issues** — Active issues pending fix or verification
+- **Closed Issues** — Resolved issues with resolution type and commit reference
+- **Verified Non-Issues** — False positives and design decisions (prevents re-reporting)
+
+Reports accumulate across runs. An issue qualifies for fixing when its report count meets the severity threshold:
 
 | Severity | Reports needed |
 |----------|---------------|
@@ -10,6 +15,10 @@ You are an ORCHESTRATOR. You coordinate and dispatch subagents, track their resu
 | High     | 1             |
 | Medium   | 2             |
 | Low      | 3             |
+
+**Issue fields:**
+- `Verified`: Yes / No / Pending — Has the issue been confirmed to exist?
+- `Status`: Pending Fix / Needs Verification / Blocked — Current state
 
 ---
 
@@ -47,7 +56,9 @@ Task(
 
 ### Analysis agent instruction template
 
-> **Read** CLAUDE.md, TESTING_STANDARDS.md, POTENTIAL_ISSUES.md, and the test files in `tests/`.
+> **Read** CLAUDE.md, TESTING_STANDARDS.md, POTENTIAL_ISSUES.md (all three sections), and the test files in `tests/`.
+>
+> **IMPORTANT: Check "Verified Non-Issues" section first.** Before reporting any finding, verify it's not already documented there as a false positive, design decision, or already-tested item. Do NOT re-report issues listed in that section.
 >
 > **Analyze** `src/rrule.sql` and `src/rrule_subday.sql` for issues in the **{{$category}}** category. Report all severities. Focus on genuine bugs — wrong output, missing validation, unsafe behavior, or untested code paths that could plausibly be wrong. Not style issues.
 >
@@ -85,7 +96,7 @@ Task(
 > Confidence: [Low|Medium|High]
 > Location: [file:line or file:function]
 > Evidence: [1 sentence — why this is a true issue, not a false positive]
-> Existing: [POTENTIAL_ISSUES.md issue number, or "New"]
+> Existing: [POTENTIAL_ISSUES.md Open Issues number, or "New"] — check Verified Non-Issues first; do NOT report items listed there
 > Fix: [number] edits in [list of files to modify, e.g. "src/rrule.sql, src/rrule_subday.sql"] + [new test file | append to tests/test_X.sql]
 > Quadruple: [Yes|No] — Yes if the fix touches the main occurrence loop in any generator (see CLAUDE.md rule #9)
 > ```
@@ -114,23 +125,26 @@ After launching all 20 agents, **WAIT for all 20 `<task-notification>` messages*
 After all 20 `<task-notification>` messages have arrived, YOU (orchestrator) update the file:
 
 1. Collect and deduplicate all findings from the notification `<result>` tags (group by root cause, even if worded differently)
-2. For each unique finding:
-   - **Existing unresolved entry:** increment `**Reports:**` by the number of agents that found it. Update fix metadata if new reports provide better information.
-   - **New:** add an entry with `**Reports:**` set to the agent count. Include `**Fix:**` field from the agent findings (edit count, files, test file).
-   - **Already resolved:** skip
-3. **Severity disagreements:** record the **highest** reported severity. Note the range if agents differ, e.g., `**Severity Assessment:** High (range: Medium–High from 3 reports)`. The highest value determines the qualification threshold.
-4. **Edit count disagreements:** record the **highest** reported edit count (conservative estimate for agent capacity planning).
-5. **Complexity classification:** For each entry, add `**Complexity:** simple`, `intermediate`, or `complex`:
+2. **Check "Verified Non-Issues" section** — skip any finding that matches an entry there (same root cause = already analyzed as false positive or design decision)
+3. For each unique finding NOT in Verified Non-Issues:
+   - **Existing Open Issue:** increment `**Reports:**` by the number of agents that found it. Update fix metadata if new reports provide better information.
+   - **New:** add to "Open Issues" section with:
+     - `**Severity:** X | **Reports:** N | **Verified:** No | **Status:** Needs Verification`
+     - Include `**Fix:**` field from the agent findings (edit count, files, test file)
+   - **Already in Closed Issues:** skip (already fixed)
+4. **Severity disagreements:** record the **highest** reported severity. Note the range if agents differ, e.g., `**Severity:** High (range: Medium–High from 3 reports)`. The highest value determines the qualification threshold.
+5. **Edit count disagreements:** record the **highest** reported edit count (conservative estimate for agent capacity planning).
+6. **Complexity classification:** For each entry, add `**Complexity:** simple`, `intermediate`, or `complex`:
    - **Simple**: 1-2 edits AND Quadruple = No
    - **Intermediate**: 3-4 edits, OR Quadruple = Yes with ≤4 edits
    - **Complex**: 5+ edits, OR Quadruple = Yes with 5+ edits
-6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: update potential issues from analysis run"`
+7. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: update potential issues from analysis run"`
 
 ---
 
 ## PHASE 3: Fix Deployment
 
-1. Read POTENTIAL_ISSUES.md. Identify all **unresolved** issues meeting their severity threshold (see table above).
+1. Read POTENTIAL_ISSUES.md "Open Issues" section. Identify all issues meeting their severity threshold (see table above) with `Status: Pending Fix` or `Status: Needs Verification` (verified issues take priority).
 2. If none qualify, skip to Phase 5.
 
 ### Step 3.1: Classify, group, and decide concurrency
@@ -239,8 +253,19 @@ After all streams complete (all agents in all streams have delivered `<task-noti
 2. Merge each **stream branch** sequentially (one branch per stream, containing all commits from that stream's agents): `git merge --no-ff fix/stream-{N}`
 3. Resolve any merge conflicts (unlikely between streams since they have non-overlapping source files by construction)
 4. Run full verification: `npm test` + `npm run lint` + `npm run lint:tests` — fix until clean
-5. **Remove** fixed issues from POTENTIAL_ISSUES.md entirely (the fix commit serves as the record). For partially fixed streams (agent reported `Fix: Partial` or a later agent was blocked), keep the issue entry and add a note.
-6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: remove resolved issues from fix run"`
+5. **Move** fixed issues from "Open Issues" to "Closed Issues" section with resolution details:
+   ```
+   ## [RESOLVED] Issue N: Title
+
+   **Resolution:** Fixed
+   **Resolved:** YYYY-MM-DD
+   **Commit:** [hash from fix agent]
+   **Rationale:** [brief description of the fix]
+
+   [Original description preserved]
+   ```
+   For partially fixed streams (agent reported `Fix: Partial` or a later agent was blocked), keep in "Open Issues" and update `Status: Blocked` with a note.
+6. Commit: `git add POTENTIAL_ISSUES.md && git commit -m "docs: move resolved issues to Closed section"`
 7. **Clean up all ephemeral artifacts** (worktrees and branches are disposable workspaces, not persistent records):
    ```bash
    # Remove worktrees
@@ -290,7 +315,7 @@ After all streams complete (all agents in all streams have delivered `<task-noti
 - **All subagents MUST use `model: "opus"`** — never use Sonnet or Haiku. Less capable models produce false positives on nuanced code analysis.
 - Orchestrator delegates ALL code analysis and fixes — never write code yourself
 - Track all dispatched agents before proceeding to the next phase
-- POTENTIAL_ISSUES.md is the single source of truth — never bypass it
+- POTENTIAL_ISSUES.md is the single source of truth — never bypass it. Check "Verified Non-Issues" before reporting findings; check "Open Issues" for existing entries; move fixed issues to "Closed Issues"
 - **NEVER use TaskOutput** — it returns full raw transcripts and will exhaust your context window. Wait for `<task-notification>` messages instead.
 - **Analysis agents return: SCOPE (bullet list), FILES (bullet list), FINDINGS (structured blocks including edit count and file list).** No prose, no praise, no false-positive analysis, no code blocks. If an agent returns verbose narrative, the prompt needs tightening.
 - **Fix agents return: 3-4 structured fields.** No narrative about approach or reasoning.
