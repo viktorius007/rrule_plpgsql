@@ -209,11 +209,12 @@ check_null_comparison() {
 }
 
 # Rule 5: IMMUTABLE only for pure-computation helpers
-# Allowed: weekday_to_number, byweekno_matches, calculate_safe_iteration_limit, version
+# Allowed: weekday_to_number, byweekno_matches, calculate_safe_iteration_limit, version,
+#          _restore_monthly_base, _restore_yearly_base (date arithmetic only)
 check_immutable_usage() {
   local count=0
   # Functions explicitly allowed to be IMMUTABLE (CLAUDE.md Rule 5)
-  local allowed_funcs='weekday_to_number|byweekno_matches|calculate_safe_iteration_limit|version'
+  local allowed_funcs='weekday_to_number|byweekno_matches|calculate_safe_iteration_limit|version|_restore_monthly_base|_restore_yearly_base'
 
   for file in src/*.sql; do
     while IFS= read -r line_info; do

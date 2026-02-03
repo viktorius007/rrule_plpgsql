@@ -107,7 +107,7 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 4. **Linting Required:** `plpgsql_check` must report 0 errors and 0 warnings. `lint-tests.sh` must also pass (static SQL coding standards).
 
-5. **Type Safety:** Use explicit parameter types, proper NULL handling with `IS DISTINCT FROM` (never `= NULL` / `<> NULL` / `!= NULL`). Mark functions VOLATILE (cursors, SET timezone, set_config), STABLE (internal computation calling other STABLE/VOLATILE functions), or IMMUTABLE (pure-computation helpers only: `weekday_to_number`, `byweekno_matches`, `calculate_safe_iteration_limit`, `version`).
+5. **Type Safety:** Use explicit parameter types, proper NULL handling with `IS DISTINCT FROM` (never `= NULL` / `<> NULL` / `!= NULL`). Mark functions VOLATILE (cursors, SET timezone, set_config), STABLE (internal computation calling other STABLE/VOLATILE functions), or IMMUTABLE (pure-computation helpers only: `weekday_to_number`, `byweekno_matches`, `calculate_safe_iteration_limit`, `version`, `_restore_monthly_base`, `_restore_yearly_base`).
 
 6. **Security:** Sub-day frequencies are disabled by default to prevent DoS (31M+ occurrences/year for SECONDLY). Changes to this require explicit justification.
 
@@ -115,7 +115,7 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 8. **Testing Standards:** Follow rules in [TESTING_STANDARDS.md](TESTING_STANDARDS.md) -- key rules: ROLLBACK not COMMIT, fixed timestamps not NOW(), exact assertions not loose comparisons, ORDER BY in array_agg, test boundary/invalid inputs, test DST gap times, test BYxxx deduplication.
 
-9. **Quadruple Generator Maintenance:** Four copies of the main occurrence loop exist: (1) TIMESTAMP generator `rrule_event_instances_range()` in `src/rrule.sql`, (2) TZ generator `rrule_event_instances_range_tz()` in `src/rrule.sql`, (3) subday TIMESTAMP override in `src/rrule_subday.sql`, (4) subday TZ override in `src/rrule_subday.sql`. All four share identical MONTHLY/YEARLY loop structure. Any fix to one (boundary checks, EXIT conditions, SKIP handling, drift prevention) must be mirrored in all four. When fixing these, apply to one location first, verify with a targeted query, then replicate.
+9. **SKIP/Drift Helper Functions:** The MONTHLY/YEARLY SKIP and drift prevention logic is centralized in shared helpers: `_restore_monthly_base()`, `_restore_yearly_base()`, `_advance_monthly()`, and `_advance_yearly()`. All four generators (TIMESTAMP and TZ variants in both `rrule.sql` and `rrule_subday.sql`) call these helpers. Fix SKIP/drift issues in the helper functions, not in the generators themselves.
 
 10. **Test with INTERVAL > 1:** When modifying period advancement logic (MONTHLY/YEARLY branches), always test with `INTERVAL=2` or higher. SKIP and drift prevention interact with INTERVAL in non-obvious ways — a fix that works for `INTERVAL=1` can silently break for `INTERVAL=2` because the forwarded/skipped date may land across a different period boundary.
 

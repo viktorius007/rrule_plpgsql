@@ -220,6 +220,7 @@ DECLARE
   prev_period_max_ts TIMESTAMP WITH TIME ZONE := NULL;
   omit_count INT;
   rule rrule.rrule_parts%ROWTYPE;
+  skip_r rrule._skip_result;  -- Result from SKIP helper functions
 BEGIN
   SELECT * INTO rule FROM rrule.parse_rrule_parts(basedate, repeatrule);
 
@@ -309,50 +310,29 @@ BEGIN
       current_base := current_base + make_interval(months => rule.interval);
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
         -- Restore dtstart day-of-month to prevent cumulative drift from FORWARD
-        current_base := date_trunc('month', current_base)
-          + make_interval(days => LEAST(dtstart_day,
-              date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
-          + (basedate::time)::interval;
+        current_base := rrule._restore_monthly_base(current_base, dtstart_day, (basedate::time)::interval);
         omit_count := 0;
         LOOP
-          EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-          IF rule.skip = 'OMIT' THEN
-            -- Do NOT increment period_count here — the outer loop handles it.
-            -- Skipped months should not count against the iteration budget.
-            current_base := current_base + make_interval(months => rule.interval);
-            current_base := date_trunc('month', current_base)
-              + make_interval(days => LEAST(dtstart_day,
-                  date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
-              + (basedate::time)::interval;
-            EXIT WHEN current_base > maxdate;
-            EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
-            omit_count := omit_count + 1;
-            EXIT WHEN omit_count >= period_limit;
-          ELSIF rule.skip = 'FORWARD' THEN
-            current := date_trunc('month', current_base) + INTERVAL '1 month'
-              + (basedate::time)::interval;
-            EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
-            EXIT WHEN current > maxdate;
+          skip_r := rrule._advance_monthly(
+              current_base, basedate, dtstart_day, rule.interval, rule.skip,
+              rule.until, maxdate, period_limit, omit_count, period_count
+          );
+          current_base := skip_r.current_base;
+          omit_count := skip_r.omit_count;
+          period_count := skip_r.period_count;
+          -- Handle FORWARD emission (skip_r.forward_ts is non-NULL when SKIP=FORWARD produced a date)
+          IF skip_r.forward_ts IS NOT NULL THEN
             occurrence_count := occurrence_count + 1;
             IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
               EXIT;
             END IF;
-            IF current >= mindate THEN
-              RETURN NEXT current;
+            IF skip_r.forward_ts >= mindate THEN
+              RETURN NEXT skip_r.forward_ts;
               emitted_count := emitted_count + 1;
               EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
             END IF;
-            -- Count this FORWARD iteration against the period budget (DoS protection)
-            period_count := period_count + 1;
-            EXIT WHEN period_count >= period_limit;
-            current_base := current_base + make_interval(months => rule.interval);
-            current_base := date_trunc('month', current_base)
-              + make_interval(days => LEAST(dtstart_day,
-                  date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
-              + (basedate::time)::interval;
-          ELSE
-            EXIT;
           END IF;
+          EXIT WHEN skip_r.done;
         END LOOP;
       END IF;
 
@@ -373,59 +353,29 @@ BEGIN
       current_base := current_base + make_interval(years => rule.interval);
       IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
         -- Restore dtstart month+day to prevent cumulative drift from FORWARD
-        current_base := date_trunc('year', current_base)
-          + make_interval(months => date_part('month', basedate)::INT - 1)
-          + make_interval(days => LEAST(dtstart_day,
-              date_part('day', (date_trunc('year', current_base)
-                + make_interval(months => date_part('month', basedate)::INT)
-                - INTERVAL '1 day'))::INT) - 1)
-          + (basedate::time)::interval;
+        current_base := rrule._restore_yearly_base(current_base, basedate, dtstart_day, (basedate::time)::interval);
         omit_count := 0;
         LOOP
-          EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-          IF rule.skip = 'OMIT' THEN
-            -- Do NOT increment period_count here — the outer loop handles it.
-            -- Skipped years should not count against the iteration budget.
-            current_base := current_base + make_interval(years => rule.interval);
-            current_base := date_trunc('year', current_base)
-              + make_interval(months => date_part('month', basedate)::INT - 1)
-              + make_interval(days => LEAST(dtstart_day,
-                  date_part('day', (date_trunc('year', current_base)
-                    + make_interval(months => date_part('month', basedate)::INT)
-                    - INTERVAL '1 day'))::INT) - 1)
-              + (basedate::time)::interval;
-            EXIT WHEN current_base > maxdate;
-            EXIT WHEN rule.until IS NOT NULL AND current_base > rule.until;
-            omit_count := omit_count + 1;
-            EXIT WHEN omit_count >= period_limit;
-          ELSIF rule.skip = 'FORWARD' THEN
-            current := date_trunc('month', current_base) + INTERVAL '1 month'
-              + (basedate::time)::interval;
-            EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current > rule.until;
-            EXIT WHEN current > maxdate;
+          skip_r := rrule._advance_yearly(
+              current_base, basedate, dtstart_day, rule.interval, rule.skip,
+              rule.until, maxdate, period_limit, omit_count, period_count
+          );
+          current_base := skip_r.current_base;
+          omit_count := skip_r.omit_count;
+          period_count := skip_r.period_count;
+          -- Handle FORWARD emission (skip_r.forward_ts is non-NULL when SKIP=FORWARD produced a date)
+          IF skip_r.forward_ts IS NOT NULL THEN
             occurrence_count := occurrence_count + 1;
             IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
               EXIT;
             END IF;
-            IF current >= mindate THEN
-              RETURN NEXT current;
+            IF skip_r.forward_ts >= mindate THEN
+              RETURN NEXT skip_r.forward_ts;
               emitted_count := emitted_count + 1;
               EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
             END IF;
-            -- Count this FORWARD iteration against the period budget (DoS protection)
-            period_count := period_count + 1;
-            EXIT WHEN period_count >= period_limit;
-            current_base := current_base + make_interval(years => rule.interval);
-            current_base := date_trunc('year', current_base)
-              + make_interval(months => date_part('month', basedate)::INT - 1)
-              + make_interval(days => LEAST(dtstart_day,
-                  date_part('day', (date_trunc('year', current_base)
-                    + make_interval(months => date_part('month', basedate)::INT)
-                    - INTERVAL '1 day'))::INT) - 1)
-              + (basedate::time)::interval;
-          ELSE
-            EXIT;
           END IF;
+          EXIT WHEN skip_r.done;
         END LOOP;
       END IF;
 
@@ -525,6 +475,7 @@ DECLARE
     prev_period_max_ts TIMESTAMP := NULL;
     omit_count INT;
     rule rrule.rrule_parts%ROWTYPE;
+    skip_r rrule._skip_result;  -- Result from SKIP helper functions
 BEGIN
     SELECT * INTO rule FROM rrule.parse_rrule_parts( basedate::TIMESTAMPTZ, repeatrule );
 
@@ -631,50 +582,30 @@ BEGIN
             current_base := current_base + make_interval(months => rule.interval);
             IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
               -- Restore dtstart day-of-month to prevent cumulative drift from FORWARD
-              current_base := date_trunc('month', current_base)
-                + make_interval(days => LEAST(dtstart_day,
-                    date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
-                + (basedate::time)::interval;
+              -- Note: Cast to TIMESTAMPTZ for helper, cast back to TIMESTAMP for storage
+              current_base := rrule._restore_monthly_base(current_base::TIMESTAMPTZ, dtstart_day, (basedate::time)::interval)::TIMESTAMP;
               omit_count := 0;
               LOOP
-                EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-                IF rule.skip = 'OMIT' THEN
-                  -- Do NOT increment period_count here — the outer loop handles it.
-                  -- Skipped months should not count against the iteration budget.
-                  current_base := current_base + make_interval(months => rule.interval);
-                  current_base := date_trunc('month', current_base)
-                    + make_interval(days => LEAST(dtstart_day,
-                        date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
-                    + (basedate::time)::interval;
-                  EXIT WHEN current_base > maxdate;
-                  EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
-                  omit_count := omit_count + 1;
-                  EXIT WHEN omit_count >= period_limit;
-                ELSIF rule.skip = 'FORWARD' THEN
-                  current := (date_trunc('month', current_base) + INTERVAL '1 month'
-                    + (basedate::time)::interval)::TIMESTAMP;
-                  EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
-                  EXIT WHEN current > maxdate;
+                skip_r := rrule._advance_monthly(
+                    current_base::TIMESTAMPTZ, basedate::TIMESTAMPTZ, dtstart_day, rule.interval, rule.skip,
+                    rule.until, maxdate::TIMESTAMPTZ, period_limit, omit_count, period_count
+                );
+                current_base := skip_r.current_base::TIMESTAMP;
+                omit_count := skip_r.omit_count;
+                period_count := skip_r.period_count;
+                -- Handle FORWARD emission (skip_r.forward_ts is non-NULL when SKIP=FORWARD produced a date)
+                IF skip_r.forward_ts IS NOT NULL THEN
                   occurrence_count := occurrence_count + 1;
                   IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
                     EXIT;
                   END IF;
-                  IF current >= mindate THEN
-                    RETURN NEXT current;
+                  IF skip_r.forward_ts::TIMESTAMP >= mindate THEN
+                    RETURN NEXT skip_r.forward_ts::TIMESTAMP;
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                   END IF;
-                  -- Count this FORWARD iteration against the period budget (DoS protection)
-                  period_count := period_count + 1;
-                  EXIT WHEN period_count >= period_limit;
-                  current_base := current_base + make_interval(months => rule.interval);
-                  current_base := date_trunc('month', current_base)
-                    + make_interval(days => LEAST(dtstart_day,
-                        date_part('day', (date_trunc('month', current_base) + INTERVAL '1 month - 1 day'))::INT) - 1)
-                    + (basedate::time)::interval;
-                ELSE
-                  EXIT;
                 END IF;
+                EXIT WHEN skip_r.done;
               END LOOP;
             END IF;
 
@@ -703,59 +634,30 @@ BEGIN
             current_base := current_base + make_interval(years => rule.interval);
             IF rule.bymonthday IS NULL AND rule.byday IS NULL THEN
               -- Restore dtstart month+day to prevent cumulative drift from FORWARD
-              current_base := date_trunc('year', current_base)
-                + make_interval(months => date_part('month', basedate)::INT - 1)
-                + make_interval(days => LEAST(dtstart_day,
-                    date_part('day', (date_trunc('year', current_base)
-                      + make_interval(months => date_part('month', basedate)::INT)
-                      - INTERVAL '1 day'))::INT) - 1)
-                + (basedate::time)::interval;
+              -- Note: Cast to TIMESTAMPTZ for helper, cast back to TIMESTAMP for storage
+              current_base := rrule._restore_yearly_base(current_base::TIMESTAMPTZ, basedate::TIMESTAMPTZ, dtstart_day, (basedate::time)::interval)::TIMESTAMP;
               omit_count := 0;
               LOOP
-                EXIT WHEN date_part('day', current_base)::INT = dtstart_day;
-                IF rule.skip = 'OMIT' THEN
-                  -- Do NOT increment period_count here — the outer loop handles it.
-                  -- Skipped years should not count against the iteration budget.
-                  current_base := current_base + make_interval(years => rule.interval);
-                  current_base := date_trunc('year', current_base)
-                    + make_interval(months => date_part('month', basedate)::INT - 1)
-                    + make_interval(days => LEAST(dtstart_day,
-                        date_part('day', (date_trunc('year', current_base)
-                          + make_interval(months => date_part('month', basedate)::INT)
-                          - INTERVAL '1 day'))::INT) - 1)
-                    + (basedate::time)::interval;
-                  EXIT WHEN current_base > maxdate;
-                  EXIT WHEN rule.until IS NOT NULL AND current_base::TIMESTAMPTZ > rule.until;
-                  omit_count := omit_count + 1;
-                  EXIT WHEN omit_count >= period_limit;
-                ELSIF rule.skip = 'FORWARD' THEN
-                  current := (date_trunc('month', current_base) + INTERVAL '1 month'
-                    + (basedate::time)::interval)::TIMESTAMP;
-                  EXIT WHEN rule.until IS NOT NULL AND current IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
-                  EXIT WHEN current > maxdate;
+                skip_r := rrule._advance_yearly(
+                    current_base::TIMESTAMPTZ, basedate::TIMESTAMPTZ, dtstart_day, rule.interval, rule.skip,
+                    rule.until, maxdate::TIMESTAMPTZ, period_limit, omit_count, period_count
+                );
+                current_base := skip_r.current_base::TIMESTAMP;
+                omit_count := skip_r.omit_count;
+                period_count := skip_r.period_count;
+                -- Handle FORWARD emission (skip_r.forward_ts is non-NULL when SKIP=FORWARD produced a date)
+                IF skip_r.forward_ts IS NOT NULL THEN
                   occurrence_count := occurrence_count + 1;
                   IF rule.count IS NOT NULL AND occurrence_count > rule.count THEN
                     EXIT;
                   END IF;
-                  IF current >= mindate THEN
-                    RETURN NEXT current;
+                  IF skip_r.forward_ts::TIMESTAMP >= mindate THEN
+                    RETURN NEXT skip_r.forward_ts::TIMESTAMP;
                     emitted_count := emitted_count + 1;
                     EXIT WHEN output_limit IS NOT NULL AND emitted_count >= output_limit;
                   END IF;
-                  -- Count this FORWARD iteration against the period budget (DoS protection)
-                  period_count := period_count + 1;
-                  EXIT WHEN period_count >= period_limit;
-                  current_base := current_base + make_interval(years => rule.interval);
-                  current_base := date_trunc('year', current_base)
-                    + make_interval(months => date_part('month', basedate)::INT - 1)
-                    + make_interval(days => LEAST(dtstart_day,
-                        date_part('day', (date_trunc('year', current_base)
-                          + make_interval(months => date_part('month', basedate)::INT)
-                          - INTERVAL '1 day'))::INT) - 1)
-                    + (basedate::time)::interval;
-                ELSE
-                  EXIT;
                 END IF;
+                EXIT WHEN skip_r.done;
               END LOOP;
             END IF;
 
