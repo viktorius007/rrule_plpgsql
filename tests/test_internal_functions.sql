@@ -303,8 +303,8 @@ SELECT 'calculate_safe_iteration_limit()', 'DAILY(10, 1000) = 40000',
     assert_equals('Daily exact', '40000', rrule.calculate_safe_iteration_limit('DAILY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'WEEKLY(10, 1000) = 10000',
-    assert_equals('Weekly exact', '10000', rrule.calculate_safe_iteration_limit('WEEKLY', 10, 1000)::TEXT);
+SELECT 'calculate_safe_iteration_limit()', 'WEEKLY(10, 1000) = 15000',
+    assert_equals('Weekly exact', '15000', rrule.calculate_safe_iteration_limit('WEEKLY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'calculate_safe_iteration_limit()', 'MONTHLY(10, 1000) = 20000',
@@ -375,6 +375,39 @@ INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'calculate_safe_iteration_limit()', 'SECONDLY default interval same as 1',
     assert_equals('Secondly default', '3600',
         rrule.calculate_safe_iteration_limit('SECONDLY', NULL, 10000)::TEXT);
+-- Generator NULL max_count safety: verify COALESCE(_, 1000) protects against excessive iterations
+-- when internal generators are called directly with NULL max_count.
+-- Note: rrule_event_instances_range_tz is NOT STRICT, so NULL max_count is valid input.
+-- Without COALESCE protection, calculate_safe_iteration_limit would return NULL, causing
+-- period_limit to become INT_MAX (2147483647), allowing excessive loop iterations.
+
+-- Test: rrule_event_instances_range_tz with NULL max_count caps at 1000 (COALESCE default)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'Generator NULL max_count capped at 1000',
+    assert_true('NULL max_count capped',
+        (SELECT COUNT(*) <= 1000
+         FROM rrule.rrule_event_instances_range_tz(
+           '2025-01-01 10:00:00'::TIMESTAMP,
+           'FREQ=DAILY',  -- No COUNT/UNTIL = infinite recurrence
+           '2025-01-01'::TIMESTAMP,
+           '2035-01-01'::TIMESTAMP,  -- 10-year range
+           NULL  -- NULL max_count: previously would cause INT_MAX period_limit
+         )));
+
+-- Test: Verify exactly 1000 results with NULL max_count (not fewer due to other caps)
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'calculate_safe_iteration_limit()', 'Generator NULL max_count returns exactly 1000',
+    assert_equals('NULL max_count exactly 1000', '1000',
+        (SELECT COUNT(*)::TEXT
+         FROM rrule.rrule_event_instances_range_tz(
+           '2025-01-01 10:00:00'::TIMESTAMP,
+           'FREQ=DAILY',  -- No COUNT/UNTIL = infinite recurrence
+           '2025-01-01'::TIMESTAMP,
+           '2035-01-01'::TIMESTAMP,  -- 10-year range
+           NULL  -- NULL max_count
+         )));
+
+
 
 -- ============================================================================
 -- SECTION 11: rrule_month_byday_set() Tests

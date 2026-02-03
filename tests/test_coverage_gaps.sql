@@ -6872,4 +6872,77 @@ SELECT
     );
 
 
+
+-- =====================================================================
+-- Issue 61: WEEKLY + BYMONTH sparsity requires increased iteration limit
+-- =====================================================================
+
+-- Test: FREQ=WEEKLY;BYMONTH=12 with COUNT=5 starting in January
+-- With BYMONTH=12, only ~4-5 weeks per year match (December weeks).
+-- Starting in January, this is extremely sparse (~4/52 = 8% match rate).
+-- The 15x WEEKLY multiplier (up from 10x) ensures sufficient iterations.
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 61: WEEKLY+BYMONTH sparsity',
+    'FREQ=WEEKLY;BYMONTH=12;COUNT=5 returns 5 results from January start',
+    assert_equals(
+        'WEEKLY+BYMONTH count',
+        '5',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=WEEKLY;BYMONTH=12;COUNT=5',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))
+    );
+
+-- Test: Verify the exact dates for WEEKLY+BYMONTH=12
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 61: WEEKLY+BYMONTH sparsity',
+    'FREQ=WEEKLY;BYMONTH=12;COUNT=5 returns correct December dates',
+    assert_occurrences_equal(
+        'WEEKLY+BYMONTH dates',
+        ARRAY[
+            '2025-12-03 00:00:00'::TIMESTAMP,
+            '2025-12-10 00:00:00'::TIMESTAMP,
+            '2025-12-17 00:00:00'::TIMESTAMP,
+            '2025-12-24 00:00:00'::TIMESTAMP,
+            '2025-12-31 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=WEEKLY;BYMONTH=12;COUNT=5',
+            '2025-01-01 00:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- Test: WEEKLY+BYMONTH with INTERVAL > 1 (Rule #10: always test INTERVAL > 1)
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 61: WEEKLY+BYMONTH sparsity',
+    'FREQ=WEEKLY;INTERVAL=2;BYMONTH=12;COUNT=3 works correctly',
+    assert_equals(
+        'WEEKLY+BYMONTH+INTERVAL count',
+        '3',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=WEEKLY;INTERVAL=2;BYMONTH=12;COUNT=3',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        ))
+    );
+
+-- Test: TIMESTAMPTZ variant of WEEKLY+BYMONTH
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 61: WEEKLY+BYMONTH sparsity',
+    'TIMESTAMPTZ: FREQ=WEEKLY;BYMONTH=12;COUNT=5 returns 5 results',
+    assert_equals(
+        'TZ WEEKLY+BYMONTH count',
+        '5',
+        (SELECT COUNT(*)::TEXT FROM rrule."all"(
+            'FREQ=WEEKLY;BYMONTH=12;COUNT=5',
+            '2025-01-01 00:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+        ))
+    );
+
+
 ROLLBACK;

@@ -106,7 +106,14 @@ CREATE OR REPLACE FUNCTION parse_rrule_parts(
 DECLARE
   result rrule.rrule_parts%ROWTYPE;
   until_str TEXT;
+  original_tzid TEXT;
 BEGIN
+  -- Preserve TZID case before normalizing (timezone names are case-sensitive)
+  original_tzid := substring(repeatrule from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
+  -- Normalize input to uppercase for case-insensitive matching
+  -- RFC 5545 uses uppercase, but we accept lowercase for user convenience
+  repeatrule := UPPER(repeatrule);
+
   result.base       := basedate;
   until_str         := substring(repeatrule from 'UNTIL=([0-9TZ]+)(;|$)');
 
@@ -186,7 +193,7 @@ BEGIN
   IF result.wkst IS NULL AND repeatrule ~ 'WKST=' THEN
     RAISE EXCEPTION 'Invalid WKST value. WKST must be one of: MO, TU, WE, TH, FR, SA, SU';
   END IF;
-  result.tzid       := substring(repeatrule from 'TZID=([^;]+)(;|$)');
+  result.tzid       := original_tzid;  -- Use preserved case from before uppercase normalization
 
   -- RFC 7529: RSCALE parameter (calendar system)
   result.rscale     := UPPER(substring(repeatrule from 'RSCALE=([A-Za-z]+)(;|$)'));
@@ -1266,7 +1273,7 @@ $$ LANGUAGE plpgsql STABLE;
 --                 to find 1 occurrence (last Monday of month). With monthly-sparse
 --                 filters, we need 20x headroom to guarantee finding matches.
 --
---   WEEKLY × 10:  FREQ=WEEKLY;BYMONTH=12 requires ~10 weeks to find 1 occurrence
+--   WEEKLY × 15:  FREQ=WEEKLY;BYMONTH=12 requires ~13 weeks to find 1 occurrence
 --                 (only weeks in December match). Monthly filters on weekly frequency
 --                 create extreme sparsity.
 --
@@ -1299,7 +1306,7 @@ $$ LANGUAGE plpgsql STABLE;
 --
 -- Examples:
 --   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 4000  (100 × 40)
---   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 500   (50 × 10)
+--   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 750   (50 × 15)
 --   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap, INTERVAL=1)
 --   calculate_safe_iteration_limit('SECONDLY', NULL, 5000, 60) -> 60  (3600/60, INTERVAL-aware)
 --   calculate_safe_iteration_limit('DAILY', 75, 75)       → 3000  (COUNT caps output_limit; multipliers still apply)
@@ -1323,7 +1330,7 @@ BEGIN
   -- LEAST(..., 2147483647) guards against INT4 overflow when effective_max is large
   RETURN CASE frequency
     WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 40, 2147483647)::INT   -- Sparse: BYMONTHDAY filters (1/31 days match)
-    WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 10, 2147483647)::INT   -- Sparse: monthly-pattern filters
+    WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 15, 2147483647)::INT   -- Sparse: BYMONTH filters (~4/52 weeks match = 13x needed)
     WHEN 'HOURLY'   THEN LEAST(effective_max::BIGINT * 2, 2147483647)::INT    -- Moderate: time-of-day filters
     WHEN 'MINUTELY' THEN LEAST(effective_max, FLOOR(1440.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 day of real time
     WHEN 'SECONDLY' THEN LEAST(effective_max, FLOOR(3600.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 hour of real time
@@ -1808,10 +1815,16 @@ BEGIN
 
   -- Now handle BYHOUR, BYMINUTE, BYSECOND, and BYSETPOS
   IF rule.byhour IS NOT NULL OR rule.byminute IS NOT NULL OR rule.bysecond IS NOT NULL OR rule.bysetpos IS NOT NULL THEN
-    -- Generate times within the day and apply BYSETPOS filter
-    -- Pass max_results down (NULL = unlimited, for BYSETPOS which needs full set)
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_day_time_set(after_ts, rule, max_results) r ORDER BY 1;
-    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    -- Performance optimization: bypass cursor when bysetpos IS NULL
+    IF rule.bysetpos IS NOT NULL THEN
+      -- Generate times within the day and apply BYSETPOS filter
+      -- Pass max_results down (NULL = unlimited, for BYSETPOS which needs full set)
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_day_time_set(after_ts, rule, max_results) r ORDER BY 1;
+      RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    ELSE
+      -- Direct query without cursor overhead
+      RETURN QUERY SELECT r FROM rrule.rrule_day_time_set(after_ts, rule, max_results) r ORDER BY 1;
+    END IF;
   ELSE
     -- No sub-day scheduling - return the input time
     RETURN NEXT after_ts;
@@ -1867,9 +1880,14 @@ BEGIN
     END IF;
   END IF;
 
-  -- Pass WKST and max_results to rrule_week_byday_set for proper week boundary calculation
-  OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
-  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  -- Performance optimization: bypass cursor when bysetpos IS NULL
+  IF rule.bysetpos IS NOT NULL THEN
+    -- Pass WKST and max_results to rrule_week_byday_set for proper week boundary calculation
+    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
+    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  ELSE
+    RETURN QUERY SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
+  END IF;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
@@ -1929,19 +1947,33 @@ BEGIN
     END IF;
   END IF;
 
-  -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
-  -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
-  IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
-                INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
-                    ORDER BY 1;
-  ELSIF rule.bymonthday IS NOT NULL THEN
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
-  ELSE
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
-  END IF;
+  -- Performance optimization: bypass cursor when bysetpos IS NULL
+  IF rule.bysetpos IS NOT NULL THEN
+    -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
+    -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
+    IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+                  INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
+                      ORDER BY 1;
+    ELSIF rule.bymonthday IS NOT NULL THEN
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
+    ELSE
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
+    END IF;
 
-  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  ELSE
+    -- Direct query without cursor overhead
+    IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
+      RETURN QUERY SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+                  INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
+                      ORDER BY 1;
+    ELSIF rule.bymonthday IS NOT NULL THEN
+      RETURN QUERY SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
+    ELSE
+      RETURN QUERY SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
+    END IF;
+  END IF;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
@@ -2279,7 +2311,22 @@ BEGIN
     RETURN;
   END IF;
 
-  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  -- Performance optimization: bypass cursor when bysetpos IS NULL
+  IF rule.bysetpos IS NOT NULL THEN
+    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  ELSE
+    -- Fetch all from cursor directly
+    DECLARE
+      valid_date TIMESTAMP WITH TIME ZONE;
+    BEGIN
+      LOOP
+        FETCH curse INTO valid_date;
+        EXIT WHEN NOT FOUND;
+        RETURN NEXT valid_date;
+      END LOOP;
+      CLOSE curse;
+    END;
+  END IF;
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 
@@ -2359,10 +2406,7 @@ BEGIN
   -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
   -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
   -- See calculate_safe_iteration_limit() for detailed security rationale.
-  period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
-  IF period_limit IS NULL THEN
-    period_limit := 2147483647;  -- effectively unlimited
-  END IF;
+  period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
 
   -- Remember dtstart day-of-month for SKIP drift prevention
   dtstart_day := date_part('day', basedate)::INT;
@@ -2846,7 +2890,7 @@ BEGIN
     -- before() must scan all occurrences up to before_date to find the last one,
     -- so we pass a large output_limit to avoid truncation by the generator.
     -- Note: rrule_event_instances_range is STRICT (NULL returns no rows), so we
-    -- pass 50000000 which is large enough to be uncapped yet safe from integer
+    -- pass 1000000 which is large enough for scanning within the maxdate window yet safe from integer
     -- overflow in calculate_safe_iteration_limit (max multiplier 40x = 2B < INT_MAX).
     SELECT occurrence INTO previous_occurrence
     FROM (
@@ -3100,10 +3144,7 @@ BEGIN
     -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
     -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
     -- See calculate_safe_iteration_limit() for detailed security rationale.
-    period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
-    IF period_limit IS NULL THEN
-        period_limit := 2147483647;  -- effectively unlimited
-    END IF;
+    period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
 
     -- Remember dtstart day-of-month for SKIP drift prevention
     dtstart_day := date_part('day', basedate)::INT;
