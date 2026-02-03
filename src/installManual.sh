@@ -14,7 +14,8 @@
 #   PGHOST=localhost PGUSER=myuser ./installManual.sh mydb
 #
 
-set -e  # Exit on error
+set -e          # Exit on error
+set -o pipefail # Exit on pipe failures (e.g., if sed fails)
 
 if [ -z "$1" ]; then
     echo "Error: Database name required"
@@ -37,10 +38,10 @@ echo ""
 echo "Database: $DATABASE"
 echo ""
 
-# Create the rrule_update schema
+# Create the rrule_update schema (CASCADE handles failed previous attempts)
 echo "Creating rrule_update schema..."
-psql -d "$DATABASE" <<SQL
-DROP SCHEMA IF EXISTS rrule_update;
+psql -v ON_ERROR_STOP=on -d "$DATABASE" <<SQL
+DROP SCHEMA IF EXISTS rrule_update CASCADE;
 CREATE SCHEMA rrule_update;
 SQL
 
@@ -50,7 +51,7 @@ sed \
   -e 's/SET search_path = rrule,/SET search_path = rrule_update,/g' \
   -e "s/nspname = 'rrule'/nspname = 'rrule_update'/g" \
   -e 's/rrule\./rrule_update./g' \
-  "$SCRIPT_DIR/rrule.sql" | psql -d "$DATABASE"
+  "$SCRIPT_DIR/rrule.sql" | psql -v ON_ERROR_STOP=on -d "$DATABASE"
 
 # Install rrule_subday.sql if it exists (for sub-day frequency support)
 if [ -f "$SCRIPT_DIR/rrule_subday.sql" ]; then
@@ -58,7 +59,7 @@ if [ -f "$SCRIPT_DIR/rrule_subday.sql" ]; then
   sed \
     -e 's/SET search_path = rrule,/SET search_path = rrule_update,/g' \
     -e 's/rrule\./rrule_update./g' \
-    "$SCRIPT_DIR/rrule_subday.sql" | psql -d "$DATABASE"
+    "$SCRIPT_DIR/rrule_subday.sql" | psql -v ON_ERROR_STOP=on -d "$DATABASE"
 fi
 
 echo ""

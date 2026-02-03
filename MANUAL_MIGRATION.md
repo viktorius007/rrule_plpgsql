@@ -150,7 +150,7 @@ SELECT COUNT(*) FROM get_next_meetings();  -- Should return 10
 
 ```sql
 -- Verify rrule_update works
-SELECT * FROM rrule_update."all"('FREQ=DAILY;COUNT=3', NOW()::TIMESTAMP);
+SELECT * FROM rrule_update."all"('FREQ=DAILY;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP);
 
 -- Test your application with updated objects
 -- Check all views, functions, queries still work correctly

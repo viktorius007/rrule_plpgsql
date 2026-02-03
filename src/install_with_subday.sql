@@ -128,6 +128,14 @@ BEGIN
                 '║ See the complete migration guide:                                           ║' || E'\n' ||
                 '║   github.com/sirrodgepodge/rrule_plpgsql/blob/main/MANUAL_MIGRATION.md     ║' || E'\n' ||
                 '║                                                                             ║' || E'\n' ||
+                '║ You will need to:                                                           ║' || E'\n' ||
+                '║   1. Install new version to rrule_update schema (installManual.sh)          ║' || E'\n' ||
+                '║   2. Update YOUR dependencies above to use rrule_update                     ║' || E'\n' ||
+                '║   3. Test thoroughly with your application                                  ║' || E'\n' ||
+                '║   4. Drop old rrule schema and rename rrule_update to rrule                 ║' || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
+                '║ The guide includes example scripts you can adapt for your specific needs.   ║' || E'\n' ||
+                '║                                                                             ║' || E'\n' ||
                 '╚══════════════════════════════════════════════════════════════════════════════╝' || E'\n';
 
             RAISE EXCEPTION '%', error_msg;
