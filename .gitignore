@@ -18,4 +18,5 @@ Thumbs.db
 tests/output/
 tests/*.log
 CONSENSUS_TEST_GAPS.md
+coverage-report.json
 .claude/settings.local.json
