@@ -923,26 +923,38 @@ VALUES ('Syntax Robustness', 'Trailing semicolon FREQ=DAILY;COUNT=3;',
     )
 );
 
--- Test 5.5: Lowercase freq (should NOT be recognized - parser uses uppercase regex)
--- lowercase 'freq=daily' won't match 'FREQ=([A-Z]+)' so FREQ will be NULL → rejected
+-- Test 5.5: Lowercase freq (now accepted - parser normalizes to uppercase)
+-- lowercase 'freq=daily' is normalized to FREQ=DAILY and processed correctly
 INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('Syntax Robustness', 'Lowercase freq=daily (not recognized)',
-    assert_rrule_rejected(
+VALUES ('Syntax Robustness', 'Lowercase freq=daily accepted',
+    assert_rrule_accepted(
         'Lowercase freq',
         'freq=daily;count=3',
-        '%FREQ parameter is required%'
+        3
     )
 );
 
--- Test 5.6: Mixed case - FREQ uppercase but value lowercase (FREQ=daily)
--- 'FREQ=([A-Z]+)' requires uppercase value
+-- Test 5.6: Mixed case - FREQ uppercase but value lowercase (FREQ=daily) - now accepted
+-- 'FREQ=daily' is normalized to FREQ=DAILY and processed correctly
 INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('Syntax Robustness', 'Mixed case FREQ=daily (not recognized)',
-    assert_rrule_rejected(
+VALUES ('Syntax Robustness', 'Mixed case FREQ=daily accepted',
+    assert_rrule_accepted(
         'Mixed case freq value',
         'FREQ=daily;COUNT=3',
-        '%FREQ parameter is required%'
+        3
     )
+);
+
+-- Test 5.6b: Lowercase interval parameter (Issue 52 regression test)
+-- 'interval=2' was silently ignored before, now normalized to INTERVAL=2
+INSERT INTO validation_test_results (test_category, test_name, status)
+VALUES ('Syntax Robustness', 'Lowercase interval=2 accepted',
+    (SELECT CASE
+        WHEN (SELECT COUNT(*) FROM rrule."all"('FREQ=DAILY;interval=2;COUNT=5', '2025-01-01'::TIMESTAMP) AS t(d)) = 5
+             AND (SELECT d FROM rrule."all"('FREQ=DAILY;interval=2;COUNT=5', '2025-01-01'::TIMESTAMP) AS t(d) OFFSET 1 LIMIT 1) = '2025-01-03 00:00:00'::TIMESTAMP
+        THEN 'PASS [Lowercase interval]'
+        ELSE 'FAIL [Lowercase interval]: interval=2 not working correctly'
+    END)
 );
 
 -- Test 5.7: Lowercase RSCALE value should still be accepted (rscale uses [^;]+ pattern via SKIP handling)
@@ -1052,13 +1064,13 @@ VALUES ('BYxxx Parse Failure', 'BYDAY=XY (unparseable day code)',
     )
 );
 
--- Test 6.2: BYDAY with lowercase day code
+-- Test 6.2: BYDAY with lowercase day code (now accepted - parser normalizes to uppercase)
 INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('BYxxx Parse Failure', 'BYDAY=mo (lowercase not recognized)',
-    assert_rrule_rejected(
+VALUES ('BYxxx Parse Failure', 'BYDAY=mo (lowercase now accepted)',
+    assert_rrule_accepted(
         'BYDAY lowercase',
         'FREQ=WEEKLY;BYDAY=mo;COUNT=3',
-        '%BYDAY value could not be parsed%'
+        3
     )
 );
 

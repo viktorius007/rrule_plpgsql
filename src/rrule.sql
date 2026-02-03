@@ -106,7 +106,14 @@ CREATE OR REPLACE FUNCTION parse_rrule_parts(
 DECLARE
   result rrule.rrule_parts%ROWTYPE;
   until_str TEXT;
+  original_tzid TEXT;
 BEGIN
+  -- Preserve TZID case before normalizing (timezone names are case-sensitive)
+  original_tzid := substring(repeatrule from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
+  -- Normalize input to uppercase for case-insensitive matching
+  -- RFC 5545 uses uppercase, but we accept lowercase for user convenience
+  repeatrule := UPPER(repeatrule);
+
   result.base       := basedate;
   until_str         := substring(repeatrule from 'UNTIL=([0-9TZ]+)(;|$)');
 
@@ -186,7 +193,7 @@ BEGIN
   IF result.wkst IS NULL AND repeatrule ~ 'WKST=' THEN
     RAISE EXCEPTION 'Invalid WKST value. WKST must be one of: MO, TU, WE, TH, FR, SA, SU';
   END IF;
-  result.tzid       := substring(repeatrule from 'TZID=([^;]+)(;|$)');
+  result.tzid       := original_tzid;  -- Use preserved case from before uppercase normalization
 
   -- RFC 7529: RSCALE parameter (calendar system)
   result.rscale     := UPPER(substring(repeatrule from 'RSCALE=([A-Za-z]+)(;|$)'));
@@ -2883,7 +2890,7 @@ BEGIN
     -- before() must scan all occurrences up to before_date to find the last one,
     -- so we pass a large output_limit to avoid truncation by the generator.
     -- Note: rrule_event_instances_range is STRICT (NULL returns no rows), so we
-    -- pass 50000000 which is large enough to be uncapped yet safe from integer
+    -- pass 1000000 which is large enough for scanning within the maxdate window yet safe from integer
     -- overflow in calculate_safe_iteration_limit (max multiplier 40x = 2B < INT_MAX).
     SELECT occurrence INTO previous_occurrence
     FROM (
