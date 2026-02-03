@@ -1266,7 +1266,7 @@ $$ LANGUAGE plpgsql STABLE;
 --                 to find 1 occurrence (last Monday of month). With monthly-sparse
 --                 filters, we need 20x headroom to guarantee finding matches.
 --
---   WEEKLY × 10:  FREQ=WEEKLY;BYMONTH=12 requires ~10 weeks to find 1 occurrence
+--   WEEKLY × 15:  FREQ=WEEKLY;BYMONTH=12 requires ~13 weeks to find 1 occurrence
 --                 (only weeks in December match). Monthly filters on weekly frequency
 --                 create extreme sparsity.
 --
@@ -1299,7 +1299,7 @@ $$ LANGUAGE plpgsql STABLE;
 --
 -- Examples:
 --   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 4000  (100 × 40)
---   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 500   (50 × 10)
+--   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 750   (50 × 15)
 --   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap, INTERVAL=1)
 --   calculate_safe_iteration_limit('SECONDLY', NULL, 5000, 60) -> 60  (3600/60, INTERVAL-aware)
 --   calculate_safe_iteration_limit('DAILY', 75, 75)       → 3000  (COUNT caps output_limit; multipliers still apply)
@@ -1323,7 +1323,7 @@ BEGIN
   -- LEAST(..., 2147483647) guards against INT4 overflow when effective_max is large
   RETURN CASE frequency
     WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 40, 2147483647)::INT   -- Sparse: BYMONTHDAY filters (1/31 days match)
-    WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 10, 2147483647)::INT   -- Sparse: monthly-pattern filters
+    WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 15, 2147483647)::INT   -- Sparse: BYMONTH filters (~4/52 weeks match = 13x needed)
     WHEN 'HOURLY'   THEN LEAST(effective_max::BIGINT * 2, 2147483647)::INT    -- Moderate: time-of-day filters
     WHEN 'MINUTELY' THEN LEAST(effective_max, FLOOR(1440.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 day of real time
     WHEN 'SECONDLY' THEN LEAST(effective_max, FLOOR(3600.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 hour of real time

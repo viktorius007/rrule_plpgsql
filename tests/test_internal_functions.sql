@@ -303,8 +303,8 @@ SELECT 'calculate_safe_iteration_limit()', 'DAILY(10, 1000) = 40000',
     assert_equals('Daily exact', '40000', rrule.calculate_safe_iteration_limit('DAILY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'WEEKLY(10, 1000) = 10000',
-    assert_equals('Weekly exact', '10000', rrule.calculate_safe_iteration_limit('WEEKLY', 10, 1000)::TEXT);
+SELECT 'calculate_safe_iteration_limit()', 'WEEKLY(10, 1000) = 15000',
+    assert_equals('Weekly exact', '15000', rrule.calculate_safe_iteration_limit('WEEKLY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'calculate_safe_iteration_limit()', 'MONTHLY(10, 1000) = 20000',
