@@ -336,7 +336,7 @@ BEGIN
     ELSIF rule.freq = 'YEARLY' THEN
       period_start := date_trunc('year', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
-      FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END) y WHERE y >= min_in_period LOOP
+      FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule, CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END) ELSE NULL END, min_in_period) y LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
         EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
@@ -612,8 +612,8 @@ BEGIN
                     CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
-                         ELSE NULL END) y
-                WHERE y::TIMESTAMP >= min_in_period
+                         ELSE NULL END,
+                    min_in_period::TIMESTAMPTZ) y
             LOOP
                 EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;

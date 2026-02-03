@@ -2210,7 +2210,8 @@ $$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 CREATE OR REPLACE FUNCTION yearly_set(
   after_ts TIMESTAMP WITH TIME ZONE,
   rule rrule.rrule_parts,
-  max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
+  max_results INT DEFAULT NULL,  -- NULL = unlimited, otherwise stop after N results
+  min_in_period TIMESTAMP WITH TIME ZONE DEFAULT NULL  -- Filter: only return dates >= this value
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
   curse REFCURSOR;
@@ -2254,7 +2255,8 @@ BEGIN
       FROM rrule.rrule_yearly_bymonth_set(after_ts, rr,
         CASE WHEN rule.byweekno IS NOT NULL OR rule.byyearday IS NOT NULL
              THEN NULL ELSE max_results END) r
-      WHERE (rule.byweekno IS NULL OR rrule.byweekno_matches_for_year(r, year_start, rule.wkst, rule.byweekno))
+      WHERE (min_in_period IS NULL OR r >= min_in_period)
+        AND (rule.byweekno IS NULL OR rrule.byweekno_matches_for_year(r, year_start, rule.wkst, rule.byweekno))
         AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
       ORDER BY 1;
 
@@ -2266,7 +2268,8 @@ BEGIN
       FROM rrule.rrule_yearly_byweekno_set(after_ts, rule,
         CASE WHEN rule.bymonth IS NOT NULL OR rule.byyearday IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
              THEN NULL ELSE max_results END) r
-      WHERE (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
+      WHERE (min_in_period IS NULL OR r >= min_in_period)
+        AND (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
         AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
         AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
         AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
@@ -2280,7 +2283,8 @@ BEGIN
       FROM rrule.rrule_yearly_byyearday_set(after_ts, rule,
         CASE WHEN rule.bymonth IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
              THEN NULL ELSE max_results END) r
-      WHERE (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
+      WHERE (min_in_period IS NULL OR r >= min_in_period)
+        AND (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
         AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
         AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
       ORDER BY 1;
@@ -2290,20 +2294,48 @@ BEGIN
     OPEN curse SCROLL FOR
       SELECT r
       FROM rrule.rrule_year_byday_set(after_ts, rule.byday, CASE WHEN rule.bymonthday IS NULL THEN max_results ELSE NULL END) r
-      WHERE (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
+      WHERE (min_in_period IS NULL OR r >= min_in_period)
+        AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
       ORDER BY 1;
 
   ELSIF rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL THEN
-    -- Month/day filters without BYMONTH: generate across all months
-    OPEN curse SCROLL FOR
-      SELECT r
-      FROM generate_series(1, 12) m
-      CROSS JOIN LATERAL rrule.monthly_set(
-        date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval,
-        rr,
-        max_results
-      ) r
-      ORDER BY 1;
+    -- Month/day filters without BYMONTH
+    IF rule.bysetpos IS NOT NULL THEN
+      -- BYSETPOS needs full candidate set - use cursor for bysetpos_filter
+      OPEN curse SCROLL FOR
+        SELECT r
+        FROM generate_series(1, 12) m
+        CROSS JOIN LATERAL rrule.monthly_set(
+          date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval,
+          rr,
+          NULL  -- No limit when BYSETPOS active
+        ) r
+        WHERE (min_in_period IS NULL OR r >= min_in_period)
+        ORDER BY 1;
+    ELSE
+      -- No BYSETPOS: iterate months with early exit optimization (Issue 51)
+      DECLARE
+        result_count INT := 0;
+        month_ts TIMESTAMP WITH TIME ZONE;
+        y TIMESTAMP WITH TIME ZONE;
+      BEGIN
+        FOR m IN 1..12 LOOP
+          month_ts := date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval;
+          FOR y IN SELECT r FROM rrule.monthly_set(month_ts, rr,
+                      CASE WHEN max_results IS NULL THEN NULL
+                           ELSE max_results - result_count END) r
+                    WHERE (min_in_period IS NULL OR r >= min_in_period)
+                    ORDER BY 1 LOOP
+            RETURN NEXT y;
+            result_count := result_count + 1;
+            IF max_results IS NOT NULL AND result_count >= max_results THEN
+              RETURN;
+            END IF;
+          END LOOP;
+        END LOOP;
+        RETURN;
+      END;
+    END IF;
 
   ELSE
     -- No BYMONTH/BYWEEKNO/BYYEARDAY/BYMONTHDAY/BYDAY - return anniversary of dtstart
@@ -2517,7 +2549,8 @@ BEGIN
       FOR current IN SELECT y FROM rrule.yearly_set(current_base, rule,
                                                       CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                                                            THEN (CASE WHEN output_limit IS NULL THEN NULL ELSE GREATEST(output_limit - emitted_count, 0) END)
-                                                           ELSE NULL END) y WHERE y >= min_in_period LOOP
+                                                           ELSE NULL END,
+                                                      min_in_period) y LOOP
         EXIT WHEN rule.until IS NOT NULL AND current > rule.until;
         EXIT WHEN current > maxdate;
         occurrence_count := occurrence_count + 1;
@@ -3278,8 +3311,8 @@ BEGIN
                     CASE WHEN rule.bysetpos IS NULL AND rule.bymonthday IS NULL AND rule.bymonth IS NULL
                          THEN (CASE WHEN output_limit IS NULL THEN NULL
                                ELSE GREATEST(output_limit - emitted_count, 0) END)
-                         ELSE NULL END) y
-                WHERE y::TIMESTAMP >= min_in_period
+                         ELSE NULL END,
+                    min_in_period::TIMESTAMPTZ) y
             LOOP
                 EXIT WHEN rule.until IS NOT NULL AND current::TIMESTAMPTZ > rule.until;
                 EXIT WHEN current > maxdate;
