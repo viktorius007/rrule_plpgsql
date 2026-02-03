@@ -16,13 +16,13 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 | `INTERVAL` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Date Filters** | | | | | | | |
 | `BYDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYDAY` with position | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYMONTHDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYMONTHDAY=-1` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYDAY` with ordinal (2MO) | 🚫<sup>4</sup> | 🚫<sup>4</sup> | ✅ | ✅ | 🚫<sup>4</sup> | 🚫<sup>4</sup> | 🚫<sup>4</sup> |
+| `BYMONTHDAY` | ✅ | 🚫<sup>5</sup> | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYMONTHDAY=-1` | ✅ | 🚫<sup>5</sup> | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `BYMONTH` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYYEARDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYYEARDAY` negative | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYWEEKNO` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYYEARDAY` | 🚫<sup>6</sup> | 🚫<sup>6</sup> | 🚫<sup>6</sup> | ✅ | ✅ | ✅ | ✅ |
+| `BYYEARDAY` negative | 🚫<sup>6</sup> | 🚫<sup>6</sup> | 🚫<sup>6</sup> | ✅ | ✅ | ✅ | ✅ |
+| `BYWEEKNO` | 🚫<sup>7</sup> | 🚫<sup>7</sup> | 🚫<sup>7</sup> | ✅ | 🚫<sup>7</sup> | 🚫<sup>7</sup> | 🚫<sup>7</sup> |
 | **Week Configuration** | | | | | | | |
 | `WKST` (week start day) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Time Filters** | | | | | | | |
@@ -32,9 +32,9 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 | **Position Selectors** | | | | | | | |
 | `BYSETPOS` | ✅ | ✅ | ✅ | ✅ | 🚫<sup>2</sup> | 🚫<sup>2</sup> | 🚫<sup>2</sup> |
 | **Special Combinations** | | | | | | | |
-| `BYMONTH` + `BYYEARDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYWEEKNO` + `BYMONTH` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `BYWEEKNO` + `BYYEARDAY` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYMONTH` + `BYYEARDAY` | 🚫<sup>6</sup> | 🚫<sup>6</sup> | 🚫<sup>6</sup> | ✅ | ✅ | ✅ | ✅ |
+| `BYWEEKNO` + `BYMONTH` | 🚫<sup>7</sup> | 🚫<sup>7</sup> | 🚫<sup>7</sup> | ✅ | 🚫<sup>7</sup> | 🚫<sup>7</sup> | 🚫<sup>7</sup> |
+| `BYWEEKNO` + `BYYEARDAY` | 🚫<sup>7</sup> | 🚫<sup>7</sup> | 🚫<sup>7</sup> | ✅ | 🚫<sup>7</sup> | 🚫<sup>7</sup> | 🚫<sup>7</sup> |
 
 **Legend:**
 - ✅ = Fully supported and enabled
@@ -70,6 +70,33 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
    - **When safe to enable:** Single-tenant deployments with application-level validation and query timeouts
    - **See:** [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md) for complete guide
 
+<sup>4</sup> **BYDAY with Ordinal (2MO, -1FR) Restrictions:**
+   - **Status:** Raises exception for non-MONTHLY/YEARLY frequencies
+   - **RFC 5545:** Section 3.3.10 states "BYDAY MUST NOT be specified with a numeric value when the FREQ rule part is not set to MONTHLY or YEARLY"
+   - **Why?** Ordinals like "2nd Monday" or "last Friday" are only meaningful within a month or year context
+   - **Valid usage:** `FREQ=MONTHLY;BYDAY=2MO` ✅ or `FREQ=YEARLY;BYMONTH=11;BYDAY=4TH` ✅
+   - **Invalid usage:** `FREQ=DAILY;BYDAY=2MO` 🚫 or `FREQ=WEEKLY;BYDAY=-1FR` 🚫
+
+<sup>5</sup> **BYMONTHDAY with WEEKLY Frequency:**
+   - **Status:** Raises exception
+   - **RFC 5545:** Section 3.3.10 states "BYMONTHDAY MUST NOT be specified when the FREQ rule part is set to WEEKLY"
+   - **Why?** Day-of-month filters are not applicable to weekly recurrence patterns
+   - **Workaround:** Use `FREQ=DAILY;BYMONTHDAY=15` or `FREQ=MONTHLY;BYMONTHDAY=15` instead
+
+<sup>6</sup> **BYYEARDAY with DAILY/WEEKLY/MONTHLY Frequencies:**
+   - **Status:** Raises exception
+   - **RFC 5545:** Section 3.3.10 states "BYYEARDAY MUST NOT be specified when the FREQ rule part is set to DAILY, WEEKLY, or MONTHLY"
+   - **Why?** Year-day filters are only meaningful with YEARLY frequency (or sub-day frequencies where they act as a filter)
+   - **Valid usage:** `FREQ=YEARLY;BYYEARDAY=100` ✅ (day 100 of each year)
+   - **Invalid usage:** `FREQ=DAILY;BYYEARDAY=100` 🚫
+
+<sup>7</sup> **BYWEEKNO Restrictions:**
+   - **Status:** Raises exception for non-YEARLY frequencies
+   - **RFC 5545:** Section 3.3.10 states "BYWEEKNO MUST NOT be specified when the FREQ rule part is set to anything other than YEARLY"
+   - **Why?** ISO week numbers are only meaningful in the context of a year
+   - **Valid usage:** `FREQ=YEARLY;BYWEEKNO=10;BYDAY=MO` ✅ (Monday of week 10 each year)
+   - **Invalid usage:** `FREQ=MONTHLY;BYWEEKNO=10` 🚫
+
 ---
 
 ## Frequency Details
@@ -80,26 +107,30 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Use case:** "Every day at 10 AM", "Weekdays only", "Every 3 days"
 - **Max occurrences/year:** 365
 - **Performance:** Excellent
-- **Supports:** All date filters, time filters (BYHOUR/BYMINUTE/BYSECOND), BYSETPOS
+- **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYHOUR/BYMINUTE/BYSECOND, BYSETPOS
+- **Not supported:** BYDAY ordinals (2MO), BYYEARDAY, BYWEEKNO
 
 **`FREQ=WEEKLY`**
 - **Use case:** "Every Monday", "Mon/Wed/Fri", "Every 2 weeks"
 - **Max occurrences/year:** 52
 - **Performance:** Excellent
-- **Supports:** All date filters, BYSETPOS
+- **Supports:** BYDAY, BYMONTH, BYSETPOS, WKST
+- **Not supported:** BYDAY ordinals, BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYHOUR/BYMINUTE/BYSECOND
 
 **`FREQ=MONTHLY`**
 - **Use case:** "Last day of month", "2nd Tuesday", "Every 3 months"
 - **Max occurrences/year:** 12
 - **Performance:** Excellent
-- **Supports:** All date filters, BYSETPOS
+- **Supports:** BYDAY (with ordinals), BYMONTH, BYMONTHDAY, BYSETPOS
+- **Not supported:** BYYEARDAY, BYWEEKNO, BYHOUR/BYMINUTE/BYSECOND
 
 **`FREQ=YEARLY`**
 - **Use case:** "Birthday", "Anniversary", "Day 100 of each year", "Week 10 of each year"
-- **Max occurrences/year:** 1
+- **Max occurrences/year:** 1 (base), expandable with BYMONTH/BYDAY
 - **Performance:** Excellent
-- **Supports:** All date filters including BYYEARDAY (positive & negative), BYWEEKNO, BYSETPOS
+- **Supports:** BYDAY (with ordinals), BYMONTH, BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYSETPOS
 - **Note:** BYMONTH and BYYEARDAY can be combined; results are the intersection (may be empty)
+- **Note:** BYDAY ordinals cannot be used when BYWEEKNO is specified (RFC 5545 prohibition)
 
 ### ⚠️ Sub-Day Frequencies (Implemented, Disabled by Default)
 
@@ -109,6 +140,8 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Max occurrences/year:** 8,760
 - **Risk:** Medium - manageable with proper limits
 - **Recommended limits:** COUNT ≤ 1,000, UNTIL ≤ 7 days
+- **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYYEARDAY, BYHOUR/BYMINUTE/BYSECOND
+- **Not supported:** BYDAY ordinals, BYWEEKNO, BYSETPOS
 - **How to enable:** See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
 
 **`FREQ=MINUTELY`**
@@ -117,6 +150,8 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Max occurrences/year:** 525,600
 - **Risk:** High - can exhaust resources
 - **Recommended limits:** COUNT ≤ 1,000, UNTIL ≤ 24 hours
+- **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYYEARDAY, BYHOUR/BYMINUTE/BYSECOND
+- **Not supported:** BYDAY ordinals, BYWEEKNO, BYSETPOS
 - **How to enable:** See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
 
 **`FREQ=SECONDLY`**
@@ -125,6 +160,8 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Max occurrences/year:** 31,536,000
 - **Risk:** Critical - denial-of-service vector
 - **Recommended limits:** COUNT ≤ 1,000, UNTIL ≤ 1 hour
+- **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYYEARDAY, BYHOUR/BYMINUTE/BYSECOND
+- **Not supported:** BYDAY ordinals, BYWEEKNO, BYSETPOS
 - **How to enable:** See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
 
 ---

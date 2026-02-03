@@ -86,6 +86,7 @@ TEST_FILES=(
   "tests/branches/test_skip_branches.sql"
   "tests/branches/test_branch_coverage.sql"
   "tests/security/test_budget_enforcement.sql"
+  "tests/fuzz/test_property_invariants.sql"
 )
 
 # Additional test files that require sub-day frequency support
