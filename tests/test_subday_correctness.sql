@@ -1172,4 +1172,112 @@ BEGIN
         ELSE 'FAIL - Expected: ' || expected::TEXT || ', Got: ' || COALESCE(actual::TEXT, 'NULL') END);
 END;
 $$;
+
+-- ============================================================================
+-- SECTION 13: BYYEARDAY Filter Tests for Sub-Day Frequencies
+-- ============================================================================
+\echo ''
+\echo '--- Section 13: BYYEARDAY Filter for Sub-Day Frequencies ---'
+
+-- Test 13.1: HOURLY + BYYEARDAY=1 returns only Jan 1 hours
+-- Starting at 00:00, we get 24 hours on Jan 1 before hitting day 2
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'BYYEARDAY Filter',
+    'HOURLY + BYYEARDAY=1 returns only Jan 1 hours',
+    assert_occurrences_equal(
+        'HOURLY BYYEARDAY=1',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-01 01:00:00'::TIMESTAMP,
+            '2025-01-01 02:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=HOURLY;BYYEARDAY=1;COUNT=3', '2025-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test 13.2: HOURLY + BYYEARDAY=-1 returns only Dec 31 hours
+-- Start on Dec 31 so we're already on day -1 (last day of year)
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'BYYEARDAY Filter',
+    'HOURLY + BYYEARDAY=-1 returns only Dec 31 hours',
+    assert_occurrences_equal(
+        'HOURLY BYYEARDAY=-1',
+        ARRAY[
+            '2025-12-31 00:00:00'::TIMESTAMP,
+            '2025-12-31 01:00:00'::TIMESTAMP,
+            '2025-12-31 02:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=HOURLY;BYYEARDAY=-1;COUNT=3', '2025-12-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test 13.3: MINUTELY + BYYEARDAY=100 returns only Apr 10 minutes (day 100 in non-leap year)
+-- Start at midnight on day 100 so we can get multiple occurrences within DoS period limit
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'BYYEARDAY Filter',
+    'MINUTELY + BYYEARDAY=100 returns only Apr 10 minutes',
+    assert_occurrences_equal(
+        'MINUTELY BYYEARDAY=100',
+        ARRAY[
+            '2025-04-10 00:00:00'::TIMESTAMP,
+            '2025-04-10 00:01:00'::TIMESTAMP,
+            '2025-04-10 00:02:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MINUTELY;BYYEARDAY=100;COUNT=3', '2025-04-10 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test 13.4: SECONDLY + BYYEARDAY=365 returns only Dec 31 seconds (day 365 in non-leap year)
+-- Start at midnight on Dec 31 so we can get multiple occurrences within DoS period limit
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'BYYEARDAY Filter',
+    'SECONDLY + BYYEARDAY=365 returns only Dec 31 seconds',
+    assert_occurrences_equal(
+        'SECONDLY BYYEARDAY=365',
+        ARRAY[
+            '2025-12-31 00:00:00'::TIMESTAMP,
+            '2025-12-31 00:00:01'::TIMESTAMP,
+            '2025-12-31 00:00:02'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=SECONDLY;BYYEARDAY=365;COUNT=3', '2025-12-31 00:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test 13.5: HOURLY + BYYEARDAY with multiple values
+-- Start on Jan 1, testing that both day 1 and day 2 pass the filter
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'BYYEARDAY Filter',
+    'HOURLY + BYYEARDAY=1,2 returns Jan 1 and Jan 2 hours',
+    assert_occurrences_equal(
+        'HOURLY BYYEARDAY=1,2',
+        ARRAY[
+            '2025-01-01 22:00:00'::TIMESTAMP,
+            '2025-01-01 23:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-02 01:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=HOURLY;BYYEARDAY=1,2;COUNT=4', '2025-01-01 22:00:00'::TIMESTAMP) AS occurrence)
+    );
+
+-- Test 13.6: Verify BYYEARDAY filtering rejects non-matching days
+-- HOURLY starting Jan 2 with BYYEARDAY=1 should skip Jan 2 and only match Jan 1 of next year
+-- But due to period_limit for HOURLY, let's verify with a dtstart on Jan 1 that Jan 2 gets filtered
+INSERT INTO subday_test_results (test_category, test_name, status)
+SELECT
+    'BYYEARDAY Filter',
+    'HOURLY + BYYEARDAY=1 filters out Jan 2 hours',
+    assert_equals(
+        'HOURLY BYYEARDAY=1 filter check',
+        '0',
+        (SELECT COUNT(*)::TEXT
+         FROM rrule."all"('FREQ=HOURLY;BYYEARDAY=1;COUNT=100', '2025-01-02 00:00:00'::TIMESTAMP) AS occurrence
+         WHERE date_part('doy', occurrence) != 1)
+    );
+
 ROLLBACK;

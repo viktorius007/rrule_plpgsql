@@ -1298,6 +1298,7 @@ $$ LANGUAGE plpgsql STABLE;
 --   rrule_count    - COUNT parameter from RRULE, or NULL if not specified (used as fallback)
 --   requested_max  - Maximum occurrences requested by API caller
 --   interval_val   - INTERVAL parameter from RRULE (used to scale sub-day DoS caps; DEFAULT 1)
+--   has_sparse_calendar_filter - TRUE if BYMONTH or BYYEARDAY is present (requires larger multipliers for sub-day frequencies)
 --
 -- Returns:
 --   Safe iteration limit that balances:
@@ -1310,12 +1311,14 @@ $$ LANGUAGE plpgsql STABLE;
 --   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap, INTERVAL=1)
 --   calculate_safe_iteration_limit('SECONDLY', NULL, 5000, 60) -> 60  (3600/60, INTERVAL-aware)
 --   calculate_safe_iteration_limit('DAILY', 75, 75)       → 3000  (COUNT caps output_limit; multipliers still apply)
+--   calculate_safe_iteration_limit('HOURLY', 3, 3, 1, TRUE) → 30000 (sparse calendar filter: BYMONTH can span years)
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION calculate_safe_iteration_limit(
   frequency TEXT,
   rrule_count INT,
   requested_max INT,
-  interval_val INT DEFAULT 1
+  interval_val INT DEFAULT 1,
+  has_sparse_calendar_filter BOOLEAN DEFAULT FALSE
 ) RETURNS INT AS $$
 DECLARE
   effective_max INT;
@@ -1331,7 +1334,11 @@ BEGIN
   RETURN CASE frequency
     WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 40, 2147483647)::INT   -- Sparse: BYMONTHDAY filters (1/31 days match)
     WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 15, 2147483647)::INT   -- Sparse: BYMONTH filters (~4/52 weeks match = 13x needed)
-    WHEN 'HOURLY'   THEN LEAST(effective_max::BIGINT * 2, 2147483647)::INT    -- Moderate: time-of-day filters
+    WHEN 'HOURLY'   THEN
+      CASE WHEN has_sparse_calendar_filter
+        THEN LEAST(effective_max::BIGINT * 10000, 2147483647)::INT  -- Sparse: BYMONTH/BYYEARDAY can span years (8760 hours/year)
+        ELSE LEAST(effective_max::BIGINT * 2, 2147483647)::INT      -- Moderate: time-of-day filters (BYHOUR, etc.)
+      END
     WHEN 'MINUTELY' THEN LEAST(effective_max, FLOOR(1440.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 day of real time
     WHEN 'SECONDLY' THEN LEAST(effective_max, FLOOR(3600.0 / GREATEST(interval_val, 1))::INT)  -- DoS protection: max 1 hour of real time
     WHEN 'MONTHLY'  THEN GREATEST(LEAST(effective_max::BIGINT * 20, 2147483647)::INT, 1200)  -- Sparse: BYMONTH+BYDAY can be very sparse; min 100 years

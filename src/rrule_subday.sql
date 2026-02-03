@@ -89,6 +89,10 @@ BEGIN
     RETURN;
   END IF;
 
+  IF rule.byyearday IS NOT NULL AND NOT rrule.test_byyearday_rule(after_ts, rule.byyearday) THEN
+    RETURN;
+  END IF;
+
   -- Apply hour filter
   IF rule.byhour IS NOT NULL AND NOT date_part('hour', after_ts) = ANY (rule.byhour) THEN
     RETURN;
@@ -133,6 +137,10 @@ BEGIN
     RETURN;
   END IF;
 
+  IF rule.byyearday IS NOT NULL AND NOT rrule.test_byyearday_rule(after_ts, rule.byyearday) THEN
+    RETURN;
+  END IF;
+
   IF rule.byhour IS NOT NULL AND NOT date_part('hour', after_ts) = ANY (rule.byhour) THEN
     RETURN;
   END IF;
@@ -173,6 +181,10 @@ BEGIN
   END IF;
 
   IF rule.byday IS NOT NULL AND NOT rrule.test_byday_rule(after_ts, rule.byday) THEN
+    RETURN;
+  END IF;
+
+  IF rule.byyearday IS NOT NULL AND NOT rrule.test_byyearday_rule(after_ts, rule.byyearday) THEN
     RETURN;
   END IF;
 
@@ -232,7 +244,11 @@ BEGIN
   END IF;
 
   -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
-  period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
+  -- Pass has_sparse_calendar_filter=TRUE when BYMONTH or BYYEARDAY present (sub-day + calendar filter can span years)
+  period_limit := COALESCE(rrule.calculate_safe_iteration_limit(
+    rule.freq, rule.count, output_limit, rule.interval,
+    rule.bymonth IS NOT NULL OR rule.byyearday IS NOT NULL
+  ), 1000);
 
   IF rule.freq IS NULL THEN
     RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required';
@@ -482,7 +498,11 @@ BEGIN
         output_limit := LEAST(output_limit, rule.count);
     END IF;
 
-    period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
+    -- Pass has_sparse_calendar_filter=TRUE when BYMONTH or BYYEARDAY present (sub-day + calendar filter can span years)
+    period_limit := COALESCE(rrule.calculate_safe_iteration_limit(
+      rule.freq, rule.count, output_limit, rule.interval,
+      rule.bymonth IS NOT NULL OR rule.byyearday IS NOT NULL
+    ), 1000);
 
     dtstart_day := date_part('day', basedate)::INT;
 
