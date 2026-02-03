@@ -76,8 +76,10 @@ function buildDriverSafeSQL(installFile, baseDir) {
         const inlined = fs.readFileSync(path.join(baseDir, includeFile), 'utf8');
         return stripSessionState(inlined);
       }
-      // Strip other psql meta-commands (lines starting with backslash)
-      if (trimmed.startsWith('\\')) {
+      // Strip known psql meta-commands explicitly (not all backslash lines)
+      // This preserves SQL containing escaped strings at line start (e.g., E'\\n...')
+      // Supported meta-commands: \set, \echo, \i, \ir (already handled above), \df, \dt
+      if (/^\\(set|echo|i|ir|df|dt)( |$)/i.test(trimmed)) {
         return '';
       }
       // Strip SET/RESET timezone commands that leak into connection pool
