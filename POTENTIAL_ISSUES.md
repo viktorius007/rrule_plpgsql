@@ -16,7 +16,6 @@ An issue qualifies for fixing when its report count meets the severity threshold
 ## Document Structure
 
 - **Open Issues** — Active issues pending fix or verification
-- **Closed Issues** — Resolved issues with resolution type and commit reference
 - **Verified Non-Issues** — False positives and design decisions (prevents re-reporting)
 
 ## Field Definitions
@@ -25,7 +24,6 @@ An issue qualifies for fixing when its report count meets the severity threshold
 |-------|--------|---------|
 | **Verified** | Yes / No / Pending | Has the issue been confirmed to exist? |
 | **Status** | Pending Fix / Needs Verification / Blocked | Current state |
-| **Resolution** | Fixed / Won't Fix / Duplicate / Cannot Reproduce | How the issue was closed |
 | **Verdict** | False Positive / Design Decision / Already Tested / Invalid Assumption | Why it's not an issue |
 
 ---
@@ -36,65 +34,10 @@ Issues pending fix or verification. Format includes: description, category, seve
 
 ---
 
-## Issue 9: npm buildDriverSafeSQL strips all backslash-prefixed lines
-
-**Category:** Integration & Real-World Usage
-**Severity:** Low | **Reports:** 1 | **Verified:** Yes | **Status:** Pending Fix
-
-The `buildDriverSafeSQL()` function in `index.js` uses `trimmed.startsWith('\\')` to strip lines, removing any line starting with a backslash. While this works for current code (only psql meta-commands like `\ir`, `\set`, `\echo` start with backslash), it's fragile. Future SQL containing escaped string literals at line start (e.g., `E'\\n...'`) would be incorrectly stripped.
-
-**Evidence:** Code inspection confirms the pattern. Verified no current SQL files are affected (searched for lines starting with `E'\\`).
-
-**Location:** `index.js` line 80.
-
-**Note:** No current SQL files trigger this. Low priority — a safer approach would be to explicitly match known meta-commands (`\ir`, `\set`, `\echo`, `\i`, `\df`, `\dt`).
-
-**Fix:** 1 edit in `index.js`
-**Complexity:** simple
-
----
-
-## Issue 49: Internal generators accept NULL max_count (unreachable via public API)
-
-**Category:** Safety & Security
-**Severity:** Low | **Reports:** 1 | **Verified:** Yes | **Status:** Pending Fix
-
-When `calculate_safe_iteration_limit` returns NULL, generators set `period_limit` to INT_MAX. This path is unreachable through the public API (all functions pass non-NULL max_count), but internal functions could be called directly by database users with EXECUTE privilege.
-
-**Evidence:** Code inspection confirms the pattern at lines 2363-2364 and 3104-3105.
-
-**Note:** Low priority security hardening. The `maxdate` check in the WHILE loop provides secondary protection.
-
-**Location:** `src/rrule.sql:2363-2364`, `src/rrule.sql:3104-3105`.
-
-**Fix:** 4 edits (add COALESCE with sensible default) + tests
-**Complexity:** intermediate
-**Quadruple:** Yes
-
----
-
-## Issue 50: rrule_bysetpos_filter uses cursor even when bysetpos IS NULL
-
-**Category:** Performance
-**Severity:** Low | **Reports:** 1 | **Verified:** Yes | **Status:** Pending Fix
-
-When `bysetpos IS NULL`, `rrule_bysetpos_filter` fetches rows one at a time in a loop. Set functions route through this cursor path even without BYSETPOS, adding overhead.
-
-**Evidence:** Code inspection confirms cursor FETCH loop at lines 1273-1278.
-
-**Note:** Performance optimization. Impact depends on candidate set size per period (typically small).
-
-**Location:** `src/rrule.sql:1273-1278`.
-
-**Fix:** Bypass cursor when bysetpos IS NULL (return cursor rows directly)
-**Complexity:** intermediate
-
----
-
 ## Issue 51: yearly_set CROSS JOIN always evaluates all 12 months
 
 **Category:** Performance
-**Severity:** Low | **Reports:** 2 | **Verified:** Yes | **Status:** Pending Fix
+**Severity:** Low | **Reports:** 2 | **Verified:** Yes | **Status:** Blocked
 
 `yearly_set` without BYMONTH opens a cursor over `generate_series(1,12) CROSS JOIN LATERAL monthly_set`. All 12 months execute even if earlier months produced enough results for `max_results`.
 
@@ -107,75 +50,7 @@ When `bysetpos IS NULL`, `rrule_bysetpos_filter` fetches rows one at a time in a
 **Fix:** Track running count and break early when max_results reached
 **Complexity:** simple
 
----
-
-## Issue 52: Lowercase RRULE parameters silently ignored
-
-**Category:** Input Validation
-**Severity:** Low | **Reports:** 1 | **Verified:** Yes | **Status:** Pending Fix
-
-Lowercase RRULE parameters like `interval=2` are silently ignored (only uppercase `INTERVAL=2` works). The extraction regexes use case-sensitive matching, so `FREQ=DAILY;interval=2;COUNT=5` returns consecutive days instead of every-other-day.
-
-**Evidence:** Tested 2026-02-03:
-```sql
-SELECT * FROM rrule."all"('FREQ=DAILY;interval=2;COUNT=5', '2025-01-01'::TIMESTAMP);
--- Returns: 2025-01-01, 01-02, 01-03, 01-04, 01-05 (consecutive, not every 2 days)
-SELECT * FROM rrule."all"('FREQ=DAILY;INTERVAL=2;COUNT=5', '2025-01-01'::TIMESTAMP);
--- Returns: 2025-01-01, 01-03, 01-05, 01-07, 01-09 (correct every 2 days)
-```
-
-**Location:** `src/rrule.sql` — all `substring(... from 'PARAM=...')` regexes.
-
-**Fix:** Either make extraction case-insensitive, or reject lowercase parameters with helpful error
-**Complexity:** simple
-
----
-
-## Issue 53: TIMESTAMP before() stale comment about max_count value
-
-**Category:** Documentation
-**Severity:** Low | **Reports:** 1 | **Verified:** Yes | **Status:** Pending Fix
-
-Comment at line 2849 reads "pass 50000000 which is large enough to be uncapped" but the actual code at line 2859 passes 1000000.
-
-**Evidence:** Tested 2026-02-03 — Code inspection confirms mismatch.
-
-**Location:** `src/rrule.sql:2849` (comment), `src/rrule.sql:2859` (code).
-
-**Fix:** 1 edit in `src/rrule.sql` (update comment to match code)
-**Complexity:** simple
-
----
-
----
-
-## Issue 61: WEEKLY + BYMONTH sparsity causes insufficient iteration limit
-
-**Category:** Functional Correctness
-**Severity:** Medium | **Reports:** 1 | **Verified:** Yes | **Status:** Pending Fix
-
-`FREQ=WEEKLY;BYMONTH=12;COUNT=5` starting from January returns only 2 results instead of 5. The 10x sparsity multiplier in `calculate_safe_iteration_limit` is insufficient for very sparse rules where only ~5/52 weeks match (December weeks from January start = ~10% match rate).
-
-**Evidence:** Tested 2026-02-03:
-```sql
-SELECT count(*) FROM rrule."all"('FREQ=WEEKLY;BYMONTH=12;COUNT=5', '2025-01-01'::TIMESTAMP);
--- Returns 2 instead of 5
-```
-
-**Location:** `src/rrule.sql` — `calculate_safe_iteration_limit` function and WEEKLY branch multiplier.
-
-**Fix:** Increase WEEKLY multiplier or add BYMONTH-aware adjustment
-**Complexity:** intermediate
-
----
-
-# Closed Issues
-
-Issues that have been resolved. Preserved for historical reference.
-
----
-
-(No closed issues yet. When an open issue is fixed, move it here with resolution details.)
+**Blocker:** 2026-02-03 — Fix attempt caused test regressions. The cursor-based approach with early exit breaks existing tests. Needs deeper investigation into yearly_set interaction with BYSETPOS and other modifiers.
 
 ---
 
