@@ -1001,4 +1001,213 @@ SELECT
     ELSE 'FAIL: duplicate dates found in SKIP=FORWARD BYMONTH result'
     END;
 
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP: SKIP + INTERVAL > 1 (CLAUDE.md Rule #10 coverage)'
+\echo '==================================================================='
+\echo 'Tests verifying SKIP behavior interacts correctly with INTERVAL > 1'
+\echo ''
+
+-- MONTHLY;INTERVAL=2;SKIP=BACKWARD starting Jan 31
+-- Every 2 months from Jan: Jan, Mar, May, Jul, Sep, Nov
+-- Jan 31 -> Jan 31 (valid), Mar 31 -> Mar 31 (valid), May 31 -> May 31 (valid),
+-- Jul 31 -> Jul 31 (valid), Sep 31 -> Sep 30 (backward), Nov 31 -> Nov 30 (backward)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'MONTHLY INTERVAL=2 SKIP=BACKWARD day 31',
+    assert_occurrences_equal(
+        'BACKWARD MONTHLY INTERVAL=2',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-03-31 10:00:00'::TIMESTAMP,
+            '2024-05-31 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP,
+            '2024-09-30 10:00:00'::TIMESTAMP,
+            '2024-11-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=BACKWARD;COUNT=6',
+            '2024-01-31 10:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- MONTHLY;INTERVAL=2;SKIP=FORWARD starting Jan 31
+-- Every 2 months from Jan: Jan, Mar, May, Jul, Sep, Nov
+-- Jan 31 -> Jan 31, Mar 31 -> Mar 31, May 31 -> May 31,
+-- Jul 31 -> Jul 31, Sep 31 -> Oct 1 (forward), Nov 31 -> Dec 1 (forward)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'MONTHLY INTERVAL=2 SKIP=FORWARD day 31',
+    assert_occurrences_equal(
+        'FORWARD MONTHLY INTERVAL=2',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-03-31 10:00:00'::TIMESTAMP,
+            '2024-05-31 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP,
+            '2024-10-01 10:00:00'::TIMESTAMP,
+            '2024-12-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=6',
+            '2024-01-31 10:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- YEARLY;INTERVAL=2;SKIP=BACKWARD starting Feb 29 2024
+-- Every 2 years: 2024, 2026, 2028, 2030
+-- 2024-02-29 (leap), 2026-02-28 (backward), 2028-02-29 (leap), 2030-02-28 (backward)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'YEARLY INTERVAL=2 SKIP=BACKWARD Feb 29',
+    assert_occurrences_equal(
+        'BACKWARD YEARLY INTERVAL=2',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2026-02-28 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP,
+            '2030-02-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=BACKWARD;COUNT=4',
+            '2024-02-29 10:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- YEARLY;INTERVAL=2;SKIP=FORWARD starting Feb 29 2024
+-- Every 2 years: 2024, 2026, 2028
+-- 2024-02-29 (leap), 2026-03-01 (forward), 2028-02-29 (leap)
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'YEARLY INTERVAL=2 SKIP=FORWARD Feb 29',
+    assert_occurrences_equal(
+        'FORWARD YEARLY INTERVAL=2',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2026-03-01 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=3',
+            '2024-02-29 10:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+-- MONTHLY;INTERVAL=3;SKIP=BACKWARD starting Jan 31 (sparser test)
+-- Every 3 months from Jan: Jan, Apr, Jul, Oct
+-- Jan 31 -> Jan 31, Apr 31 -> Apr 30 (backward), Jul 31 -> Jul 31, Oct 31 -> Oct 31
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'MONTHLY INTERVAL=3 SKIP=BACKWARD day 31',
+    assert_occurrences_equal(
+        'BACKWARD MONTHLY INTERVAL=3',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-04-30 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP,
+            '2024-10-31 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=3;RSCALE=GREGORIAN;SKIP=BACKWARD;COUNT=4',
+            '2024-01-31 10:00:00'::TIMESTAMP
+         ) AS occurrence)
+    );
+
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP: SKIP + INTERVAL > 1 via TIMESTAMPTZ API (Quadruple parity)'
+\echo '==================================================================='
+\echo 'Same tests through TIMESTAMPTZ API to verify TZ generator parity'
+\echo ''
+
+-- MONTHLY;INTERVAL=2;SKIP=BACKWARD via TIMESTAMPTZ API
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'TIMESTAMPTZ: MONTHLY INTERVAL=2 SKIP=BACKWARD day 31',
+    assert_occurrences_equal(
+        'TZ BACKWARD MONTHLY INTERVAL=2',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-03-31 10:00:00'::TIMESTAMP,
+            '2024-05-31 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP,
+            '2024-09-30 10:00:00'::TIMESTAMP,
+            '2024-11-30 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence::TIMESTAMP ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=BACKWARD;COUNT=6',
+            '2024-01-31 10:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+         ) AS occurrence)
+    );
+
+-- MONTHLY;INTERVAL=2;SKIP=FORWARD via TIMESTAMPTZ API
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'TIMESTAMPTZ: MONTHLY INTERVAL=2 SKIP=FORWARD day 31',
+    assert_occurrences_equal(
+        'TZ FORWARD MONTHLY INTERVAL=2',
+        ARRAY[
+            '2024-01-31 10:00:00'::TIMESTAMP,
+            '2024-03-31 10:00:00'::TIMESTAMP,
+            '2024-05-31 10:00:00'::TIMESTAMP,
+            '2024-07-31 10:00:00'::TIMESTAMP,
+            '2024-10-01 10:00:00'::TIMESTAMP,
+            '2024-12-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence::TIMESTAMP ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=6',
+            '2024-01-31 10:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+         ) AS occurrence)
+    );
+
+-- YEARLY;INTERVAL=2;SKIP=BACKWARD via TIMESTAMPTZ API
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'TIMESTAMPTZ: YEARLY INTERVAL=2 SKIP=BACKWARD Feb 29',
+    assert_occurrences_equal(
+        'TZ BACKWARD YEARLY INTERVAL=2',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2026-02-28 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP,
+            '2030-02-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence::TIMESTAMP ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=BACKWARD;COUNT=4',
+            '2024-02-29 10:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+         ) AS occurrence)
+    );
+
+-- YEARLY;INTERVAL=2;SKIP=FORWARD via TIMESTAMPTZ API
+INSERT INTO skip_test_results (test_name, status)
+SELECT
+    'TIMESTAMPTZ: YEARLY INTERVAL=2 SKIP=FORWARD Feb 29',
+    assert_occurrences_equal(
+        'TZ FORWARD YEARLY INTERVAL=2',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2026-03-01 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence::TIMESTAMP ORDER BY occurrence)
+         FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=2;RSCALE=GREGORIAN;SKIP=FORWARD;COUNT=3',
+            '2024-02-29 10:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+         ) AS occurrence)
+    );
+
 ROLLBACK;
