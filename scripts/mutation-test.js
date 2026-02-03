@@ -84,6 +84,7 @@ const QUICK_TESTS = [
   'tests/matrix/test_rejection_matrix.sql',
   'tests/matrix/test_api_boundary_matrix.sql',
   'tests/branches/test_branch_coverage.sql',
+  'tests/mutation/test_mutation_catching.sql',
 ];
 
 function backup() {
