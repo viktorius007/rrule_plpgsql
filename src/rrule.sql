@@ -1808,10 +1808,16 @@ BEGIN
 
   -- Now handle BYHOUR, BYMINUTE, BYSECOND, and BYSETPOS
   IF rule.byhour IS NOT NULL OR rule.byminute IS NOT NULL OR rule.bysecond IS NOT NULL OR rule.bysetpos IS NOT NULL THEN
-    -- Generate times within the day and apply BYSETPOS filter
-    -- Pass max_results down (NULL = unlimited, for BYSETPOS which needs full set)
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_day_time_set(after_ts, rule, max_results) r ORDER BY 1;
-    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    -- Performance optimization: bypass cursor when bysetpos IS NULL
+    IF rule.bysetpos IS NOT NULL THEN
+      -- Generate times within the day and apply BYSETPOS filter
+      -- Pass max_results down (NULL = unlimited, for BYSETPOS which needs full set)
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_day_time_set(after_ts, rule, max_results) r ORDER BY 1;
+      RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    ELSE
+      -- Direct query without cursor overhead
+      RETURN QUERY SELECT r FROM rrule.rrule_day_time_set(after_ts, rule, max_results) r ORDER BY 1;
+    END IF;
   ELSE
     -- No sub-day scheduling - return the input time
     RETURN NEXT after_ts;
@@ -1867,9 +1873,14 @@ BEGIN
     END IF;
   END IF;
 
-  -- Pass WKST and max_results to rrule_week_byday_set for proper week boundary calculation
-  OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
-  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  -- Performance optimization: bypass cursor when bysetpos IS NULL
+  IF rule.bysetpos IS NOT NULL THEN
+    -- Pass WKST and max_results to rrule_week_byday_set for proper week boundary calculation
+    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
+    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  ELSE
+    RETURN QUERY SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
+  END IF;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
@@ -1929,19 +1940,33 @@ BEGIN
     END IF;
   END IF;
 
-  -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
-  -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
-  IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
-                INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
-                    ORDER BY 1;
-  ELSIF rule.bymonthday IS NOT NULL THEN
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
-  ELSE
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
-  END IF;
+  -- Performance optimization: bypass cursor when bysetpos IS NULL
+  IF rule.bysetpos IS NOT NULL THEN
+    -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
+    -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
+    IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+                  INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
+                      ORDER BY 1;
+    ELSIF rule.bymonthday IS NOT NULL THEN
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
+    ELSE
+      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
+    END IF;
 
-  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  ELSE
+    -- Direct query without cursor overhead
+    IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
+      RETURN QUERY SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+                  INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
+                      ORDER BY 1;
+    ELSIF rule.bymonthday IS NOT NULL THEN
+      RETURN QUERY SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
+    ELSE
+      RETURN QUERY SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
+    END IF;
+  END IF;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
@@ -2279,7 +2304,22 @@ BEGIN
     RETURN;
   END IF;
 
-  RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  -- Performance optimization: bypass cursor when bysetpos IS NULL
+  IF rule.bysetpos IS NOT NULL THEN
+    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  ELSE
+    -- Fetch all from cursor directly
+    DECLARE
+      valid_date TIMESTAMP WITH TIME ZONE;
+    BEGIN
+      LOOP
+        FETCH curse INTO valid_date;
+        EXIT WHEN NOT FOUND;
+        RETURN NEXT valid_date;
+      END LOOP;
+      CLOSE curse;
+    END;
+  END IF;
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 
