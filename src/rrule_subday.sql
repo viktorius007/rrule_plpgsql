@@ -232,10 +232,7 @@ BEGIN
   END IF;
 
   -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
-  period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
-  IF period_limit IS NULL THEN
-    period_limit := 2147483647;  -- effectively unlimited
-  END IF;
+  period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
 
   IF rule.freq IS NULL THEN
     RAISE EXCEPTION 'Invalid RRULE: FREQ parameter is required';
@@ -485,10 +482,7 @@ BEGIN
         output_limit := LEAST(output_limit, rule.count);
     END IF;
 
-    period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
-    IF period_limit IS NULL THEN
-        period_limit := 2147483647;
-    END IF;
+    period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
 
     dtstart_day := date_part('day', basedate)::INT;
 

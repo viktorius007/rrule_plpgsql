@@ -2359,10 +2359,7 @@ BEGIN
   -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
   -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
   -- See calculate_safe_iteration_limit() for detailed security rationale.
-  period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
-  IF period_limit IS NULL THEN
-    period_limit := 2147483647;  -- effectively unlimited
-  END IF;
+  period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
 
   -- Remember dtstart day-of-month for SKIP drift prevention
   dtstart_day := date_part('day', basedate)::INT;
@@ -3100,10 +3097,7 @@ BEGIN
     -- Security: Calculate safe period scan limit accounting for sparse BYxxx filters
     -- (e.g., FREQ=DAILY;BYDAY=MO only matches 1/7 days, requiring 20x headroom)
     -- See calculate_safe_iteration_limit() for detailed security rationale.
-    period_limit := rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval);
-    IF period_limit IS NULL THEN
-        period_limit := 2147483647;  -- effectively unlimited
-    END IF;
+    period_limit := COALESCE(rrule.calculate_safe_iteration_limit(rule.freq, rule.count, output_limit, rule.interval), 1000);
 
     -- Remember dtstart day-of-month for SKIP drift prevention
     dtstart_day := date_part('day', basedate)::INT;
