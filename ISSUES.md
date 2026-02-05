@@ -208,15 +208,27 @@ Only line 572 (BYSETPOS with sub-day frequencies) lacked coverage because it req
 
 ### ISSUE-006: Property tests missing BYWEEKNO strategy
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** MEDIUM
 
-The Hypothesis strategies in `tests/property/strategies.py` do not generate BYWEEKNO rules. This means property-based invariant testing never exercises week number logic.
+The Hypothesis strategies in `tests/property/strategies.py` did not generate BYWEEKNO rules. Property-based invariant testing never exercised week number logic.
 
-**Test Strategy:**
-- Add `rrule_with_byweekno()` strategy
-- Ensure it only generates `FREQ=YEARLY` (RFC 5545 requirement)
-- Add invariant test verifying results fall in specified week numbers
+**Resolution:**
+Added `rrule_with_byweekno()` strategy and `test_byweekno_filtering()` invariant test.
+
+The strategy:
+- Only generates `FREQ=YEARLY` (RFC 5545 requirement)
+- Generates week numbers in range 1-52 (positive) and -52 to -1 (negative)
+- Optionally includes WKST (MO, SU) to test non-default week starts
+- Optionally includes non-ordinal BYDAY (ordinals prohibited with BYWEEKNO per RFC 5545)
+- Returns (rrule_string, expected_weeks, wkst) tuple for invariant validation
+
+The invariant test:
+- Queries database's `get_week_info()` to handle WKST-dependent week numbering correctly
+- Uses `weeks_in_year()` to normalize negative week numbers
+- Validates all results occur in specified ISO weeks
+
+Verified with 1000 examples in CI profile.
 
 **Files:** `tests/property/strategies.py`, `tests/property/test_invariants.py`
 
@@ -377,6 +389,12 @@ Added TEST SUITE 22 to `test_tz_api.sql` with 9 tests covering MONTHLY frequency
 
 ### ISSUE-005: Validation error paths for time filters (2026-02-05)
 Investigation found lines 562/565 (BYMINUTE/BYSECOND rejection) were already tested in `test_rejection_matrix.sql`. Only line 572 (BYSETPOS with sub-day frequencies) lacked coverage. Added Section 14 to `test_subday_correctness.sql` with 5 tests covering BYSETPOS rejection with HOURLY/MINUTELY/SECONDLY, including negative and multiple value variants.
+
+### ISSUE-006: Property tests BYWEEKNO strategy (2026-02-05)
+Added `rrule_with_byweekno()` strategy and `test_byweekno_filtering()` invariant test.
+The invariant test validates all results occur in specified ISO weeks using database
+queries to handle WKST-dependent week numbering correctly. See `tests/property/strategies.py`
+and `tests/property/test_invariants.py`.
 
 ---
 

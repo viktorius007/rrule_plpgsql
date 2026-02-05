@@ -28,8 +28,8 @@ def complex_rrule(draw):
     """Generate RRULE with BYxxx parameters.
 
     This strategy generates more complex RRULEs that include BYDAY,
-    BYMONTH, and BYMONTHDAY parameters. All rules are bounded with
-    COUNT for safety. Ensures valid combinations per RFC 5545.
+    BYMONTH, BYMONTHDAY, and BYWEEKNO parameters. All rules are bounded
+    with COUNT for safety. Ensures valid combinations per RFC 5545.
     """
     freq = draw(st.sampled_from(FREQUENCIES))
     parts = [f'FREQ={freq}']
@@ -66,6 +66,14 @@ def complex_rrule(draw):
     if freq != 'WEEKLY' and draw(st.booleans()):
         # Use 1-28 to avoid month-end edge cases
         parts.append(f'BYMONTHDAY={draw(st.integers(1, 28))}')
+
+    # Optionally add BYWEEKNO (only valid with YEARLY per RFC 5545)
+    if freq == 'YEARLY' and draw(st.booleans()):
+        weeks = draw(st.lists(
+            st.integers(1, 52),
+            min_size=1, max_size=2, unique=True
+        ))
+        parts.append(f'BYWEEKNO={",".join(map(str, weeks))}')
 
     return ';'.join(parts)
 
@@ -262,6 +270,55 @@ def rrule_with_tzid(draw):
 
 # Strategy for selecting a timezone from the common list
 timezone_strategy = st.sampled_from(COMMON_TIMEZONES)
+
+
+@st.composite
+def rrule_with_byweekno(draw):
+    """Generate YEARLY RRULE with BYWEEKNO.
+
+    Returns tuple of (rrule_string, expected_week_numbers, wkst)
+    RFC 5545: BYWEEKNO only valid with FREQ=YEARLY
+    """
+    # Always FREQ=YEARLY (RFC requirement)
+    count = draw(st.integers(min_value=1, max_value=10))
+    interval = draw(st.integers(min_value=1, max_value=3))
+
+    # Week numbers: 1-52 positive (safe range), -52 to -1 negative
+    # Most years have 52 weeks, some have 53
+    week_count = draw(st.integers(min_value=1, max_value=3))
+    weeks = draw(st.lists(
+        st.one_of(
+            st.integers(min_value=1, max_value=52),   # Safe positive
+            st.integers(min_value=-52, max_value=-1)  # Negative
+        ),
+        min_size=week_count, max_size=week_count, unique=True
+    ))
+
+    # Optional WKST (affects week numbering)
+    # NOTE: Only MO matches Python's isocalendar()
+    wkst = draw(st.sampled_from([None, 'MO', 'SU']))
+
+    # Optional BYDAY (non-ordinal only - RFC prohibits ordinals with BYWEEKNO)
+    add_byday = draw(st.booleans())
+    byday = None
+    if add_byday:
+        byday = draw(st.lists(
+            st.sampled_from(WEEKDAYS),
+            min_size=1, max_size=3, unique=True
+        ))
+
+    # Build RRULE
+    parts = ['FREQ=YEARLY', f'COUNT={count}']
+    if interval > 1:
+        parts.append(f'INTERVAL={interval}')
+    parts.append(f'BYWEEKNO={",".join(map(str, weeks))}')
+    if wkst:
+        parts.append(f'WKST={wkst}')
+    if byday:
+        parts.append(f'BYDAY={",".join(byday)}')
+
+    # Return WKST for use in invariant test (default MO if None)
+    return ';'.join(parts), sorted(weeks), wkst or 'MO'
 
 
 @st.composite

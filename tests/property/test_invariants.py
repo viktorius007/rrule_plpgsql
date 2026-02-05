@@ -14,6 +14,7 @@ from .strategies import (
     rrule_with_byday,
     rrule_with_bymonth,
     rrule_with_bymonthday,
+    rrule_with_byweekno,
     rrule_with_count,
     rrule_with_until,
 )
@@ -291,3 +292,50 @@ def test_complex_dtstart_boundary(db, rrule, dtstart):
         for r in results:
             assert r >= dtstart, \
                 f"dtstart boundary violated: {r} < {dtstart} for rule {rrule}"
+
+
+@given(data=rrule_with_byweekno(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_byweekno_filtering(db, data, dtstart):
+    """All results must occur in one of the specified ISO weeks.
+
+    Uses database's get_week_info() to handle WKST correctly.
+    """
+    rrule, expected_weeks, wkst = data
+    cur = db.cursor()
+
+    # Get results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if not results:
+        return  # Empty is valid (COUNT exhausted, 10-year cap, etc.)
+
+    for result in results:
+        # Query database for WKST-aware week info
+        cur.execute(
+            'SELECT week_year, week_num FROM rrule.get_week_info(%s::TIMESTAMP WITH TIME ZONE, %s)',
+            (result, wkst)
+        )
+        week_year, week_num = cur.fetchone()
+
+        # Get weeks_in_year for this result's week_year
+        cur.execute(
+            "SELECT rrule.weeks_in_year(make_date(%s, 1, 1)::TIMESTAMP WITH TIME ZONE, %s)",
+            (week_year, wkst)
+        )
+        weeks_in_year = cur.fetchone()[0]
+
+        # Normalize negative expected weeks to positive
+        normalized_expected = set()
+        for w in expected_weeks:
+            if w > 0:
+                normalized_expected.add(w)
+            else:
+                normalized_expected.add(weeks_in_year + w + 1)
+
+        assert week_num in normalized_expected, \
+            f"BYWEEKNO violated: {result} in week {week_num}, expected one of {normalized_expected}"
