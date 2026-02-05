@@ -426,7 +426,7 @@ Before deploying sub-day frequencies to production:
 For questions or issues:
 - **GitHub Issues**: https://github.com/sirrodgepodge/rrule_plpgsql/issues
 - **Security Issues**: See [SECURITY.md](SECURITY.md)
-- **Documentation**: See main [README.md](README.md)
+- **Documentation**: See main [README.md](../README.md)
 
 ---
 

@@ -543,4 +543,4 @@ SELECT rrule."all"('FREQ=INVALID', '2025-01-01'::TIMESTAMP);
 
 - [SPEC_COMPLIANCE.md](SPEC_COMPLIANCE.md) - RFC 5545/7529 feature support
 - [VALIDATION.md](VALIDATION.md) - RRULE validation rules
-- [README.md](README.md) - Main documentation
+- [README.md](../README.md) - Main documentation

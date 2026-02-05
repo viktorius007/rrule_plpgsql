@@ -387,8 +387,8 @@ SET client_min_messages TO DEBUG;
 
 ## See Also
 
-- [API_REFERENCE.md](API_REFERENCE.md) - Function reference
-- [SPEC_COMPLIANCE.md](SPEC_COMPLIANCE.md) - RFC 5545/7529 feature support
-- [VALIDATION.md](VALIDATION.md) - RRULE validation rules
+- [API_REFERENCE.md](docs/API_REFERENCE.md) - Function reference
+- [SPEC_COMPLIANCE.md](docs/SPEC_COMPLIANCE.md) - RFC 5545/7529 feature support
+- [VALIDATION.md](docs/VALIDATION.md) - RRULE validation rules
 - [README.md](README.md) - Main documentation
-- [SECURITY.md](SECURITY.md) - Security practices
+- [SECURITY.md](docs/SECURITY.md) - Security practices

@@ -34,7 +34,7 @@ This library provides complete RRULE recurrence calculation functionality using 
 - **Memory-efficient streaming**: SETOF returns results incrementally, not all at once
 - **50-75x faster than Node.js** for single-schedule operations, infinitely faster for multi-schedule batch queries
 
-**See [Example Usage](EXAMPLE_USAGE.md) for practical patterns including subscription billing, batch updates, and conflict detection.**
+**See [Example Usage](docs/EXAMPLE_USAGE.md) for practical patterns including subscription billing, batch updates, and conflict detection.**
 
 ### Zero Compilation
 
@@ -62,7 +62,7 @@ Pure PL/pgSQL means:
 npm install rrule-plpgsql
 ```
 
-Then install in your database using your ORM/client. See **[Installation Guide](INSTALLATION.md)** for TypeScript/ORM integration.
+Then install in your database using your ORM/client. See **[Installation Guide](docs/INSTALLATION.md)** for TypeScript/ORM integration.
 
 ### Option 2: Direct SQL Installation
 
@@ -74,7 +74,7 @@ psql -d your_database -f src/install.sql
 curl -sL https://raw.githubusercontent.com/sirrodgepodge/rrule_plpgsql/main/src/install.sql | psql -d your_database
 ```
 
-**Next Steps:** See [Example Usage](EXAMPLE_USAGE.md) for practical patterns.
+**Next Steps:** See [Example Usage](docs/EXAMPLE_USAGE.md) for practical patterns.
 
 ---
 
@@ -82,19 +82,19 @@ curl -sL https://raw.githubusercontent.com/sirrodgepodge/rrule_plpgsql/main/src/
 
 ### 📖 Core Documentation
 
-- **[Installation Guide](INSTALLATION.md)** - TypeScript ORMs (node-postgres, TypeORM, Prisma, Knex, Sequelize, Drizzle)
-- **[Example Usage](EXAMPLE_USAGE.md)** - Real-world patterns: subscription billing, batch operations, conflict detection
-- **[API Reference](API_REFERENCE.md)** - Complete function reference with parameters and examples
-- **[RFC Spec Compliance](SPEC_COMPLIANCE.md)** - Supported RFC 5545/7529 features and limitations
-- **[Validation Rules](VALIDATION.md)** - RRULE constraint validation and error messages
+- **[Installation Guide](docs/INSTALLATION.md)** - TypeScript ORMs (node-postgres, TypeORM, Prisma, Knex, Sequelize, Drizzle)
+- **[Example Usage](docs/EXAMPLE_USAGE.md)** - Real-world patterns: subscription billing, batch operations, conflict detection
+- **[API Reference](docs/API_REFERENCE.md)** - Complete function reference with parameters and examples
+- **[RFC Spec Compliance](docs/SPEC_COMPLIANCE.md)** - Supported RFC 5545/7529 features and limitations
+- **[Validation Rules](docs/VALIDATION.md)** - RRULE constraint validation and error messages
 - **[Development Guide](DEVELOPMENT.md)** - Testing, architecture, and contribution guidelines
 
 ### 🔒 Security & Advanced Features
 
-- **[Security Guide](SECURITY.md)** - Best practices and vulnerability reporting
-- **[Performance Optimization](PERFORMANCE.md)** - Indexes, query patterns, and scaling recommendations
-- **[Sub-Day Operations](INCLUDING_SUBDAY_OPERATIONS.md)** - HOURLY/MINUTELY/SECONDLY guide (disabled by default)
-- **[Migration Guide](MANUAL_MIGRATION.md)** - Upgrading with dependent database objects
+- **[Security Guide](docs/SECURITY.md)** - Best practices and vulnerability reporting
+- **[Performance Optimization](docs/PERFORMANCE.md)** - Indexes, query patterns, and scaling recommendations
+- **[Sub-Day Operations](docs/SUBDAY_OPERATIONS.md)** - HOURLY/MINUTELY/SECONDLY guide (disabled by default)
+- **[Migration Guide](docs/MIGRATION.md)** - Upgrading with dependent database objects
 
 ---
 
@@ -113,7 +113,7 @@ curl -sL https://raw.githubusercontent.com/sirrodgepodge/rrule_plpgsql/main/src/
 - `FREQ=MINUTELY` - Minutely recurrence (525,600/year max)
 - `FREQ=SECONDLY` - Secondly recurrence (31M/year max)
 
-See **[Sub-Day Operations Guide](INCLUDING_SUBDAY_OPERATIONS.md)** for enabling these safely.
+See **[Sub-Day Operations Guide](docs/SUBDAY_OPERATIONS.md)** for enabling these safely.
 
 ### Supported Modifiers
 
@@ -132,7 +132,7 @@ See **[Sub-Day Operations Guide](INCLUDING_SUBDAY_OPERATIONS.md)** for enabling 
 - `TZID` - Timezone specification with automatic DST handling
 - `RSCALE` - Calendar system (GREGORIAN supported)
 
-**See [RFC Spec Compliance](SPEC_COMPLIANCE.md) for complete feature support matrix and examples.**
+**See [RFC Spec Compliance](docs/SPEC_COMPLIANCE.md) for complete feature support matrix and examples.**
 
 ### Timezone Support
 
@@ -148,7 +148,7 @@ SELECT * FROM rrule."all"(
 -- All at 10:00 AM wall-clock time
 ```
 
-**See [API Reference](API_REFERENCE.md) for TIMESTAMPTZ API details.**
+**See [API Reference](docs/API_REFERENCE.md) for TIMESTAMPTZ API details.**
 
 ---
 
@@ -177,7 +177,7 @@ psql -d your_database -f src/install_with_subday.sql
 - ⚠️ Security warnings during installation
 - Requires application-level validation
 
-**See [Sub-Day Operations Guide](INCLUDING_SUBDAY_OPERATIONS.md) before using this installation.**
+**See [Sub-Day Operations Guide](docs/SUBDAY_OPERATIONS.md) before using this installation.**
 
 ---
 
@@ -197,7 +197,7 @@ psql -d your_database -f src/install_with_subday.sql
 - BYWEEKNO requires YEARLY frequency
 - Fix: Change to `FREQ=YEARLY;BYWEEKNO=10`
 
-**See [Validation Rules](VALIDATION.md) for complete error reference.**
+**See [Validation Rules](docs/VALIDATION.md) for complete error reference.**
 
 ---
 
@@ -239,7 +239,7 @@ SELECT * FROM rrule."all"(
 );
 ```
 
-**See [API Reference](API_REFERENCE.md) for complete function signatures, timezone handling details, and advanced examples.**
+**See [API Reference](docs/API_REFERENCE.md) for complete function signatures, timezone handling details, and advanced examples.**
 
 ---
 
@@ -268,7 +268,7 @@ Contributions welcome! Please:
 - Query planner optimization: PostgreSQL optimizes JOINs and filters with occurrence expansion
 - Early-exit optimizations: Stops computation when COUNT/UNTIL limits reached
 
-**See [Performance Guide](PERFORMANCE.md) for optimization strategies and [Development Guide](DEVELOPMENT.md) for benchmarking details.**
+**See [Performance Guide](docs/PERFORMANCE.md) for optimization strategies and [Development Guide](DEVELOPMENT.md) for benchmarking details.**
 
 ---
 
@@ -293,6 +293,6 @@ Contributions welcome! Please:
 ## Support
 
 - **Issues**: https://github.com/sirrodgepodge/rrule_plpgsql/issues
-- **Security**: See [SECURITY.md](SECURITY.md)
-- **Documentation**: See [API Reference](API_REFERENCE.md)
+- **Security**: See [SECURITY.md](docs/SECURITY.md)
+- **Documentation**: See [API Reference](docs/API_REFERENCE.md)
 - **License**: MIT (see [LICENSE](LICENSE))

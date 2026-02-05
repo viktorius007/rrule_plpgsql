@@ -71,7 +71,35 @@ psql -d your_db -f src/install.sql
 - `/tests/helpers.sql` - Shared test assertion functions (`assert_occurrences_equal`, `assert_equals`, `assert_true`)
 - `DECISIONS.md` - Prescriptive architectural decisions with verification links
 - `TESTING_STANDARDS.md` - Required test patterns (ROLLBACK, fixed timestamps, exact assertions)
-- `SPEC_COMPLIANCE.md` - RFC 5545/7529 compliance status and documented gaps
+- `docs/SPEC_COMPLIANCE.md` - RFC 5545/7529 compliance status and documented gaps
+
+## Documentation
+
+### User Documentation (docs/)
+
+| Document | Description |
+|----------|-------------|
+| [INSTALLATION.md](docs/INSTALLATION.md) | TypeScript/ORM integration (node-postgres, Prisma, Knex, TypeORM, Sequelize, Drizzle) |
+| [EXAMPLE_USAGE.md](docs/EXAMPLE_USAGE.md) | Real-world patterns: subscription billing, batch operations, conflict detection |
+| [API_REFERENCE.md](docs/API_REFERENCE.md) | Complete function reference with parameters and examples |
+| [SPEC_COMPLIANCE.md](docs/SPEC_COMPLIANCE.md) | RFC 5545/7529 feature support matrix and limitations |
+| [VALIDATION.md](docs/VALIDATION.md) | RRULE validation rules and error messages |
+| [SECURITY.md](docs/SECURITY.md) | SQL injection prevention, supply chain security, best practices |
+| [PERFORMANCE.md](docs/PERFORMANCE.md) | Indexes, query patterns, monitoring, scaling recommendations |
+| [SUBDAY_OPERATIONS.md](docs/SUBDAY_OPERATIONS.md) | HOURLY/MINUTELY/SECONDLY guide (disabled by default) |
+| [MIGRATION.md](docs/MIGRATION.md) | Upgrading with dependent database objects |
+
+### Developer Documentation (root)
+
+| Document | Description |
+|----------|-------------|
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Testing, architecture, contribution guidelines |
+| [TESTING_STANDARDS.md](TESTING_STANDARDS.md) | Prescriptive test patterns |
+| [DECISIONS.md](DECISIONS.md) | Design decisions with verification links |
+
+### Archived Documentation (docs/archived/)
+
+Historical documents (completed research, plans) are in [docs/archived/](docs/archived/).
 
 ## CI/CD Pipeline
 

@@ -813,4 +813,4 @@ await client.query('GRANT USAGE ON SCHEMA my_rrule TO app_user');
 
 ---
 
-**Questions?** See [DEVELOPMENT.md](DEVELOPMENT.md) for contribution guidelines or open an issue on GitHub.
+**Questions?** See [DEVELOPMENT.md](../DEVELOPMENT.md) for contribution guidelines or open an issue on GitHub.

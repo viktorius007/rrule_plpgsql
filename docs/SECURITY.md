@@ -241,7 +241,7 @@ The installed functions:
 - ❌ **CANNOT:** Make network calls (no external connections)
 - ❌ **CANNOT:** Execute arbitrary SQL (no `EXECUTE` statements)
 
-Functions use a three-tier volatility classification: public API functions (e.g., `"all"`, `"between"`) are marked `VOLATILE` because they use cursors or `SET timezone`; internal computation functions are `STABLE`; and pure-computation helpers (e.g., `weekday_to_number`, `byweekno_matches`) are `IMMUTABLE`. See [DECISIONS.md](DECISIONS.md) for details.
+Functions use a three-tier volatility classification: public API functions (e.g., `"all"`, `"between"`) are marked `VOLATILE` because they use cursors or `SET timezone`; internal computation functions are `STABLE`; and pure-computation helpers (e.g., `weekday_to_number`, `byweekno_matches`) are `IMMUTABLE`. See [DECISIONS.md](../DECISIONS.md) for details.
 
 ---
 

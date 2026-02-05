@@ -68,7 +68,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
    - **Status:** ✅ Fully implemented and tested, ⚠️ but disabled by default for security
    - **Why?** Can generate millions of occurrences (SECONDLY: 31M/year), posing DoS risk in multi-tenant environments
    - **When safe to enable:** Single-tenant deployments with application-level validation and query timeouts
-   - **See:** [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md) for complete guide
+   - **See:** [SUBDAY_OPERATIONS.md](SUBDAY_OPERATIONS.md) for complete guide
 
 <sup>4</sup> **BYDAY with Ordinal (2MO, -1FR) Restrictions:**
    - **Status:** Raises exception for non-MONTHLY/YEARLY frequencies
@@ -142,7 +142,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Recommended limits:** COUNT ≤ 1,000, UNTIL ≤ 7 days
 - **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYYEARDAY, BYHOUR/BYMINUTE/BYSECOND
 - **Not supported:** BYDAY ordinals, BYWEEKNO, BYSETPOS
-- **How to enable:** See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
+- **How to enable:** See [SUBDAY_OPERATIONS.md](SUBDAY_OPERATIONS.md)
 
 **`FREQ=MINUTELY`**
 - **Status:** ✅ Implemented, ⚠️ Disabled by default
@@ -152,7 +152,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Recommended limits:** COUNT ≤ 1,000, UNTIL ≤ 24 hours
 - **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYYEARDAY, BYHOUR/BYMINUTE/BYSECOND
 - **Not supported:** BYDAY ordinals, BYWEEKNO, BYSETPOS
-- **How to enable:** See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
+- **How to enable:** See [SUBDAY_OPERATIONS.md](SUBDAY_OPERATIONS.md)
 
 **`FREQ=SECONDLY`**
 - **Status:** ✅ Implemented, ⚠️ Disabled by default
@@ -162,7 +162,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Recommended limits:** COUNT ≤ 1,000, UNTIL ≤ 1 hour
 - **Supports:** BYDAY, BYMONTH, BYMONTHDAY, BYYEARDAY, BYHOUR/BYMINUTE/BYSECOND
 - **Not supported:** BYDAY ordinals, BYWEEKNO, BYSETPOS
-- **How to enable:** See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
+- **How to enable:** See [SUBDAY_OPERATIONS.md](SUBDAY_OPERATIONS.md)
 
 ---
 
@@ -322,5 +322,5 @@ This implementation covers all standard scheduling needs. Unsupported combinatio
 
 - [API_REFERENCE.md](API_REFERENCE.md) - Function reference
 - [VALIDATION.md](VALIDATION.md) - RRULE validation rules
-- [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md) - Sub-day frequency guide
-- [README.md](README.md) - Main documentation
+- [SUBDAY_OPERATIONS.md](SUBDAY_OPERATIONS.md) - Sub-day frequency guide
+- [README.md](../README.md) - Main documentation

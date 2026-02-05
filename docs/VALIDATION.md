@@ -355,4 +355,4 @@ FREQ=YEARLY;BYSETPOS=-1        # Last occurrence
 
 - [SPEC_COMPLIANCE.md](SPEC_COMPLIANCE.md) - RFC 5545/7529 feature support
 - [API_REFERENCE.md](API_REFERENCE.md) - Function reference
-- [README.md](README.md) - Main documentation
+- [README.md](../README.md) - Main documentation

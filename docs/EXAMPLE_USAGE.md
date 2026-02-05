@@ -715,5 +715,5 @@ WHERE e.status = 'active';
 
 For more examples, see:
 - [API Reference](API_REFERENCE.md) - Complete function documentation
-- [README](README.md) - Basic usage patterns
-- [Development Guide](DEVELOPMENT.md) - Architecture and internals
+- [README](../README.md) - Basic usage patterns
+- [Development Guide](../DEVELOPMENT.md) - Architecture and internals
