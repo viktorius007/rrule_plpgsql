@@ -204,6 +204,31 @@ Week 3:                                                ▼
 
 ---
 
+## Complexity & Dependencies
+
+| Increment | Complexity | Skills Required | Dependencies |
+|-----------|------------|-----------------|--------------|
+| **1.1** Profiler POC | 🟢 Low | Bash, SQL | plpgsql_check extension installed |
+| **1.2** Full Report | 🟢 Low | Bash, SQL | 1.1 completed |
+| **1.3** CI Integration | 🟡 Medium | GitHub Actions YAML | 1.2 completed |
+| **2.1** ROR/LCR mutations | 🟢 Low | JavaScript regex | None |
+| **2.2** NULL/AOR mutations | 🟢 Low | JavaScript regex | None |
+| **2.3** Score reporting | 🟢 Low | JavaScript | 2.1 or 2.2 completed |
+| **3.1** Hypothesis setup | 🟡 Medium | Python, psycopg2, pytest | None |
+| **3.2** Invariant suite | 🟡 Medium | Hypothesis strategies | 3.1 completed |
+| **3.3** Advanced properties | 🟠 Medium-High | Complex property logic | 3.2 completed |
+| **3.4** Differential testing | 🟠 Medium-High | python-dateutil, edge case handling | 3.1 completed |
+| **3.5** CI Integration | 🟡 Medium | GitHub Actions, Python setup | 3.2 or 3.4 completed |
+
+**Complexity Legend:**
+- 🟢 Low: Straightforward implementation, minimal decision-making
+- 🟡 Medium: Some design decisions, familiarity with tools required
+- 🟠 Medium-High: Complex logic, edge case handling, potential debugging
+
+**Parallel Execution:** Goals 1, 2, and 3 are independent and can run concurrently. Within each goal, increments must be sequential (except 2.1/2.2 which can be parallel).
+
+---
+
 ## Success Criteria
 
 | Goal | Metric | Target |
