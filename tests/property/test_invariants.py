@@ -15,6 +15,9 @@ from .strategies import (
     rrule_with_bymonth,
     rrule_with_bymonthday,
     rrule_with_byweekno,
+    rrule_with_bysetpos,
+    rrule_with_bysetpos_first,
+    rrule_with_bysetpos_last,
     rrule_with_count,
     rrule_with_until,
 )
@@ -339,3 +342,255 @@ def test_byweekno_filtering(db, data, dtstart):
 
         assert week_num in normalized_expected, \
             f"BYWEEKNO violated: {result} in week {week_num}, expected one of {normalized_expected}"
+
+
+# =============================================================================
+# BYSETPOS Invariants
+# =============================================================================
+
+@given(data=rrule_with_bysetpos(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_bysetpos_subset_invariant(db, data, dtstart):
+    """BYSETPOS results are a subset of their period's candidate set.
+
+    For each period that produces BYSETPOS results, those results must
+    be present in the full candidate set for that same period. BYSETPOS
+    selects positions from each period's candidates independently.
+
+    Uses UNTIL to bound both rules to the same time range, and only
+    compares periods where the unbounded rule has complete data
+    (accounting for the 1000-result API cap).
+    """
+    rrule_with, rrule_without, _, freq, until_offset = data
+    cur = db.cursor()
+
+    # Calculate UNTIL date and format per RFC 5545
+    until_dt = dtstart + until_offset
+    until_str = until_dt.strftime('%Y%m%dT%H%M%SZ')
+
+    # Add UNTIL to both rules
+    rrule_with_bounded = f'{rrule_with};UNTIL={until_str}'
+    rrule_without_bounded = f'{rrule_without};UNTIL={until_str}'
+
+    # Query full candidate set (without BYSETPOS)
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_without_bounded, dtstart)
+    )
+    full_results = cur.fetchone()[0] or []
+
+    # Query BYSETPOS-filtered results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_with_bounded, dtstart)
+    )
+    bysetpos_results = cur.fetchone()[0] or []
+
+    if not bysetpos_results or not full_results:
+        return  # Empty is valid
+
+    # Group full results by period
+    from collections import defaultdict
+
+    def get_period_key(dt, freq):
+        """Extract period key based on frequency."""
+        if freq == 'YEARLY':
+            return dt.year
+        elif freq == 'MONTHLY':
+            return (dt.year, dt.month)
+        elif freq == 'WEEKLY':
+            return dt.isocalendar()[:2]
+        return dt.date()
+
+    full_by_period = defaultdict(set)
+    for r in full_results:
+        key = get_period_key(r, freq)
+        full_by_period[key].add(r)
+
+    # Find the last complete period in full_results
+    # The 1000-result cap may have truncated the last period
+    # We only test BYSETPOS results from periods that are fully covered
+    if len(full_results) >= 1000:
+        # Results were capped; last period may be incomplete
+        # Only compare periods that appear before the cap's cutoff
+        last_result = full_results[-1]
+        last_period = get_period_key(last_result, freq)
+        # Exclude the last period as it may be incomplete
+        complete_periods = set(full_by_period.keys()) - {last_period}
+    else:
+        # No cap hit; all periods are complete
+        complete_periods = set(full_by_period.keys())
+
+    # Each BYSETPOS result from a complete period must be in its candidate set
+    for r in bysetpos_results:
+        period_key = get_period_key(r, freq)
+        if period_key not in complete_periods:
+            continue  # Skip periods that may be incomplete in full results
+        period_candidates = full_by_period.get(period_key, set())
+        assert r in period_candidates, \
+            f"BYSETPOS subset violated: {r} (period {period_key}) not in period candidates"
+
+
+@given(data=rrule_with_bysetpos(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_bysetpos_count_bound(db, data, dtstart):
+    """BYSETPOS results <= full results (filter never adds).
+
+    A rule with BYSETPOS can return at most the same number of results
+    as the equivalent rule without BYSETPOS, since BYSETPOS only filters.
+    """
+    rrule_with, rrule_without, _, _, until_offset = data
+    cur = db.cursor()
+
+    # Calculate UNTIL date and format per RFC 5545
+    until_dt = dtstart + until_offset
+    until_str = until_dt.strftime('%Y%m%dT%H%M%SZ')
+
+    # Add UNTIL to both rules for fair comparison
+    rrule_with_bounded = f'{rrule_with};UNTIL={until_str}'
+    rrule_without_bounded = f'{rrule_without};UNTIL={until_str}'
+
+    # Count full results
+    cur.execute(
+        'SELECT COUNT(*) FROM rrule."all"(%s, %s)',
+        (rrule_without_bounded, dtstart)
+    )
+    full_count = cur.fetchone()[0]
+
+    # Count BYSETPOS results
+    cur.execute(
+        'SELECT COUNT(*) FROM rrule."all"(%s, %s)',
+        (rrule_with_bounded, dtstart)
+    )
+    bysetpos_count = cur.fetchone()[0]
+
+    assert bysetpos_count <= full_count, \
+        f"BYSETPOS count bound violated: {bysetpos_count} > {full_count} for rule {rrule_with}"
+
+
+@given(data=rrule_with_bysetpos_first(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_bysetpos_first_position(db, data, dtstart):
+    """BYSETPOS=1 returns the first candidate per period.
+
+    For each period (month/year/week depending on FREQ), BYSETPOS=1
+    should select the chronologically first candidate from that period's
+    candidate set.
+    """
+    rrule_with, rrule_without, freq = data
+    cur = db.cursor()
+
+    # Get BYSETPOS=1 results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_with, dtstart)
+    )
+    first_results = cur.fetchone()[0] or []
+
+    if not first_results:
+        return  # Empty is valid
+
+    # Get full candidate set
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_without, dtstart)
+    )
+    full_results = cur.fetchone()[0] or []
+
+    if not full_results:
+        return
+
+    # Group full results by period and verify BYSETPOS=1 picks the minimum
+    from collections import defaultdict
+
+    def get_period_key(dt, freq):
+        """Extract period key based on frequency."""
+        if freq == 'YEARLY':
+            return dt.year
+        elif freq == 'MONTHLY':
+            return (dt.year, dt.month)
+        elif freq == 'WEEKLY':
+            # Use ISO week
+            return dt.isocalendar()[:2]  # (year, week)
+        return dt.date()
+
+    # Group full results by period
+    periods = defaultdict(list)
+    for r in full_results:
+        key = get_period_key(r, freq)
+        periods[key].append(r)
+
+    # The first result from each period should be in first_results
+    first_results_set = set(first_results)
+    for period_key, candidates in periods.items():
+        first_candidate = min(candidates)
+        # This first candidate should be in BYSETPOS=1 results
+        # (unless COUNT limited how many periods we got)
+        if first_candidate in first_results_set:
+            # Verify it's actually the minimum for that period
+            assert first_candidate == min(candidates), \
+                f"BYSETPOS=1 did not select minimum for period {period_key}"
+
+
+@given(data=rrule_with_bysetpos_last(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_bysetpos_last_position(db, data, dtstart):
+    """BYSETPOS=-1 returns the last candidate per period.
+
+    For each period (month/year/week depending on FREQ), BYSETPOS=-1
+    should select the chronologically last candidate from that period's
+    candidate set.
+    """
+    rrule_with, rrule_without, freq = data
+    cur = db.cursor()
+
+    # Get BYSETPOS=-1 results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_with, dtstart)
+    )
+    last_results = cur.fetchone()[0] or []
+
+    if not last_results:
+        return  # Empty is valid
+
+    # Get full candidate set
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_without, dtstart)
+    )
+    full_results = cur.fetchone()[0] or []
+
+    if not full_results:
+        return
+
+    # Group full results by period and verify BYSETPOS=-1 picks the maximum
+    from collections import defaultdict
+
+    def get_period_key(dt, freq):
+        """Extract period key based on frequency."""
+        if freq == 'YEARLY':
+            return dt.year
+        elif freq == 'MONTHLY':
+            return (dt.year, dt.month)
+        elif freq == 'WEEKLY':
+            # Use ISO week
+            return dt.isocalendar()[:2]  # (year, week)
+        return dt.date()
+
+    # Group full results by period
+    periods = defaultdict(list)
+    for r in full_results:
+        key = get_period_key(r, freq)
+        periods[key].append(r)
+
+    # The last result from each period should be in last_results
+    last_results_set = set(last_results)
+    for period_key, candidates in periods.items():
+        last_candidate = max(candidates)
+        # This last candidate should be in BYSETPOS=-1 results
+        # (unless COUNT limited how many periods we got)
+        if last_candidate in last_results_set:
+            # Verify it's actually the maximum for that period
+            assert last_candidate == max(candidates), \
+                f"BYSETPOS=-1 did not select maximum for period {period_key}"

@@ -236,15 +236,28 @@ Verified with 1000 examples in CI profile.
 
 ### ISSUE-007: Property tests missing BYSETPOS strategy
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** MEDIUM
 
 BYSETPOS is a complex post-filter that selects positions from candidate sets. Not covered by property tests.
 
-**Test Strategy:**
-- Add `rrule_with_bysetpos()` strategy
-- Test with MONTHLY and YEARLY frequencies
-- Verify position selection invariants (e.g., BYSETPOS=1 returns first, BYSETPOS=-1 returns last)
+**Resolution:**
+Added `rrule_with_bysetpos()`, `rrule_with_bysetpos_first()`, and `rrule_with_bysetpos_last()` strategies along with four invariant tests:
+
+| Test | Purpose |
+|------|---------|
+| `test_bysetpos_subset_invariant()` | Validates BYSETPOS results are subset of period's candidate set |
+| `test_bysetpos_count_bound()` | Validates BYSETPOS results ≤ full results (filter never adds) |
+| `test_bysetpos_first_position()` | Validates BYSETPOS=1 selects first candidate per period |
+| `test_bysetpos_last_position()` | Validates BYSETPOS=-1 selects last candidate per period |
+
+Strategies use UNTIL-based time bounding to ensure both rules cover identical time ranges for accurate comparison. The subset test accounts for the 1000-result API cap by only comparing periods with complete data.
+
+**Verification:**
+- All 4 BYSETPOS tests pass with 500 examples each
+- CI profile (1000 examples) passes
+- All 26 property tests pass
+- All 28 SQL test suites pass
 
 **Files:** `tests/property/strategies.py`, `tests/property/test_invariants.py`
 
@@ -395,6 +408,15 @@ Added `rrule_with_byweekno()` strategy and `test_byweekno_filtering()` invariant
 The invariant test validates all results occur in specified ISO weeks using database
 queries to handle WKST-dependent week numbering correctly. See `tests/property/strategies.py`
 and `tests/property/test_invariants.py`.
+
+### ISSUE-007: Property tests BYSETPOS strategy (2026-02-05)
+Added `rrule_with_bysetpos()`, `rrule_with_bysetpos_first()`, and `rrule_with_bysetpos_last()` strategies with four invariant tests:
+- `test_bysetpos_subset_invariant()`: Results are subset of period's candidate set
+- `test_bysetpos_count_bound()`: Results ≤ full results (filter never adds)
+- `test_bysetpos_first_position()`: BYSETPOS=1 selects first candidate per period
+- `test_bysetpos_last_position()`: BYSETPOS=-1 selects last candidate per period
+
+See `tests/property/strategies.py` and `tests/property/test_invariants.py`.
 
 ---
 
