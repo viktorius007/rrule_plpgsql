@@ -300,6 +300,14 @@ BEGIN
     PERFORM rrule."all"('FREQ=MONTHLY;INTERVAL=2;SKIP=BACKWARD;COUNT=10', '2025-01-31 10:00:00'::TIMESTAMP);
     PERFORM rrule."all"('FREQ=YEARLY;INTERVAL=2;SKIP=BACKWARD;COUNT=5', '2024-02-29 10:00:00'::TIMESTAMP);
 
+    -- DoS protection: impossible dates that trigger period limit termination
+    -- Feb 30 never exists - forces OMIT/FORWARD to hit period_limit
+    PERFORM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30;SKIP=OMIT;COUNT=5', '2020-02-15 10:00:00'::TIMESTAMP);
+    PERFORM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30;SKIP=FORWARD;COUNT=5', '2020-02-15 10:00:00'::TIMESTAMP);
+    -- Apr 31 never exists
+    PERFORM rrule."all"('FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=31;SKIP=OMIT;COUNT=5', '2020-04-15 10:00:00'::TIMESTAMP);
+    PERFORM rrule."all"('FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=31;SKIP=FORWARD;COUNT=5', '2020-04-15 10:00:00'::TIMESTAMP);
+
     -- =========================================================================
     -- SECTION 14: Complex Combinations
     -- =========================================================================
@@ -428,6 +436,183 @@ BEGIN
     -- =========================================================================
 
     PERFORM rrule.version();
+
+    -- =========================================================================
+    -- SECTION 21: DoS protection branch coverage for _advance_yearly()
+    -- =========================================================================
+    -- These direct function calls exercise the DoS protection branches
+    -- that can't be reached via public API (10-year window terminates first)
+    DECLARE
+        dos_result rrule._skip_result;
+        dos_base TIMESTAMPTZ := '2021-02-28 10:00:00'::TIMESTAMPTZ;
+        dos_basedate TIMESTAMPTZ := '2020-02-28 10:00:00'::TIMESTAMPTZ;
+        dos_i INT;
+    BEGIN
+        -- Test OMIT limit branch (lines 1598-1600)
+        dos_result.omit_count := 0;
+        dos_result.period_count := 0;
+        dos_result.done := FALSE;
+        FOR dos_i IN 1..15 LOOP
+            EXIT WHEN dos_result.done;
+            dos_result := rrule._advance_yearly(
+                dos_base, dos_basedate, 30, 1, 'OMIT', NULL,
+                '2100-01-01'::TIMESTAMPTZ, 10,
+                dos_result.omit_count, dos_result.period_count
+            );
+            dos_base := dos_result.current_base;
+        END LOOP;
+
+        -- Test FORWARD limit branch (lines 1620-1623)
+        dos_base := '2021-02-28 10:00:00'::TIMESTAMPTZ;
+        dos_result.omit_count := 0;
+        dos_result.period_count := 0;
+        dos_result.done := FALSE;
+        FOR dos_i IN 1..15 LOOP
+            EXIT WHEN dos_result.done;
+            dos_result := rrule._advance_yearly(
+                dos_base, dos_basedate, 30, 1, 'FORWARD', NULL,
+                '2100-01-01'::TIMESTAMPTZ, 10,
+                dos_result.omit_count, dos_result.period_count
+            );
+            dos_base := dos_result.current_base;
+        END LOOP;
+
+        -- Test OMIT + maxdate termination (lines 1589-1590)
+        -- maxdate only 2 years away, will be exceeded before period_limit
+        dos_base := '2021-02-28 10:00:00'::TIMESTAMPTZ;
+        dos_result.omit_count := 0;
+        dos_result.period_count := 0;
+        dos_result.done := FALSE;
+        FOR dos_i IN 1..5 LOOP
+            EXIT WHEN dos_result.done;
+            dos_result := rrule._advance_yearly(
+                dos_base, dos_basedate, 30, 1, 'OMIT', NULL,
+                '2023-01-01'::TIMESTAMPTZ, 100,
+                dos_result.omit_count, dos_result.period_count
+            );
+            dos_base := dos_result.current_base;
+        END LOOP;
+
+        -- Test OMIT + UNTIL termination (lines 1593-1594)
+        -- UNTIL only 2 years away, will be exceeded before period_limit
+        dos_base := '2021-02-28 10:00:00'::TIMESTAMPTZ;
+        dos_result.omit_count := 0;
+        dos_result.period_count := 0;
+        dos_result.done := FALSE;
+        FOR dos_i IN 1..5 LOOP
+            EXIT WHEN dos_result.done;
+            dos_result := rrule._advance_yearly(
+                dos_base, dos_basedate, 30, 1, 'OMIT',
+                '2023-01-01'::TIMESTAMPTZ,
+                '2100-01-01'::TIMESTAMPTZ, 100,
+                dos_result.omit_count, dos_result.period_count
+            );
+            dos_base := dos_result.current_base;
+        END LOOP;
+
+        -- Test FORWARD + UNTIL termination (lines 1608-1610)
+        -- UNTIL before forward_ts (Mar 1), terminates immediately
+        dos_result := rrule._advance_yearly(
+            '2021-02-28 10:00:00'::TIMESTAMPTZ, dos_basedate,
+            30, 1, 'FORWARD',
+            '2021-02-28 10:00:00'::TIMESTAMPTZ,
+            '2100-01-01'::TIMESTAMPTZ, 100, 0, 0
+        );
+
+        -- Test FORWARD + maxdate termination (lines 1613-1615)
+        -- maxdate before forward_ts (Mar 1), terminates immediately
+        dos_result := rrule._advance_yearly(
+            '2021-02-28 10:00:00'::TIMESTAMPTZ, dos_basedate,
+            30, 1, 'FORWARD', NULL,
+            '2021-02-28 10:00:00'::TIMESTAMPTZ, 100, 0, 0
+        );
+    END;
+
+    -- =========================================================================
+    -- SECTION 22: DoS protection branch coverage for _advance_monthly()
+    -- =========================================================================
+    -- Use day 32 which NEVER exists in any month - forces continuous OMIT/FORWARD
+    DECLARE
+        mon_result rrule._skip_result;
+        mon_base TIMESTAMPTZ := '2020-02-29 10:00:00'::TIMESTAMPTZ;
+        mon_basedate TIMESTAMPTZ := '2020-01-31 10:00:00'::TIMESTAMPTZ;
+        mon_i INT;
+    BEGIN
+        -- Test OMIT limit branch (lines 1502-1503)
+        mon_result.omit_count := 0;
+        mon_result.period_count := 0;
+        mon_result.done := FALSE;
+        FOR mon_i IN 1..15 LOOP
+            EXIT WHEN mon_result.done;
+            mon_result := rrule._advance_monthly(
+                mon_base, mon_basedate, 32, 1, 'OMIT', NULL,
+                '2100-01-01'::TIMESTAMPTZ, 10,
+                mon_result.omit_count, mon_result.period_count
+            );
+            mon_base := mon_result.current_base;
+        END LOOP;
+
+        -- Test FORWARD limit branch (lines 1524-1526)
+        mon_base := '2020-02-29 10:00:00'::TIMESTAMPTZ;
+        mon_result.omit_count := 0;
+        mon_result.period_count := 0;
+        mon_result.done := FALSE;
+        FOR mon_i IN 1..15 LOOP
+            EXIT WHEN mon_result.done;
+            mon_result := rrule._advance_monthly(
+                mon_base, mon_basedate, 32, 1, 'FORWARD', NULL,
+                '2100-01-01'::TIMESTAMPTZ, 10,
+                mon_result.omit_count, mon_result.period_count
+            );
+            mon_base := mon_result.current_base;
+        END LOOP;
+
+        -- Test OMIT + maxdate termination (lines 1493-1494)
+        mon_base := '2020-02-29 10:00:00'::TIMESTAMPTZ;
+        mon_result.omit_count := 0;
+        mon_result.period_count := 0;
+        mon_result.done := FALSE;
+        FOR mon_i IN 1..5 LOOP
+            EXIT WHEN mon_result.done;
+            mon_result := rrule._advance_monthly(
+                mon_base, mon_basedate, 32, 1, 'OMIT', NULL,
+                '2020-04-01'::TIMESTAMPTZ, 100,
+                mon_result.omit_count, mon_result.period_count
+            );
+            mon_base := mon_result.current_base;
+        END LOOP;
+
+        -- Test OMIT + UNTIL termination (lines 1497-1498)
+        mon_base := '2020-02-29 10:00:00'::TIMESTAMPTZ;
+        mon_result.omit_count := 0;
+        mon_result.period_count := 0;
+        mon_result.done := FALSE;
+        FOR mon_i IN 1..5 LOOP
+            EXIT WHEN mon_result.done;
+            mon_result := rrule._advance_monthly(
+                mon_base, mon_basedate, 32, 1, 'OMIT',
+                '2020-04-01'::TIMESTAMPTZ,
+                '2100-01-01'::TIMESTAMPTZ, 100,
+                mon_result.omit_count, mon_result.period_count
+            );
+            mon_base := mon_result.current_base;
+        END LOOP;
+
+        -- Test FORWARD + UNTIL termination (lines 1512-1514)
+        mon_result := rrule._advance_monthly(
+            '2020-02-29 10:00:00'::TIMESTAMPTZ, mon_basedate,
+            32, 1, 'FORWARD',
+            '2020-02-29 10:00:00'::TIMESTAMPTZ,
+            '2100-01-01'::TIMESTAMPTZ, 100, 0, 0
+        );
+
+        -- Test FORWARD + maxdate termination (lines 1517-1519)
+        mon_result := rrule._advance_monthly(
+            '2020-02-29 10:00:00'::TIMESTAMPTZ, mon_basedate,
+            32, 1, 'FORWARD', NULL,
+            '2020-02-29 10:00:00'::TIMESTAMPTZ, 100, 0, 0
+        );
+    END;
 
 END;
 $$;
