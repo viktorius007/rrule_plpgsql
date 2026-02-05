@@ -580,3 +580,76 @@ def rrule_skip_comparison_pair(draw):
     rrule_backward = ';'.join(base_parts + ['SKIP=BACKWARD'])
 
     return rrule_omit, rrule_backward, freq, bymonthday
+
+
+# =============================================================================
+# Ordinal BYDAY Strategies
+# =============================================================================
+
+@st.composite
+def rrule_with_byday_ordinal(draw):
+    """Generate RRULE with ordinal BYDAY pattern (e.g., 2MO, -1FR).
+
+    Returns tuple of (rrule, freq, ordinal, day, has_bymonth).
+    Ordinals only valid with MONTHLY/YEARLY per RFC 5545.
+    """
+    freq = draw(st.sampled_from(['MONTHLY', 'YEARLY']))
+    parts = [f'FREQ={freq}']
+    parts.append(f'COUNT={draw(st.integers(1, 30))}')
+
+    # Ordinal range: use ±1 to ±5 (common range, avoids non-existent positions)
+    ordinal = draw(st.one_of(
+        st.integers(min_value=1, max_value=5),
+        st.integers(min_value=-5, max_value=-1)
+    ))
+
+    day = draw(st.sampled_from(WEEKDAYS))
+    ordinal_str = f'{ordinal:+d}' if ordinal < 0 else str(ordinal)
+    parts.append(f'BYDAY={ordinal_str}{day}')
+
+    # Optional BYMONTH for YEARLY (changes scope from year to month)
+    has_bymonth = False
+    if freq == 'YEARLY' and draw(st.booleans()):
+        months = draw(st.lists(st.integers(1, 12), min_size=1, max_size=3, unique=True))
+        parts.append(f'BYMONTH={",".join(str(m) for m in sorted(months))}')
+        has_bymonth = True
+
+    return ';'.join(parts), freq, ordinal, day, has_bymonth
+
+
+@st.composite
+def rrule_ordinal_comparison_pair(draw):
+    """Generate paired RRULEs: with ordinal BYDAY and without.
+
+    Returns (rrule_with_ordinal, rrule_without_ordinal, freq, ordinal, day, has_bymonth, until_offset).
+    Used to verify ordinal results are subset of non-ordinal results.
+    """
+    from datetime import timedelta
+
+    freq = draw(st.sampled_from(['MONTHLY', 'YEARLY']))
+    ordinal = draw(st.one_of(
+        st.integers(min_value=1, max_value=5),
+        st.integers(min_value=-5, max_value=-1)
+    ))
+    day = draw(st.sampled_from(WEEKDAYS))
+
+    ordinal_str = f'{ordinal:+d}' if ordinal < 0 else str(ordinal)
+
+    # Time range for fair comparison
+    if freq == 'YEARLY':
+        until_offset = timedelta(days=365 * draw(st.integers(3, 5)))
+    else:
+        until_offset = timedelta(days=30 * draw(st.integers(6, 18)))
+
+    base_parts = [f'FREQ={freq}']
+
+    has_bymonth = False
+    if freq == 'YEARLY' and draw(st.booleans()):
+        months = draw(st.lists(st.integers(1, 12), min_size=1, max_size=3, unique=True))
+        base_parts.append(f'BYMONTH={",".join(str(m) for m in sorted(months))}')
+        has_bymonth = True
+
+    rrule_with_ordinal = ';'.join(base_parts + [f'BYDAY={ordinal_str}{day}'])
+    rrule_without_ordinal = ';'.join(base_parts + [f'BYDAY={day}'])
+
+    return rrule_with_ordinal, rrule_without_ordinal, freq, ordinal, day, has_bymonth, until_offset

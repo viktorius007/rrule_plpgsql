@@ -25,6 +25,8 @@ from .strategies import (
     rrule_skip_comparison_pair,
     dtstart_for_skip,
     dtstart_leap_day,
+    rrule_with_byday_ordinal,
+    rrule_ordinal_comparison_pair,
 )
 
 
@@ -874,3 +876,168 @@ def test_skip_leap_year_behavior(db, dtstart):
         # OMIT should only produce leap year Feb 29s
         assert r.month == 2 and r.day == 29 and calendar.isleap(r.year), \
             f"OMIT should only produce leap year Feb 29, got {r}"
+
+
+# =============================================================================
+# Ordinal BYDAY Invariants
+# =============================================================================
+
+@given(data=rrule_with_byday_ordinal(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_byday_ordinal_weekday(db, data, dtstart):
+    """All ordinal BYDAY results must occur on the specified weekday.
+
+    Regardless of ordinal position, every occurrence from 2MO must be Monday.
+    """
+    rrule, freq, ordinal, day, has_bymonth = data
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if results:
+        expected_weekday = BYDAY_TO_WEEKDAY[day]
+        for r in results:
+            assert r.weekday() == expected_weekday, \
+                f"Ordinal BYDAY weekday violated: {r} (weekday={r.weekday()}) expected {expected_weekday} for BYDAY={ordinal}{day}"
+
+
+@given(data=rrule_with_byday_ordinal(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_byday_ordinal_monthly_position(db, data, dtstart):
+    """For MONTHLY (or YEARLY+BYMONTH), ordinal must match Nth weekday position within month.
+
+    2MO means result is the 2nd Monday of its month.
+    -1FR means result is the last Friday of its month.
+
+    YEARLY+BYMONTH has month-scoped ordinals (same as MONTHLY).
+    """
+    rrule, freq, ordinal, day, has_bymonth = data
+
+    # Test MONTHLY, or YEARLY with BYMONTH (both have month-scoped ordinals)
+    if freq == 'MONTHLY' or (freq == 'YEARLY' and has_bymonth):
+        pass  # Continue with test
+    else:
+        return
+
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if not results:
+        return
+
+    expected_weekday = BYDAY_TO_WEEKDAY[day]
+
+    for r in results:
+        # Find all occurrences of this weekday in the month
+        weekdays_in_month = []
+        for day_num in range(1, calendar.monthrange(r.year, r.month)[1] + 1):
+            dt = datetime(r.year, r.month, day_num, r.hour, r.minute, r.second, r.microsecond)
+            if dt.weekday() == expected_weekday:
+                weekdays_in_month.append(dt)
+
+        # Verify ordinal position
+        if ordinal > 0:
+            assert ordinal <= len(weekdays_in_month), \
+                f"Ordinal {ordinal} exceeds available {len(weekdays_in_month)} weekdays"
+            expected = weekdays_in_month[ordinal - 1]
+        else:
+            assert abs(ordinal) <= len(weekdays_in_month), \
+                f"Ordinal {ordinal} exceeds available {len(weekdays_in_month)} weekdays"
+            expected = weekdays_in_month[ordinal]  # -1 is last, -2 is second-to-last
+
+        assert r == expected, \
+            f"MONTHLY ordinal position wrong: {r} should be ordinal {ordinal}, expected {expected}"
+
+
+@given(data=rrule_with_byday_ordinal(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_byday_ordinal_yearly_position(db, data, dtstart):
+    """For YEARLY without BYMONTH, ordinal applies to entire year.
+
+    2MO means the 2nd Monday of the entire year.
+    """
+    rrule, freq, ordinal, day, has_bymonth = data
+
+    if freq != 'YEARLY' or has_bymonth:
+        return  # Only test YEARLY without BYMONTH
+
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if not results:
+        return
+
+    from datetime import date
+    expected_weekday = BYDAY_TO_WEEKDAY[day]
+
+    for r in results:
+        # Find all occurrences of this weekday in the year
+        weekdays_in_year = []
+        current = date(r.year, 1, 1)
+        end = date(r.year, 12, 31)
+        while current <= end:
+            if current.weekday() == expected_weekday:
+                weekdays_in_year.append(datetime(
+                    current.year, current.month, current.day,
+                    r.hour, r.minute, r.second, r.microsecond
+                ))
+            current += timedelta(days=1)
+
+        # Verify ordinal position
+        if ordinal > 0:
+            assert ordinal <= len(weekdays_in_year)
+            expected = weekdays_in_year[ordinal - 1]
+        else:
+            assert abs(ordinal) <= len(weekdays_in_year)
+            expected = weekdays_in_year[ordinal]
+
+        assert r == expected, \
+            f"YEARLY ordinal position wrong: {r} should be ordinal {ordinal} of year, expected {expected}"
+
+
+@given(data=rrule_ordinal_comparison_pair(), dtstart=dtstart_strategy)
+@settings(max_examples=500)
+def test_byday_ordinal_subset(db, data, dtstart):
+    """Ordinal BYDAY results must be subset of non-ordinal results.
+
+    Results from BYDAY=2MO must all appear in results from BYDAY=MO.
+    """
+    rrule_with, rrule_without, freq, ordinal, day, has_bymonth, until_offset = data
+    cur = db.cursor()
+
+    # Bound both rules with UNTIL for fair comparison
+    until_dt = dtstart + until_offset
+    until_str = until_dt.strftime('%Y%m%dT%H%M%SZ')
+
+    rrule_with_bounded = f'{rrule_with};UNTIL={until_str}'
+    rrule_without_bounded = f'{rrule_without};UNTIL={until_str}'
+
+    # Get ordinal results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_with_bounded, dtstart)
+    )
+    ordinal_results = set(cur.fetchone()[0] or [])
+
+    # Get non-ordinal results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_without_bounded, dtstart)
+    )
+    all_weekday_results = set(cur.fetchone()[0] or [])
+
+    # Every ordinal result must be in non-ordinal results
+    for r in ordinal_results:
+        assert r in all_weekday_results, \
+            f"Ordinal subset violated: {r} from BYDAY={ordinal}{day} not in BYDAY={day} results"
