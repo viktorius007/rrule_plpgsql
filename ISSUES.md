@@ -173,26 +173,34 @@ Also fixed a pre-existing bug in test `before() with inc=TRUE includes boundary 
 
 ### ISSUE-005: Validation error paths for time filters untested
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** MEDIUM
 **Coverage Impact:** 3 branches in `parse_rrule_parts()`
 
 These validation branches reject BYMINUTE/BYSECOND with WEEKLY/MONTHLY/YEARLY (documented limitation):
 
-| Line | Condition |
-|------|-----------|
-| 562 | `result.byminute IS NOT NULL` with non-DAILY freq |
-| 565 | `result.bysecond IS NOT NULL` with non-DAILY freq |
-| 572 | `result.bysetpos IS NOT NULL` with sub-day freq |
+| Line | Condition | Test Coverage |
+|------|-----------|---------------|
+| 562 | `result.byminute IS NOT NULL` with non-DAILY freq | Already tested in `test_rejection_matrix.sql` |
+| 565 | `result.bysecond IS NOT NULL` with non-DAILY freq | Already tested in `test_rejection_matrix.sql` |
+| 572 | `result.bysetpos IS NOT NULL` with sub-day freq | **Added** in `test_subday_correctness.sql` Section 14 |
 
-**Test Strategy:**
-- Add rejection tests to `tests/matrix/test_rejection_matrix.sql`:
-  ```sql
-  -- Should reject: BYMINUTE with WEEKLY
-  SELECT rrule."all"('FREQ=WEEKLY;BYMINUTE=30;COUNT=5', '2025-01-01'::TIMESTAMP);
-  ```
+**Resolution:**
+Investigation revealed lines 562 and 565 (BYMINUTE/BYSECOND with WEEKLY/MONTHLY/YEARLY) were already tested in `tests/matrix/test_rejection_matrix.sql` Section 5 (lines 152-176).
 
-**Files:** `tests/matrix/test_rejection_matrix.sql`
+Only line 572 (BYSETPOS with sub-day frequencies) lacked coverage because it requires sub-day installation. Added Section 14 to `tests/test_subday_correctness.sql` with 5 tests:
+- BYSETPOS with HOURLY rejected
+- BYSETPOS with MINUTELY rejected
+- BYSETPOS with SECONDLY rejected
+- BYSETPOS=-1 (negative) with HOURLY rejected
+- BYSETPOS=1,2,-1 (multiple values) with MINUTELY rejected
+
+**Verification:**
+- Sub-day tests pass: `./test.sh --subday`
+- Full suite passes: `./test.sh --both`
+- Static linter passes: `./lint-tests.sh`
+
+**Files:** `tests/test_subday_correctness.sql` (Section 14 added)
 
 ---
 
@@ -366,6 +374,9 @@ FALSE POSITIVE. The 0% profiler coverage is caused by PostgreSQL's plan-time eva
 
 ### ISSUE-004: TIMESTAMPTZ MONTHLY generator branch coverage (2026-02-05)
 Added TEST SUITE 22 to `test_tz_api.sql` with 9 tests covering MONTHLY frequency through the TIMESTAMPTZ API. Tests exercise first iteration, range filtering, output limits, after()/before() API paths, INTERVAL>1, and error handling for sub-day/invalid frequencies. Also fixed a pre-existing bug where test `before() with inc=TRUE includes boundary date` did TEXT comparison instead of TIMESTAMPTZ comparison.
+
+### ISSUE-005: Validation error paths for time filters (2026-02-05)
+Investigation found lines 562/565 (BYMINUTE/BYSECOND rejection) were already tested in `test_rejection_matrix.sql`. Only line 572 (BYSETPOS with sub-day frequencies) lacked coverage. Added Section 14 to `test_subday_correctness.sql` with 5 tests covering BYSETPOS rejection with HOURLY/MINUTELY/SECONDLY, including negative and multiple value variants.
 
 ---
 

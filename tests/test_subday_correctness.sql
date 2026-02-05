@@ -1280,4 +1280,54 @@ SELECT
          WHERE date_part('doy', occurrence) != 1)
     );
 
+-- ============================================================================
+-- SECTION 14: BYSETPOS Rejection with Sub-Day Frequencies
+-- ============================================================================
+\echo ''
+\echo '--- Section 14: BYSETPOS Rejection Tests ---'
+
+-- BYSETPOS is invalid with sub-day frequencies (RFC 5545 / project design decision)
+-- Sub-day frequencies generate single occurrences per interval; BYSETPOS is meaningless.
+-- This tests validation branch at parse_rrule_parts() line 572.
+--
+-- Note: BYSETPOS requires another BYxxx parameter (RFC 5545). We use BYDAY=MO
+-- to satisfy that requirement and test that the sub-day frequency rejection
+-- takes precedence.
+
+-- Test 14.1: BYSETPOS with HOURLY should be rejected
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('BYSETPOS Rejection', 'BYSETPOS with HOURLY rejected',
+    assert_rrule_rejected('BYSETPOS-HOURLY',
+        'FREQ=HOURLY;BYDAY=MO;BYSETPOS=1;COUNT=5',
+        '%BYSETPOS%not supported with FREQ=HOURLY%'));
+
+-- Test 14.2: BYSETPOS with MINUTELY should be rejected
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('BYSETPOS Rejection', 'BYSETPOS with MINUTELY rejected',
+    assert_rrule_rejected('BYSETPOS-MINUTELY',
+        'FREQ=MINUTELY;BYDAY=MO;BYSETPOS=1;COUNT=5',
+        '%BYSETPOS%not supported with FREQ=MINUTELY%'));
+
+-- Test 14.3: BYSETPOS with SECONDLY should be rejected
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('BYSETPOS Rejection', 'BYSETPOS with SECONDLY rejected',
+    assert_rrule_rejected('BYSETPOS-SECONDLY',
+        'FREQ=SECONDLY;BYDAY=MO;BYSETPOS=1;COUNT=5',
+        '%BYSETPOS%not supported with FREQ=SECONDLY%'));
+
+-- Test 14.4: BYSETPOS with negative value and HOURLY should be rejected
+-- Verify rejection works for negative BYSETPOS values too
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('BYSETPOS Rejection', 'BYSETPOS=-1 with HOURLY rejected',
+    assert_rrule_rejected('BYSETPOS-NEG-HOURLY',
+        'FREQ=HOURLY;BYDAY=MO;BYSETPOS=-1;COUNT=5',
+        '%BYSETPOS%not supported with FREQ=HOURLY%'));
+
+-- Test 14.5: BYSETPOS with multiple values and MINUTELY should be rejected
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('BYSETPOS Rejection', 'BYSETPOS=1,2,-1 with MINUTELY rejected',
+    assert_rrule_rejected('BYSETPOS-MULTI-MINUTELY',
+        'FREQ=MINUTELY;BYDAY=MO;BYSETPOS=1,2,-1;COUNT=5',
+        '%BYSETPOS%not supported with FREQ=MINUTELY%'));
+
 ROLLBACK;
