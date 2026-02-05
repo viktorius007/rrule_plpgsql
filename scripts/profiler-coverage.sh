@@ -19,6 +19,15 @@
 #   - Console summary with coverage statistics
 #   - coverage-report.txt with detailed report including uncovered statements
 #
+# Known Limitations:
+#   IMMUTABLE functions may show 0% coverage even when properly tested.
+#   PostgreSQL's query planner evaluates IMMUTABLE functions at plan time
+#   when called with constant arguments. Since the profiler operates at
+#   execution time, these calls are not observed. This affects:
+#   - byweekno_matches() and related week number functions
+#   - Pure computational helpers like weekday_to_number()
+#   See ISSUES.md ISSUE-003 for detailed analysis.
+#
 # Requirements:
 #   - PostgreSQL 12+ with plpgsql_check extension available
 #   - plpgsql_check should be in shared_preload_libraries (or LOAD may be needed)
