@@ -330,34 +330,41 @@ def simple_rrule_for_differential(draw):
     PL/pgSQL 10-year window cap. This avoids false failures due to
     the intentional API limit difference.
 
-    The 10-year window from dtstart limits total occurrences.
-    We use conservative limits to ensure all COUNT occurrences fit.
-    With MONTHLY + SKIP=OMIT (default), months without day 31 are
-    skipped, which can cause fewer calendar months to produce
-    occurrences, so we use conservative counts.
+    The 10-year window from dtstart limits total occurrences. We use
+    conservative limits to ensure all COUNT occurrences fit comfortably.
 
-    Max safe configurations (with generous margin):
-    - YEARLY: 9 occurrences * 1 interval = 9 years
-    - MONTHLY: 24 occurrences * 4 interval = ~8 years (avoiding month-end issues)
-    - WEEKLY: 50 occurrences * 8 interval = ~8 years
-    - DAILY: 50 occurrences * 50 interval = ~7 years
+    IMPORTANT: dtstart can land on day 29/30/31 which causes month-skipping
+    for MONTHLY frequency (e.g., dtstart=June 30 with INTERVAL=4 skips Feb).
+    This effectively doubles the interval, requiring even more conservative
+    limits. Also, the 10-year cap uses strict `< maxdate`, so occurrences
+    exactly at the boundary are excluded.
+
+    Max safe configurations (very conservative for edge cases):
+    - YEARLY: 8 occurrences * 1 interval = 8 years (not 9, to avoid boundary)
+    - MONTHLY: 18 occurrences * 3 interval = 4.5 years nominal, but with
+               month-skipping can span up to 9 years safely
+    - WEEKLY: 40 occurrences * 8 interval = ~6 years
+    - DAILY: 40 occurrences * 40 interval = ~4.4 years
     """
     freq = draw(st.sampled_from(FREQUENCIES))
 
     # Constrain COUNT based on frequency to stay safely within 10-year window
+    # Extra conservative to handle month-skipping and boundary conditions
     if freq == 'YEARLY':
-        max_count = 9
+        max_count = 8  # 8 years, not 9, to avoid 10-year boundary
         max_interval = 1
     elif freq == 'MONTHLY':
-        # Conservative: 24 months * 4 interval = 8 years max
-        max_count = 24
-        max_interval = 4
+        # Very conservative: with dtstart on day 29-31 and INTERVAL=4,
+        # months like Feb are skipped, effectively doubling the interval.
+        # 18 * 3 = 54 months = 4.5 years nominal, but with skipping ~9 years
+        max_count = 18
+        max_interval = 3
     elif freq == 'WEEKLY':
-        max_count = 50
+        max_count = 40
         max_interval = 8
     else:  # DAILY
-        max_count = 50
-        max_interval = 50
+        max_count = 40
+        max_interval = 40
 
     count = draw(st.integers(1, max_count))
     interval = draw(st.integers(1, max_interval))
@@ -653,3 +660,90 @@ def rrule_ordinal_comparison_pair(draw):
     rrule_without_ordinal = ';'.join(base_parts + [f'BYDAY={day}'])
 
     return rrule_with_ordinal, rrule_without_ordinal, freq, ordinal, day, has_bymonth, until_offset
+
+
+# =============================================================================
+# Edge Case Strategies for Differential Testing
+# =============================================================================
+
+@st.composite
+def edge_case_rrule_for_differential(draw):
+    """Generate RRULE with BYMONTHDAY edge cases for differential testing.
+
+    Uses BYMONTHDAY=28-31 to test month-end behavior.
+    Uses SKIP=OMIT (default) to match python-dateutil's behavior.
+    Keeps COUNT conservative to stay within API caps and 10-year window.
+
+    Note: python-dateutil does NOT support RFC 7529 SKIP parameter.
+    Its implicit behavior for invalid dates (e.g., Feb 31) is OMIT.
+    Since SKIP=OMIT is PL/pgSQL's default, these rules are compatible.
+
+    IMPORTANT: Avoid FREQ=DAILY + BYMONTHDAY>=29 which has known iteration
+    limit issues (see ISSUE-014). Use MONTHLY/YEARLY for sparse BYMONTHDAY.
+    """
+    # Exclude DAILY for BYMONTHDAY>=29 (iteration limit issue)
+    # Exclude WEEKLY - BYMONTHDAY is invalid with WEEKLY per RFC 5545
+    freq = draw(st.sampled_from(['MONTHLY', 'YEARLY']))
+
+    # BYMONTHDAY values that trigger edge cases
+    # 28: exists in all months
+    # 29: missing in Feb (non-leap)
+    # 30: missing in Feb
+    # 31: missing in Feb, Apr, Jun, Sep, Nov
+    # -1: last day (always valid)
+    # -2: second to last (always valid)
+    bymonthday = draw(st.sampled_from([28, 29, 30, 31, -1, -2]))
+
+    # Conservative counts to stay within 10-year window (dtstart in 2020-2025)
+    # With BYMONTH reducing occurrences, be extra conservative
+    if freq == 'MONTHLY':
+        # MONTHLY without BYMONTH: 12/year
+        # MONTHLY with BYMONTH=1: 1/year (need 10 years max = 10 occurrences)
+        # With INTERVAL, even fewer. Be conservative.
+        count = draw(st.integers(1, 8))  # Safe for worst-case BYMONTH
+        max_interval = 2
+    else:  # YEARLY
+        # YEARLY+BYMONTHDAY: 1/year max, so COUNT<=9 for 10-year window
+        count = draw(st.integers(1, 8))
+        max_interval = 1
+
+    interval = draw(st.integers(1, max_interval))
+
+    parts = [f'FREQ={freq}', f'BYMONTHDAY={bymonthday}', f'COUNT={count}']
+    if interval > 1:
+        parts.append(f'INTERVAL={interval}')
+
+    # Optionally add BYMONTH to test intersection (reduce chance for 10-year hit)
+    # Only add BYMONTH occasionally and with low COUNT
+    # Avoid BYMONTH=2 with BYMONTHDAY=29 as Feb 29 only occurs in leap years
+    # (every 4 years), which can easily exceed 10-year window
+    if draw(st.booleans()) and count <= 5:
+        # Avoid sparse leap year cases
+        if bymonthday == 29:
+            # BYMONTHDAY=29 + BYMONTH=2 = leap years only (4-year gap)
+            # With COUNT=3, that's 2024, 2028, 2032 = 12 years
+            # Exclude February for BYMONTHDAY=29
+            months = draw(st.lists(st.sampled_from([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+                                   min_size=1, max_size=3, unique=True))
+        else:
+            months = draw(st.lists(st.integers(1, 12), min_size=1, max_size=3, unique=True))
+        parts.append(f'BYMONTH={",".join(str(m) for m in sorted(months))}')
+
+    return ';'.join(parts)
+
+
+@st.composite
+def dtstart_edge_case_for_differential(draw):
+    """Generate dtstart with day 28-31 to trigger BYMONTHDAY edge cases.
+
+    Uses months that have 31 days to ensure valid starting dates.
+    Removes microseconds for dateutil compatibility.
+    Includes leap years (2020, 2024) to test Feb 29 scenarios.
+    """
+    year = draw(st.integers(2020, 2024))
+    # 31-day months: Jan, Mar, May, Jul, Aug, Oct, Dec
+    month = draw(st.sampled_from([1, 3, 5, 7, 8, 10, 12]))
+    day = draw(st.sampled_from([28, 29, 30, 31]))
+    hour = draw(st.integers(0, 23))
+    minute = draw(st.integers(0, 59))
+    return datetime(year, month, day, hour, minute, 0)

@@ -22,7 +22,12 @@ from dateutil.rrule import rrulestr
 from hypothesis import given, settings, assume
 
 from .known_differences import is_known_difference, get_difference_reason
-from .strategies import simple_rrule_for_differential, dtstart_no_microseconds
+from .strategies import (
+    simple_rrule_for_differential,
+    dtstart_no_microseconds,
+    edge_case_rrule_for_differential,
+    dtstart_edge_case_for_differential,
+)
 
 
 @given(rrule=simple_rrule_for_differential(), dtstart=dtstart_no_microseconds)
@@ -154,3 +159,108 @@ def test_count_matches(db, rrule, dtstart):
         f"Count mismatch for RRULE '{rrule}' with dtstart={dtstart}: "
         f"PL/pgSQL={pg_count} vs dateutil={du_count}"
     )
+
+
+# =============================================================================
+# Edge Case Differential Tests (BYMONTHDAY)
+# =============================================================================
+
+
+@given(
+    rrule=edge_case_rrule_for_differential(),
+    dtstart=dtstart_no_microseconds
+)
+@settings(max_examples=300, deadline=None)
+def test_bymonthday_matches_dateutil(db, rrule, dtstart):
+    """BYMONTHDAY edge cases should match python-dateutil.
+
+    Tests month-end handling (BYMONTHDAY=28,29,30,31,-1,-2)
+    with default SKIP=OMIT which matches dateutil's implicit behavior.
+
+    Both implementations should:
+    - Skip months that don't have the specified day (BYMONTHDAY=31 skips Feb)
+    - Handle negative BYMONTHDAY correctly (-1 = last day)
+    - Properly intersect BYMONTH with BYMONTHDAY
+
+    A failure here indicates divergent month-end handling.
+    """
+    if is_known_difference(rrule):
+        assume(False)
+
+    # Get PL/pgSQL results
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    pg_results = cur.fetchone()[0] or []
+
+    # Get python-dateutil results
+    try:
+        rule = rrulestr(f'RRULE:{rrule}', dtstart=dtstart)
+        du_results = list(rule[:1000])
+    except ValueError:
+        # dateutil rejected this RRULE - skip
+        assume(False)
+
+    # Compare result counts
+    assert len(pg_results) == len(du_results), (
+        f"Count mismatch for RRULE '{rrule}' with dtstart={dtstart}: "
+        f"PL/pgSQL={len(pg_results)}, dateutil={len(du_results)}"
+    )
+
+    # Compare each occurrence
+    for i, (pg, du) in enumerate(zip(pg_results, du_results)):
+        du_naive = du.replace(tzinfo=None) if du.tzinfo else du
+        assert pg == du_naive, (
+            f"Mismatch at index {i} for RRULE '{rrule}' with dtstart={dtstart}: "
+            f"PL/pgSQL={pg} vs dateutil={du_naive}"
+        )
+
+
+@given(
+    rrule=edge_case_rrule_for_differential(),
+    dtstart=dtstart_edge_case_for_differential()
+)
+@settings(max_examples=200, deadline=None)
+def test_edge_dtstart_bymonthday(db, rrule, dtstart):
+    """Test BYMONTHDAY with month-end dtstart values.
+
+    Combines edge case BYMONTHDAY (28-31, -1, -2) with edge case dtstart
+    (day 28-31). This tests scenarios like:
+    - dtstart=Jan 31 with BYMONTHDAY=31 (first occurrence IS dtstart)
+    - dtstart=Jan 31 with BYMONTHDAY=30 (first occurrence is Feb 28 or later)
+
+    Both implementations should produce identical results.
+    """
+    if is_known_difference(rrule):
+        assume(False)
+
+    # Get PL/pgSQL results
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    pg_results = cur.fetchone()[0] or []
+
+    # Get python-dateutil results
+    try:
+        rule = rrulestr(f'RRULE:{rrule}', dtstart=dtstart)
+        du_results = list(rule[:1000])
+    except ValueError:
+        assume(False)
+
+    # Compare counts
+    assert len(pg_results) == len(du_results), (
+        f"Count mismatch for RRULE '{rrule}' with dtstart={dtstart}: "
+        f"PL/pgSQL={len(pg_results)}, dateutil={len(du_results)}"
+    )
+
+    # Compare each occurrence
+    for i, (pg, du) in enumerate(zip(pg_results, du_results)):
+        du_naive = du.replace(tzinfo=None) if du.tzinfo else du
+        assert pg == du_naive, (
+            f"Mismatch at index {i} for RRULE '{rrule}' with dtstart={dtstart}: "
+            f"PL/pgSQL={pg} vs dateutil={du_naive}"
+        )
