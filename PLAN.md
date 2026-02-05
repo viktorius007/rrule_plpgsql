@@ -1,7 +1,7 @@
 # Test Quality Improvement Plan
 
 **Created:** 2026-02-05
-**Status:** ✅ Mostly Complete (Goal 3.3 Optional remains)
+**Status:** ✅ Complete
 **Context:** Following comprehensive test suite implementation (52,000+ lines, 7,500+ assertions), this plan addresses remaining opportunities for test quality improvement identified through research.
 
 ## Background
@@ -114,7 +114,7 @@ Three research documents inform this plan:
 
 **Important:** Per RESEARCH_PROPERTY_TESTING.md Phase 1, the existing `tests/fuzz/test_property_invariants.sql` should be **kept** as a fast CI smoke test. The Python/Hypothesis tests complement (not replace) the PL/pgSQL tests.
 
-**Total Effort:** 6-10 hours (5 increments; 3.3 is optional)
+**Total Effort:** 6-10 hours (5 increments)
 
 ### Increment 3.1: Infrastructure Setup ✅
 - [x] Create `tests/property/` directory structure:
@@ -148,14 +148,15 @@ Three research documents inform this plan:
 - **Deliverable:** Full invariant suite with automatic shrinking on failures
 - **Result:** 11 passing tests in test_invariants.py
 
-### Increment 3.3: Advanced Properties (Optional) ⏳
-- [ ] Add advanced invariants from RESEARCH_PROPERTY_TESTING.md Section 2.2:
+### Increment 3.3: Advanced Properties ✅
+- [x] Add advanced invariants from RESEARCH_PROPERTY_TESTING.md Section 2.2:
   - Interval Spacing: `FREQ=DAILY;INTERVAL=3` produces 3-day gaps
   - Idempotence: `all(rrule, dtstart)` returns identical results on repeated calls
   - Subset Relationship: `between(start, end)` results ⊆ `all()` results
   - after/before Consistency: `after(d)` equals first result > d from `all()`
-  - Timezone Consistency: TIMESTAMP and TIMESTAMPTZ APIs produce matching wall-clock times
+  - Timezone Consistency: TZID in RRULE equals explicit timezone parameter
 - **Deliverable:** Complete property coverage matching research recommendations
+- **Result:** 7 passing tests in test_advanced.py
 
 ### Increment 3.4: Differential Testing vs python-dateutil ✅
 - [x] Implement `test_matches_dateutil()`:

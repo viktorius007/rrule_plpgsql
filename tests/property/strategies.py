@@ -195,6 +195,75 @@ dtstart_no_microseconds = st.datetimes(
 ).map(lambda dt: dt.replace(microsecond=0))
 
 
+# =============================================================================
+# Strategies for Advanced Property Tests
+# =============================================================================
+
+# Common timezones for testing timezone consistency
+COMMON_TIMEZONES = [
+    'UTC',
+    'America/New_York',
+    'America/Los_Angeles',
+    'Europe/London',
+    'Europe/Berlin',
+    'Asia/Tokyo',
+    'Australia/Sydney',  # Southern hemisphere DST
+]
+
+
+@st.composite
+def simple_rrule_no_byxxx(draw):
+    """Generate simple RRULE without any BYxxx modifiers.
+
+    This strategy generates RRULEs with only FREQ, COUNT, and INTERVAL.
+    Used for testing interval spacing where BYxxx filters would
+    interfere with the expected spacing pattern.
+
+    For MONTHLY/YEARLY, we use conservative counts and dtstart with
+    day <= 28 to avoid SKIP edge cases affecting the interval pattern.
+    """
+    freq = draw(st.sampled_from(FREQUENCIES))
+    count = draw(st.integers(2, 20))  # Need at least 2 to test spacing
+    interval = draw(st.integers(1, 3))
+    return f'FREQ={freq};COUNT={count};INTERVAL={interval}', freq, interval
+
+
+@st.composite
+def dtstart_safe_for_monthly(draw):
+    """Generate dtstart with day <= 28 to avoid SKIP edge cases.
+
+    When testing interval spacing for MONTHLY/YEARLY rules, using
+    day 29-31 can trigger SKIP=OMIT which skips months, breaking
+    the expected interval spacing pattern.
+    """
+    year = draw(st.integers(2020, 2025))
+    month = draw(st.integers(1, 12))
+    day = draw(st.integers(1, 28))  # Safe day range
+    hour = draw(st.integers(0, 23))
+    minute = draw(st.integers(0, 59))
+    return datetime(year, month, day, hour, minute, 0)
+
+
+@st.composite
+def rrule_with_tzid(draw):
+    """Generate RRULE with embedded TZID parameter.
+
+    Returns both the RRULE string (with TZID) and the timezone name
+    separately for testing timezone consistency.
+    """
+    freq = draw(st.sampled_from(FREQUENCIES))
+    count = draw(st.integers(1, 20))
+    interval = draw(st.integers(1, 3))
+    tzid = draw(st.sampled_from(COMMON_TIMEZONES))
+
+    rrule = f'FREQ={freq};COUNT={count};INTERVAL={interval};TZID={tzid}'
+    return rrule, tzid
+
+
+# Strategy for selecting a timezone from the common list
+timezone_strategy = st.sampled_from(COMMON_TIMEZONES)
+
+
 @st.composite
 def simple_rrule_for_differential(draw):
     """Generate simple RRULE suitable for differential testing.
