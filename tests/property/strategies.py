@@ -69,9 +69,13 @@ def complex_rrule(draw):
         parts.append(f'BYMONTHDAY={draw(st.integers(1, 28))}')
 
     # Optionally add BYWEEKNO (only valid with YEARLY per RFC 5545)
+    # Include both positive (1-52) and negative (-52 to -1) week numbers
     if freq == 'YEARLY' and draw(st.booleans()):
         weeks = draw(st.lists(
-            st.integers(1, 52),
+            st.one_of(
+                st.integers(1, 52),     # Positive week numbers
+                st.integers(-52, -1)    # Negative week numbers (from end)
+            ),
             min_size=1, max_size=2, unique=True
         ))
         parts.append(f'BYWEEKNO={",".join(map(str, weeks))}')
@@ -336,8 +340,7 @@ def simple_rrule_for_differential(draw):
     IMPORTANT: dtstart can land on day 29/30/31 which causes month-skipping
     for MONTHLY frequency (e.g., dtstart=June 30 with INTERVAL=4 skips Feb).
     This effectively doubles the interval, requiring even more conservative
-    limits. Also, the 10-year cap uses strict `< maxdate`, so occurrences
-    exactly at the boundary are excluded.
+    limits.
 
     Max safe configurations (very conservative for edge cases):
     - YEARLY: 8 occurrences * 1 interval = 8 years (not 9, to avoid boundary)
@@ -678,10 +681,10 @@ def edge_case_rrule_for_differential(draw):
     Its implicit behavior for invalid dates (e.g., Feb 31) is OMIT.
     Since SKIP=OMIT is PL/pgSQL's default, these rules are compatible.
 
-    IMPORTANT: Avoid FREQ=DAILY + BYMONTHDAY>=29 which has known iteration
-    limit issues (see ISSUE-014). Use MONTHLY/YEARLY for sparse BYMONTHDAY.
+    Note: FREQ=DAILY + BYMONTHDAY is supported (ISSUE-014 fixed the iteration
+    limit), but this strategy focuses on MONTHLY/YEARLY for edge case testing.
     """
-    # Exclude DAILY for BYMONTHDAY>=29 (iteration limit issue)
+    # Exclude DAILY (focus on MONTHLY/YEARLY edge cases)
     # Exclude WEEKLY - BYMONTHDAY is invalid with WEEKLY per RFC 5545
     freq = draw(st.sampled_from(['MONTHLY', 'YEARLY']))
 

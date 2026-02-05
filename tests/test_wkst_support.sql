@@ -775,4 +775,124 @@ VALUES ('Issue 34: BYWEEKNO=1 cross-boundary ISO week included',
 );
 
 
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 11: ISSUE-012 - Systematic negative BYWEEKNO testing'
+\echo '==================================================================='
+
+-- Test 11.1: BYWEEKNO=-2 (second-to-last week)
+-- For 2020 (53 weeks): week -2 = week 52
+-- Week 52 of 2020: Dec 21-27
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=-2 (second-to-last week)',
+    assert_occurrences_equal(
+        'BYWEEKNO=-2',
+        ARRAY[
+            '2020-12-21 00:00:00'::TIMESTAMP,  -- Monday of week 52 (= week -2 in 53-week year)
+            '2021-12-20 00:00:00'::TIMESTAMP   -- Monday of week 51 (= week -2 in 52-week year)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=-2;BYDAY=MO;COUNT=2', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 11.2: BYWEEKNO=-26 (middle from end, ~26th week from end)
+-- For 52-week year: -26 = week 27
+-- For 53-week year: -26 = week 28
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=-26 (middle from end)',
+    assert_occurrences_equal(
+        'BYWEEKNO=-26',
+        ARRAY[
+            '2020-07-06 00:00:00'::TIMESTAMP,  -- Monday of week 28 (53 - 26 + 1 = 28) in 2020 (53-week year)
+            '2021-07-05 00:00:00'::TIMESTAMP   -- Monday of week 27 (52 - 26 + 1 = 27) in 2021 (52-week year)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=-26;BYDAY=MO;COUNT=2', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 11.3: BYWEEKNO=-52 (first or second week, depending on year)
+-- For 52-week year: -52 = week 1
+-- For 53-week year: -52 = week 2
+-- Each YEARLY occurrence is evaluated in its own ISO year.
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=-52 in 52/53-week years',
+    assert_occurrences_equal(
+        'BYWEEKNO=-52',
+        ARRAY[
+            '2020-01-06 00:00:00'::TIMESTAMP,  -- Monday of week 2 (53 - 52 + 1 = 2) in 2020 (53-week year)
+            '2021-01-04 00:00:00'::TIMESTAMP   -- Monday of week 1 (52 - 52 + 1 = 1) in 2021 (52-week year)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=-52;BYDAY=MO;COUNT=2', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 11.4: BYWEEKNO=-1,-52 (last and first/second week together)
+-- In 2020 (53-week year): -1 = week 53, -52 = week 2
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=-1,-52 (last and near-first together)',
+    assert_occurrences_equal(
+        'BYWEEKNO=-1,-52',
+        ARRAY[
+            '2020-01-06 00:00:00'::TIMESTAMP,  -- Monday of week 2 (-52 in 53-week year)
+            '2020-12-28 00:00:00'::TIMESTAMP   -- Monday of week 53 (-1 in 53-week year)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=-1,-52;BYDAY=MO;COUNT=2', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 11.5: YEARLY;INTERVAL=2;BYWEEKNO=-1 (last week every 2 years)
+-- 2020: 53 weeks, week 53 starts Dec 28
+-- 2022: 52 weeks, week 52 starts Dec 26
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('YEARLY;INTERVAL=2;BYWEEKNO=-1',
+    assert_occurrences_equal(
+        'YEARLY INTERVAL=2 BYWEEKNO=-1',
+        ARRAY[
+            '2020-12-28 00:00:00'::TIMESTAMP,  -- Monday of week 53 in 2020
+            '2022-12-26 00:00:00'::TIMESTAMP   -- Monday of week 52 in 2022
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;INTERVAL=2;BYWEEKNO=-1;BYDAY=MO;COUNT=2', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 11.6: BYWEEKNO=-1 across 52/53 week year types (verify normalization)
+-- Shows that -1 correctly maps to the last week regardless of whether year has 52 or 53 weeks
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=-1 across 52/53 week years',
+    assert_occurrences_equal(
+        'BYWEEKNO=-1 52/53 week years',
+        ARRAY[
+            '2020-12-28 00:00:00'::TIMESTAMP,  -- Monday of week 53 (2020 has 53 weeks)
+            '2021-12-27 00:00:00'::TIMESTAMP,  -- Monday of week 52 (2021 has 52 weeks)
+            '2022-12-26 00:00:00'::TIMESTAMP   -- Monday of week 52 (2022 has 52 weeks)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=-1;BYDAY=MO;COUNT=3', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+-- Test 11.7: Mixed positive and negative BYWEEKNO=1,-1 (first and last week)
+-- From dtstart 2020-01-01, the first year's (2020) matches are:
+-- - Week 1: starts 2019-12-30, Monday is 2019-12-30 (before dtstart)
+-- - Week 53: starts 2020-12-28, Monday is 2020-12-28
+-- So first occurrence is week 53 of 2020, then week 1 of 2021.
+INSERT INTO wkst_test_results (test_name, status)
+VALUES ('BYWEEKNO=1,-1 (first and last week)',
+    assert_occurrences_equal(
+        'BYWEEKNO=1,-1 mixed',
+        ARRAY[
+            '2020-12-28 00:00:00'::TIMESTAMP,  -- Monday of ISO week 53 of 2020 (-1)
+            '2021-01-04 00:00:00'::TIMESTAMP   -- Monday of ISO week 1 of 2021 (1)
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=YEARLY;BYWEEKNO=1,-1;BYDAY=MO;COUNT=2', '2020-01-01 00:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
+
 ROLLBACK;

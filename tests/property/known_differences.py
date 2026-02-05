@@ -48,13 +48,16 @@ COMPATIBLE BEHAVIORS (verified via edge_case_rrule_for_differential):
 
 KNOWN LIMITATIONS (PL/pgSQL implementation):
 
-6. **FREQ=DAILY + BYMONTHDAY with sparse days**
-   - Issue: PL/pgSQL has an iteration limit based on COUNT * 40 (days).
-     With BYMONTHDAY=31, occurrences happen ~7 times/year (every ~52 days).
-     COUNT=3 gives 120 day limit, which may not find all 3 occurrences.
-   - python-dateutil: No such limit, finds all COUNT occurrences.
-   - Workaround: Use higher COUNT or MONTHLY frequency with BYMONTHDAY.
-   - Reference: ISSUE-014 in ISSUES.md (pending fix)
+6. **Leap day dtstart with YEARLY frequency**
+   - Issue: Feb 29 dtstart with YEARLY frequency hits 10-year cap before COUNT
+     is satisfied because leap years only occur every 4 years.
+   - Example: YEARLY;COUNT=4 from 2024-02-29 can only get 3 results in 10 years
+     (2024, 2028, 2032 - the 4th occurrence in 2036 exceeds the cap)
+   - python-dateutil: No 10-year cap, returns all COUNT occurrences.
+   - Reference: See "10-Year Window Cap" above for cap rationale.
+
+NOTE: ISSUE-014 (FREQ=DAILY + BYMONTHDAY iteration limit) was fixed by
+increasing the DAILY multiplier from 40 to 62 in calculate_safe_iteration_limit().
 """
 
 KNOWN_DIFFERENCES = [
@@ -104,27 +107,9 @@ def is_known_difference(rrule: str) -> bool:
     if 'RSCALE=' in rrule_upper:
         return True
 
-    # FREQ=DAILY + BYMONTHDAY=29/30/31 has iteration limit issues
-    # The PL/pgSQL iteration limit (COUNT * 40) is insufficient for sparse BYMONTHDAY
-    # See ISSUE-014 in ISSUES.md
-    if 'FREQ=DAILY' in rrule_upper and 'BYMONTHDAY=' in rrule_upper:
-        import re
-        # Check for BYMONTHDAY=29, 30, or 31 (days that don't exist in all months)
-        bymonthday_match = re.search(r'BYMONTHDAY=(\d+)', rrule_upper)
-        if bymonthday_match:
-            bymonthday = int(bymonthday_match.group(1))
-            # BYMONTHDAY=31 occurs ~7 times/year (~52 days apart on average)
-            # BYMONTHDAY=30 occurs ~11 times/year (~33 days apart on average)
-            # BYMONTHDAY=29 occurs ~12 times/year (~30 days apart on average)
-            #
-            # BUT: worst case can be much longer! Starting Feb 1, next occurrence
-            # of BYMONTHDAY=29 is Mar 29 (56 days in non-leap year).
-            #
-            # With iteration limit = COUNT * 40 days, this is insufficient for
-            # worst-case dtstart positions. Mark all DAILY+BYMONTHDAY>=29 as
-            # known difference since dtstart is random and can hit worst case.
-            if bymonthday >= 29:
-                return True
+    # NOTE: ISSUE-014 (FREQ=DAILY + BYMONTHDAY iteration limit) was fixed by
+    # increasing the DAILY multiplier from 40 to 62 in calculate_safe_iteration_limit().
+    # The workaround that was here has been removed.
 
     return False
 
@@ -155,15 +140,8 @@ def get_difference_reason(rrule: str):  # -> str | None:
     if 'RSCALE=' in rrule_upper:
         return 'RSCALE parameter has limited/no support in python-dateutil'
 
-    # Check for DAILY + sparse BYMONTHDAY iteration limit issue
-    if 'FREQ=DAILY' in rrule_upper and 'BYMONTHDAY=' in rrule_upper:
-        import re
-        bymonthday_match = re.search(r'BYMONTHDAY=(\d+)', rrule_upper)
-        if bymonthday_match:
-            bymonthday = int(bymonthday_match.group(1))
-            if bymonthday >= 29:
-                return (f'FREQ=DAILY+BYMONTHDAY={bymonthday} iteration limit issue: '
-                        f'PL/pgSQL limit of COUNT*40 days is insufficient for sparse '
-                        f'BYMONTHDAY values with worst-case dtstart positions (see ISSUE-014)')
+    # NOTE: ISSUE-014 (FREQ=DAILY + BYMONTHDAY iteration limit) was fixed by
+    # increasing the DAILY multiplier from 40 to 62 in calculate_safe_iteration_limit().
+    # The pattern check that was here has been removed.
 
     return None

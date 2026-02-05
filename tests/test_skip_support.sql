@@ -1210,4 +1210,209 @@ SELECT
          ) AS occurrence)
     );
 
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 13: ISSUE-011 - MONTHLY frequency starting Feb 29'
+\echo '==================================================================='
+
+-- Test: MONTHLY SKIP=BACKWARD from Feb 29 2024 (COUNT=13, hits Feb 2025 -> Feb 28)
+-- Feb 29 -> Mar 29 -> Apr 29 -> ... -> Jan 29 -> Feb 28 (BACKWARD)
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY SKIP=BACKWARD from Feb 29 2024',
+    assert_occurrences_equal(
+        'MONTHLY BACKWARD Feb 29',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2024-03-29 10:00:00'::TIMESTAMP,
+            '2024-04-29 10:00:00'::TIMESTAMP,
+            '2024-05-29 10:00:00'::TIMESTAMP,
+            '2024-06-29 10:00:00'::TIMESTAMP,
+            '2024-07-29 10:00:00'::TIMESTAMP,
+            '2024-08-29 10:00:00'::TIMESTAMP,
+            '2024-09-29 10:00:00'::TIMESTAMP,
+            '2024-10-29 10:00:00'::TIMESTAMP,
+            '2024-11-29 10:00:00'::TIMESTAMP,
+            '2024-12-29 10:00:00'::TIMESTAMP,
+            '2025-01-29 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=13',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: MONTHLY SKIP=FORWARD from Feb 29 2024 (COUNT=13, hits Feb 2025 -> Mar 1)
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY SKIP=FORWARD from Feb 29 2024',
+    assert_occurrences_equal(
+        'MONTHLY FORWARD Feb 29',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2024-03-29 10:00:00'::TIMESTAMP,
+            '2024-04-29 10:00:00'::TIMESTAMP,
+            '2024-05-29 10:00:00'::TIMESTAMP,
+            '2024-06-29 10:00:00'::TIMESTAMP,
+            '2024-07-29 10:00:00'::TIMESTAMP,
+            '2024-08-29 10:00:00'::TIMESTAMP,
+            '2024-09-29 10:00:00'::TIMESTAMP,
+            '2024-10-29 10:00:00'::TIMESTAMP,
+            '2024-11-29 10:00:00'::TIMESTAMP,
+            '2024-12-29 10:00:00'::TIMESTAMP,
+            '2025-01-29 10:00:00'::TIMESTAMP,
+            '2025-03-01 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=13',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: MONTHLY SKIP=OMIT from Feb 29 2024 (COUNT=12, skips Feb 2025)
+-- OMIT skips invalid dates, so we get 12 occurrences before hitting Feb 2025
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY SKIP=OMIT from Feb 29 2024',
+    assert_occurrences_equal(
+        'MONTHLY OMIT Feb 29',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2024-03-29 10:00:00'::TIMESTAMP,
+            '2024-04-29 10:00:00'::TIMESTAMP,
+            '2024-05-29 10:00:00'::TIMESTAMP,
+            '2024-06-29 10:00:00'::TIMESTAMP,
+            '2024-07-29 10:00:00'::TIMESTAMP,
+            '2024-08-29 10:00:00'::TIMESTAMP,
+            '2024-09-29 10:00:00'::TIMESTAMP,
+            '2024-10-29 10:00:00'::TIMESTAMP,
+            '2024-11-29 10:00:00'::TIMESTAMP,
+            '2024-12-29 10:00:00'::TIMESTAMP,
+            '2025-01-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=12',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: MONTHLY INTERVAL=2 SKIP=BACKWARD from Feb 29 (every 2 months)
+-- Feb 29 -> Apr 29 -> Jun 29 -> Aug 29 -> Oct 29 -> Dec 29 -> Feb 28
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('MONTHLY INTERVAL=2 SKIP=BACKWARD from Feb 29',
+    assert_occurrences_equal(
+        'MONTHLY INTERVAL=2 BACKWARD Feb 29',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2024-04-29 10:00:00'::TIMESTAMP,
+            '2024-06-29 10:00:00'::TIMESTAMP,
+            '2024-08-29 10:00:00'::TIMESTAMP,
+            '2024-10-29 10:00:00'::TIMESTAMP,
+            '2024-12-29 10:00:00'::TIMESTAMP,
+            '2025-02-28 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=MONTHLY;INTERVAL=2;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=7',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: SKIP=FORWARD YEARLY UNTIL before the forwarded date
+-- Start Feb 29, 2024. Feb 29, 2025 doesn't exist -> would forward to Mar 1.
+-- UNTIL=2025-02-27 (before any valid Feb adjustment) should exclude the second occurrence entirely.
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY SKIP=FORWARD UNTIL excludes forwarded occurrence',
+    assert_occurrences_equal(
+        'YEARLY FORWARD UNTIL edge',
+        ARRAY[
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;SKIP=FORWARD;RSCALE=GREGORIAN;UNTIL=20250227T100000Z',
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 14: Explicit BYMONTHDAY=29;BYMONTH=2 with SKIP modes'
+\echo '==================================================================='
+
+-- Test: YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=OMIT - skip non-leap years
+-- Only leap years (2020, 2024, 2028) produce Feb 29
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=OMIT skips non-leap years',
+    assert_occurrences_equal(
+        'BYMONTHDAY=29 BYMONTH=2 OMIT',
+        ARRAY[
+            '2020-02-29 10:00:00'::TIMESTAMP,
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=OMIT;RSCALE=GREGORIAN;COUNT=3',
+            '2020-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=BACKWARD - use Feb 28 in non-leap years
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=BACKWARD uses Feb 28',
+    assert_occurrences_equal(
+        'BYMONTHDAY=29 BYMONTH=2 BACKWARD',
+        ARRAY[
+            '2020-02-29 10:00:00'::TIMESTAMP,
+            '2021-02-28 10:00:00'::TIMESTAMP,
+            '2022-02-28 10:00:00'::TIMESTAMP,
+            '2023-02-28 10:00:00'::TIMESTAMP,
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=BACKWARD;RSCALE=GREGORIAN;COUNT=5',
+            '2020-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=FORWARD - use Mar 1 in non-leap years
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=FORWARD uses Mar 1',
+    assert_occurrences_equal(
+        'BYMONTHDAY=29 BYMONTH=2 FORWARD',
+        ARRAY[
+            '2020-02-29 10:00:00'::TIMESTAMP,
+            '2021-03-01 10:00:00'::TIMESTAMP,
+            '2022-03-01 10:00:00'::TIMESTAMP,
+            '2023-03-01 10:00:00'::TIMESTAMP,
+            '2024-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=FORWARD;RSCALE=GREGORIAN;COUNT=5',
+            '2020-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
+-- Test: YEARLY;INTERVAL=4;BYMONTHDAY=29;BYMONTH=2 - every 4 years = every leap year
+-- With INTERVAL=4 starting from a leap year, every occurrence is Feb 29
+INSERT INTO skip_test_results (test_name, status)
+VALUES ('YEARLY;INTERVAL=4;BYMONTHDAY=29;BYMONTH=2 hits only leap years',
+    assert_occurrences_equal(
+        'BYMONTHDAY=29 BYMONTH=2 INTERVAL=4',
+        ARRAY[
+            '2020-02-29 10:00:00'::TIMESTAMP,
+            '2024-02-29 10:00:00'::TIMESTAMP,
+            '2028-02-29 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=YEARLY;INTERVAL=4;BYMONTHDAY=29;BYMONTH=2;RSCALE=GREGORIAN;COUNT=3',
+            '2020-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    )
+);
+
 ROLLBACK;
