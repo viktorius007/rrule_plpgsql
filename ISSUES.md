@@ -265,17 +265,37 @@ Strategies use UNTIL-based time bounding to ensure both rules cover identical ti
 
 ### ISSUE-008: Property tests missing SKIP parameter
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** MEDIUM
 
 RFC 7529 SKIP parameter (OMIT/BACKWARD/FORWARD) is not tested by property tests. This is a production feature for month-end handling.
 
-**Test Strategy:**
-- Add `rrule_with_skip()` strategy generating MONTHLY/YEARLY rules with BYMONTHDAY=29,30,31
-- Test SKIP=OMIT (default), SKIP=BACKWARD, SKIP=FORWARD
-- Verify month-end dates are handled per specified mode
+**Resolution:**
+Added four strategies to `tests/property/strategies.py`:
+- `dtstart_for_skip()`: Generate dtstart with day 29-31 to trigger SKIP edge cases
+- `dtstart_leap_day()`: Generate Feb 29 from leap years for SKIP testing
+- `rrule_with_skip()`: Generate MONTHLY/YEARLY rules with SKIP parameter
+- `rrule_skip_comparison_pair()`: Generate paired rules for OMIT vs BACKWARD comparison
 
-**Files:** `tests/property/strategies.py`, `tests/property/test_advanced.py`
+Added eight invariant tests to `tests/property/test_invariants.py`:
+- `test_skip_all_dates_valid()`: All produced dates must be valid calendar dates
+- `test_skip_no_duplicates()`: All occurrences must be distinct
+- `test_skip_count_respected()`: COUNT must never be exceeded
+- `test_skip_monotonicity()`: Results must be strictly ascending
+- `test_skip_no_drift()`: BACKWARD must not cause cumulative drift
+- `test_skip_idempotence()`: Same RRULE called twice returns identical results
+- `test_skip_omit_subset_of_backward()`: Every OMIT result also appears in BACKWARD
+- `test_skip_leap_year_behavior()`: Feb 29 dtstart triggers correct SKIP behavior
+
+**Verification:**
+- All 8 SKIP tests pass with 500 examples each
+- CI profile (1000 examples) passes
+- All 34 property tests pass
+- All 28 SQL test suites pass (./test.sh --standard)
+- Static linter passes (./lint-tests.sh)
+- Manual spot-check confirms expected SKIP=BACKWARD behavior
+
+**Files:** `tests/property/strategies.py`, `tests/property/test_invariants.py`
 
 ---
 
@@ -415,6 +435,19 @@ Added `rrule_with_bysetpos()`, `rrule_with_bysetpos_first()`, and `rrule_with_by
 - `test_bysetpos_count_bound()`: Results ≤ full results (filter never adds)
 - `test_bysetpos_first_position()`: BYSETPOS=1 selects first candidate per period
 - `test_bysetpos_last_position()`: BYSETPOS=-1 selects last candidate per period
+
+See `tests/property/strategies.py` and `tests/property/test_invariants.py`.
+
+### ISSUE-008: Property tests SKIP parameter (2026-02-05)
+Added four strategies (`dtstart_for_skip()`, `dtstart_leap_day()`, `rrule_with_skip()`, `rrule_skip_comparison_pair()`) and eight invariant tests:
+- `test_skip_all_dates_valid()`: All produced dates are valid calendar dates
+- `test_skip_no_duplicates()`: All occurrences are distinct
+- `test_skip_count_respected()`: COUNT never exceeded
+- `test_skip_monotonicity()`: Results strictly ascending
+- `test_skip_no_drift()`: BACKWARD mode doesn't cause cumulative drift
+- `test_skip_idempotence()`: Same RRULE returns identical results
+- `test_skip_omit_subset_of_backward()`: Every OMIT result appears in BACKWARD
+- `test_skip_leap_year_behavior()`: Feb 29 dtstart triggers correct SKIP behavior
 
 See `tests/property/strategies.py` and `tests/property/test_invariants.py`.
 

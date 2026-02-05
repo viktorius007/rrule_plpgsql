@@ -1,5 +1,6 @@
 """Hypothesis strategies for generating RRULE test data."""
 
+import calendar
 from hypothesis import strategies as st
 from datetime import datetime
 
@@ -483,3 +484,99 @@ def rrule_with_bysetpos_last(draw):
     rrule_with = ';'.join(base_parts + ['BYSETPOS=-1'])
 
     return rrule_with, rrule_without, freq
+
+
+# =============================================================================
+# SKIP Parameter Strategies (RFC 7529)
+# =============================================================================
+
+@st.composite
+def dtstart_for_skip(draw):
+    """Generate dtstart with day 29-31 to trigger SKIP edge cases.
+
+    These days trigger SKIP behavior in months with fewer days
+    (e.g., February, April, June, September, November).
+    """
+    year = draw(st.integers(min_value=2020, max_value=2025))
+    month = draw(st.integers(min_value=1, max_value=12))
+    target_day = draw(st.sampled_from([29, 30, 31]))
+    max_day = calendar.monthrange(year, month)[1]
+    day = min(target_day, max_day)
+    hour = draw(st.integers(min_value=0, max_value=23))
+    minute = draw(st.integers(min_value=0, max_value=59))
+    return datetime(year, month, day, hour, minute, 0)
+
+
+@st.composite
+def dtstart_leap_day(draw):
+    """Generate Feb 29 dtstart from leap years for SKIP testing.
+
+    Feb 29 triggers SKIP behavior in non-leap years with YEARLY frequency.
+    """
+    leap_years = [2020, 2024, 2028]
+    year = draw(st.sampled_from(leap_years))
+    hour = draw(st.integers(min_value=0, max_value=23))
+    minute = draw(st.integers(min_value=0, max_value=59))
+    return datetime(year, 2, 29, hour, minute, 0)
+
+
+@st.composite
+def rrule_with_skip(draw):
+    """Generate MONTHLY/YEARLY RRULE with SKIP parameter.
+
+    Returns tuple of (rrule_string, skip_mode, freq, bymonthday, interval).
+    SKIP parameter (RFC 7529) controls handling of invalid dates:
+    - OMIT: Skip invalid dates entirely
+    - BACKWARD: Use last valid day of month
+    - FORWARD: Use first day of next month
+    """
+    freq = draw(st.sampled_from(['MONTHLY', 'YEARLY']))
+    skip_mode = draw(st.sampled_from(['OMIT', 'BACKWARD', 'FORWARD']))
+    interval = draw(st.integers(min_value=1, max_value=4))
+
+    if freq == 'MONTHLY':
+        count = draw(st.integers(min_value=6, max_value=24))
+    else:
+        count = draw(st.integers(min_value=3, max_value=8))
+
+    bymonthday = draw(st.sampled_from([29, 30, 31]))
+
+    parts = [f'FREQ={freq}', f'COUNT={count}', 'RSCALE=GREGORIAN',
+             f'SKIP={skip_mode}', f'BYMONTHDAY={bymonthday}']
+
+    if interval > 1:
+        parts.append(f'INTERVAL={interval}')
+
+    # Optional BYMONTH for YEARLY (tests SKIP + BYMONTH interaction)
+    if freq == 'YEARLY' and draw(st.booleans()):
+        months = draw(st.lists(
+            st.sampled_from([2, 4, 6, 9, 11]),  # Short months
+            min_size=1, max_size=3, unique=True
+        ))
+        parts.append(f'BYMONTH={",".join(map(str, sorted(months)))}')
+
+    return ';'.join(parts), skip_mode, freq, bymonthday, interval
+
+
+@st.composite
+def rrule_skip_comparison_pair(draw):
+    """Generate paired RRULE strings for comparing SKIP=OMIT vs SKIP=BACKWARD.
+
+    Returns (rrule_omit, rrule_backward, freq, bymonthday).
+    OMIT skips invalid dates; BACKWARD uses last valid day.
+    Every OMIT result should also appear in BACKWARD results.
+    """
+    freq = draw(st.sampled_from(['MONTHLY', 'YEARLY']))
+    interval = draw(st.integers(min_value=1, max_value=3))
+    count = draw(st.integers(min_value=10, max_value=30))
+    bymonthday = draw(st.sampled_from([29, 30, 31]))
+
+    base_parts = [f'FREQ={freq}', f'COUNT={count}', 'RSCALE=GREGORIAN',
+                  f'BYMONTHDAY={bymonthday}']
+    if interval > 1:
+        base_parts.append(f'INTERVAL={interval}')
+
+    rrule_omit = ';'.join(base_parts + ['SKIP=OMIT'])
+    rrule_backward = ';'.join(base_parts + ['SKIP=BACKWARD'])
+
+    return rrule_omit, rrule_backward, freq, bymonthday

@@ -5,6 +5,7 @@ Unlike example-based tests, property tests use Hypothesis to generate many rando
 inputs and automatically shrink failing cases to minimal reproducible examples.
 """
 
+import calendar
 from datetime import datetime, timedelta
 from hypothesis import given, settings
 from .strategies import (
@@ -20,6 +21,10 @@ from .strategies import (
     rrule_with_bysetpos_last,
     rrule_with_count,
     rrule_with_until,
+    rrule_with_skip,
+    rrule_skip_comparison_pair,
+    dtstart_for_skip,
+    dtstart_leap_day,
 )
 
 
@@ -594,3 +599,278 @@ def test_bysetpos_last_position(db, data, dtstart):
             # Verify it's actually the maximum for that period
             assert last_candidate == max(candidates), \
                 f"BYSETPOS=-1 did not select maximum for period {period_key}"
+
+
+# =============================================================================
+# SKIP Parameter Invariants (RFC 7529)
+# =============================================================================
+
+@given(data=rrule_with_skip(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_all_dates_valid(db, data, dtstart):
+    """SKIP rules must only produce valid calendar dates.
+
+    No Feb 30, Feb 31, Apr 31, Jun 31, Sep 31, Nov 31 should appear.
+    This verifies that SKIP modes (OMIT/BACKWARD/FORWARD) correctly
+    handle months with fewer than 31 days.
+    """
+    rrule, skip_mode, freq, bymonthday, interval = data
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if not results:
+        return  # Empty is valid (all dates may have been skipped)
+
+    for r in results:
+        max_day = calendar.monthrange(r.year, r.month)[1]
+        assert r.day <= max_day, \
+            f"Invalid date produced: {r} (month {r.month} has {max_day} days)"
+
+
+@given(data=rrule_with_skip(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_no_duplicates(db, data, dtstart):
+    """All SKIP rule occurrences must be distinct.
+
+    SKIP=FORWARD can produce potential duplicates when shifting dates
+    forward. This verifies that deduplication works correctly.
+    """
+    rrule, skip_mode, freq, bymonthday, interval = data
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if not results:
+        return
+
+    # Check for duplicates
+    seen = set()
+    for r in results:
+        assert r not in seen, f"Duplicate occurrence: {r} for rule {rrule}"
+        seen.add(r)
+
+
+@given(data=rrule_with_skip(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_count_respected(db, data, dtstart):
+    """COUNT must never be exceeded with SKIP rules.
+
+    SKIP modes affect which dates are produced but not the total count.
+    """
+    rrule, skip_mode, freq, bymonthday, interval = data
+    cur = db.cursor()
+
+    # Extract COUNT from RRULE
+    parts = dict(p.split('=') for p in rrule.split(';') if '=' in p)
+    expected_count = int(parts.get('COUNT', 1000))
+
+    cur.execute(
+        'SELECT COUNT(*) FROM rrule."all"(%s, %s)',
+        (rrule, dtstart)
+    )
+    actual_count = cur.fetchone()[0]
+
+    assert actual_count <= expected_count, \
+        f"COUNT exceeded: got {actual_count}, max {expected_count}"
+
+
+@given(data=rrule_with_skip(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_monotonicity(db, data, dtstart):
+    """SKIP rule results must be strictly ascending.
+
+    No matter which SKIP mode is used, results are always in
+    chronological order.
+    """
+    rrule, skip_mode, freq, bymonthday, interval = data
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if results and len(results) > 1:
+        for i in range(1, len(results)):
+            assert results[i] > results[i-1], \
+                f"Non-monotonic: {results[i-1]} >= {results[i]} for rule {rrule}"
+
+
+@given(data=rrule_with_skip(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_no_drift(db, data, dtstart):
+    """SKIP=BACKWARD must not cause cumulative drift.
+
+    For months that CAN hold the original BYMONTHDAY value, that day
+    should be used. BACKWARD adjustments are temporary, not cumulative.
+    """
+    rrule, skip_mode, freq, bymonthday, interval = data
+
+    # Only test BACKWARD mode (FORWARD deliberately advances month)
+    if skip_mode != 'BACKWARD':
+        return
+
+    cur = db.cursor()
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results = cur.fetchone()[0]
+
+    if not results:
+        return
+
+    for r in results:
+        max_day = calendar.monthrange(r.year, r.month)[1]
+        if max_day >= bymonthday:
+            # This month CAN hold the original BYMONTHDAY
+            assert r.day == bymonthday, \
+                f"Drift detected: {r} should have day={bymonthday} (month has {max_day} days)"
+
+
+@given(data=rrule_with_skip(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_idempotence(db, data, dtstart):
+    """Same SKIP RRULE called twice returns identical results.
+
+    RRULE generation is deterministic; calling the same rule
+    with same dtstart must produce identical results.
+    """
+    rrule, skip_mode, freq, bymonthday, interval = data
+    cur = db.cursor()
+
+    # First call
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results1 = cur.fetchone()[0] or []
+
+    # Second call
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule, dtstart)
+    )
+    results2 = cur.fetchone()[0] or []
+
+    assert results1 == results2, \
+        f"Idempotence violated: results differ for rule {rrule}"
+
+
+@given(data=rrule_skip_comparison_pair(), dtstart=dtstart_for_skip())
+@settings(max_examples=500)
+def test_skip_omit_subset_of_backward(db, data, dtstart):
+    """Every SKIP=OMIT result should also appear in SKIP=BACKWARD results.
+
+    OMIT skips invalid dates entirely, while BACKWARD adjusts them.
+    The valid dates (not needing adjustment) should appear in both.
+
+    Uses UNTIL (not COUNT) to ensure both rules cover the same time range.
+    COUNT would cause divergence because BACKWARD produces more results.
+    """
+    rrule_omit, rrule_backward, freq, bymonthday = data
+    cur = db.cursor()
+
+    # Replace COUNT with UNTIL to ensure same time range coverage
+    # Generate UNTIL ~2 years from dtstart
+    until_dt = dtstart + timedelta(days=730)
+    until_str = until_dt.strftime('%Y%m%dT%H%M%SZ')
+
+    # Rewrite rules with UNTIL instead of COUNT
+    def replace_count_with_until(rrule):
+        parts = [p for p in rrule.split(';') if not p.startswith('COUNT=')]
+        parts.append(f'UNTIL={until_str}')
+        return ';'.join(parts)
+
+    rrule_omit_bounded = replace_count_with_until(rrule_omit)
+    rrule_backward_bounded = replace_count_with_until(rrule_backward)
+
+    # Get OMIT results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_omit_bounded, dtstart)
+    )
+    omit_results = cur.fetchone()[0] or []
+
+    # Get BACKWARD results
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_backward_bounded, dtstart)
+    )
+    backward_results = set(cur.fetchone()[0] or [])
+
+    # Every OMIT result must be in BACKWARD results
+    for r in omit_results:
+        assert r in backward_results, \
+            f"OMIT result {r} not in BACKWARD results for BYMONTHDAY={bymonthday}"
+
+
+@given(dtstart=dtstart_leap_day())
+@settings(max_examples=500)
+def test_skip_leap_year_behavior(db, dtstart):
+    """Feb 29 dtstart with YEARLY triggers correct SKIP behavior in non-leap years.
+
+    For SKIP=OMIT, non-leap years produce no occurrence.
+    For SKIP=BACKWARD, non-leap years produce Feb 28.
+    For SKIP=FORWARD, non-leap years produce Mar 1.
+    """
+    cur = db.cursor()
+
+    # YEARLY with COUNT=5 to span multiple leap/non-leap years
+    base_rrule = 'FREQ=YEARLY;COUNT=5;RSCALE=GREGORIAN;BYMONTHDAY=29;BYMONTH=2'
+
+    # Test SKIP=BACKWARD
+    rrule_backward = f'{base_rrule};SKIP=BACKWARD'
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_backward, dtstart)
+    )
+    backward_results = cur.fetchone()[0] or []
+
+    for r in backward_results:
+        # In leap years, should be Feb 29; in non-leap, should be Feb 28
+        is_leap = calendar.isleap(r.year)
+        if is_leap:
+            assert r.month == 2 and r.day == 29, \
+                f"Leap year {r.year} should have Feb 29, got {r}"
+        else:
+            assert r.month == 2 and r.day == 28, \
+                f"Non-leap year {r.year} should have Feb 28, got {r}"
+
+    # Test SKIP=FORWARD
+    rrule_forward = f'{base_rrule};SKIP=FORWARD'
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_forward, dtstart)
+    )
+    forward_results = cur.fetchone()[0] or []
+
+    for r in forward_results:
+        # In leap years, should be Feb 29; in non-leap, should be Mar 1
+        is_leap = calendar.isleap(r.year)
+        if is_leap:
+            assert r.month == 2 and r.day == 29, \
+                f"Leap year {r.year} should have Feb 29, got {r}"
+        else:
+            assert r.month == 3 and r.day == 1, \
+                f"Non-leap year {r.year} should have Mar 1 (FORWARD), got {r}"
+
+    # Test SKIP=OMIT - should only have leap year occurrences
+    rrule_omit = f'{base_rrule};SKIP=OMIT'
+    cur.execute(
+        'SELECT array_agg(r ORDER BY r) FROM rrule."all"(%s, %s) r',
+        (rrule_omit, dtstart)
+    )
+    omit_results = cur.fetchone()[0] or []
+
+    for r in omit_results:
+        # OMIT should only produce leap year Feb 29s
+        assert r.month == 2 and r.day == 29 and calendar.isleap(r.year), \
+            f"OMIT should only produce leap year Feb 29, got {r}"
