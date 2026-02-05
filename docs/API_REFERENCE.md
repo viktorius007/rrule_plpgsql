@@ -415,7 +415,7 @@ SELECT * FROM rrule."all"(
 
 ## Advanced Functions
 
-### `rrule."overlaps"(dtstart, dtend, rrule, mindate, maxdate) -> BOOLEAN`
+### `rrule."overlaps"(dtstart, dtend, rrule, mindate, maxdate, timezone DEFAULT NULL) -> BOOLEAN`
 
 Check if a recurring event has ANY occurrences overlapping a date range. Optimized to stop at first match.
 
@@ -424,9 +424,10 @@ Check if a recurring event has ANY occurrences overlapping a date range. Optimiz
 **Parameters:**
 - `dtstart`: `TIMESTAMPTZ` - Event start
 - `dtend`: `TIMESTAMPTZ` - Event end
-- `rrule`: `TEXT` - RRULE string
+- `rrule`: `TEXT` - RRULE string (can be NULL for single events)
 - `mindate`: `TIMESTAMPTZ` - Range start
 - `maxdate`: `TIMESTAMPTZ` - Range end
+- `timezone`: `TEXT` (optional) - Timezone name. If NULL, uses TZID from RRULE or UTC.
 
 **Returns:** `BOOLEAN` - True if any overlap found
 
@@ -438,7 +439,18 @@ SELECT rrule."overlaps"(
     '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
     'FREQ=WEEKLY;BYDAY=MO,WE,FR',
     '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
-    '2025-06-30 23:59:59+00'::TIMESTAMPTZ
+    '2025-06-30 23:59:59+00'::TIMESTAMPTZ,
+    NULL  -- Uses UTC or TZID from RRULE
+) AS has_conflict;
+
+-- With explicit timezone
+SELECT rrule."overlaps"(
+    '2025-01-01 09:00:00-05'::TIMESTAMPTZ,
+    '2025-01-01 10:00:00-05'::TIMESTAMPTZ,
+    'FREQ=WEEKLY;BYDAY=MO,WE,FR',
+    '2025-06-01 00:00:00-04'::TIMESTAMPTZ,
+    '2025-06-30 23:59:59-04'::TIMESTAMPTZ,
+    'America/New_York'
 ) AS has_conflict;
 ```
 

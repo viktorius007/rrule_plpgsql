@@ -7,7 +7,7 @@
  * insufficient test coverage.
  *
  * Covers:
- *  1. TIMESTAMP API overlaps() direct tests (5-arg signature)
+ *  1. TIMESTAMPTZ API overlaps() tests (6-parameter signature)
  *  2. SKIP=FORWARD/BACKWARD + INTERVAL>1 (MONTHLY and YEARLY)
  *  3. get_week_info() next-year branch
  *  4. byweekno_matches_for_year() cross-year ISO week
@@ -58,113 +58,76 @@ CREATE TEMP TABLE consensus2_test_results (
 );
 
 -- ===================================================================
--- GROUP 1: TIMESTAMP API overlaps() — 5-argument signature
--- The original TIMESTAMP overlaps() calls rrule_event_instances_range()
--- directly with LIMIT 1 and has its own duration/mindate adjustment
--- logic. Only the 6-arg TIMESTAMPTZ wrapper is currently tested.
+-- GROUP 1: TIMESTAMPTZ API overlaps() tests
+-- The overlaps() function detects if a recurring event has any
+-- occurrences within a given date range. This tests the 6-parameter
+-- TIMESTAMPTZ API (the only callable overlaps() signature).
 -- ===================================================================
 \echo ''
 \echo '==================================================================='
-\echo 'GROUP 1: TIMESTAMP API overlaps() (5-arg signature)'
+\echo 'GROUP 1: TIMESTAMPTZ API overlaps()'
 \echo '==================================================================='
-
--- Tests 1.1-1.7: The 5-arg TIMESTAMP API overlaps() is shadowed by the
--- 6-arg TIMESTAMPTZ overload (which has timezone TEXT DEFAULT NULL).
--- PostgreSQL cannot disambiguate 5-arg calls. We create a temporary
--- wrapper that calls the 5-arg version by OID to exercise the code path
--- that calls rrule_event_instances_range() directly with LIMIT 1.
--- The 5-arg TIMESTAMP API overlaps() is shadowed by the 6-arg TIMESTAMPTZ
--- overload (timezone TEXT DEFAULT NULL creates ambiguity). We test the
--- exact code path by replicating its logic in a wrapper that calls
--- rrule_event_instances_range() directly with LIMIT 1 — the unique behavior
--- of the 5-arg version vs the 6-arg version (which calls rrule."between").
-CREATE FUNCTION pg_temp.overlaps_5arg(
-    p_dtstart TIMESTAMPTZ,
-    p_dtend TIMESTAMPTZ,
-    p_rrule TEXT,
-    p_min TIMESTAMPTZ,
-    p_max TIMESTAMPTZ
-) RETURNS BOOLEAN AS $$
-DECLARE
-    duration INTERVAL;
-    adj_min TIMESTAMPTZ;
-    adj_max TIMESTAMPTZ;
-BEGIN
-    IF p_dtstart IS NULL THEN
-        RAISE EXCEPTION 'dtstart is required and cannot be NULL';
-    END IF;
-    duration := COALESCE(p_dtend, p_dtstart) - p_dtstart;
-    adj_max := COALESCE(p_max, current_date + '10 years'::interval);
-    adj_min := COALESCE(p_min, current_date - '10 years'::interval);
-    IF duration > INTERVAL '0' THEN
-        adj_min := adj_min - duration;
-    END IF;
-    IF p_rrule IS NULL THEN
-        RETURN (p_dtstart < adj_max AND (p_dtstart + duration) >= adj_min);
-    END IF;
-    PERFORM d
-    FROM rrule.rrule_event_instances_range(p_dtstart, p_rrule, adj_min, adj_max, 1000) d
-    LIMIT 1;
-    RETURN FOUND;
-END;
-$$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
 -- Test 1.1: Basic overlap TRUE — recurring event has occurrence in range
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg TRUE — daily rule in range',
+VALUES ('TZ overlaps', 'overlaps() TRUE — daily rule in range',
     assert_true(
-        'TS overlaps TRUE basic',
-        (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps TRUE basic',
+        (SELECT rrule."overlaps"(
             '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
             '2025-01-01 11:00:00+00'::TIMESTAMPTZ,
             'FREQ=DAILY;COUNT=10',
             '2025-01-05 00:00:00+00'::TIMESTAMPTZ,
-            '2025-01-06 00:00:00+00'::TIMESTAMPTZ
+            '2025-01-06 00:00:00+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );
 
 -- Test 1.2: Basic overlap FALSE — no occurrence in range
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg FALSE — no occurrence in range',
+VALUES ('TZ overlaps', 'overlaps() FALSE — no occurrence in range',
     assert_true(
-        'TS overlaps FALSE basic',
-        NOT (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps FALSE basic',
+        NOT (SELECT rrule."overlaps"(
             '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
             '2025-01-01 11:00:00+00'::TIMESTAMPTZ,
             'FREQ=DAILY;COUNT=3',
             '2025-01-10 00:00:00+00'::TIMESTAMPTZ,
-            '2025-01-20 00:00:00+00'::TIMESTAMPTZ
+            '2025-01-20 00:00:00+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );
 
--- Test 1.3: NULL rrule — single event in range (5-arg path)
+-- Test 1.3: NULL rrule — single event in range
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg NULL rrule — single event in range',
+VALUES ('TZ overlaps', 'overlaps() NULL rrule — single event in range',
     assert_true(
-        'TS overlaps NULL rrule in range',
-        (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps NULL rrule in range',
+        (SELECT rrule."overlaps"(
             '2025-01-15 10:00:00+00'::TIMESTAMPTZ,
             '2025-01-15 12:00:00+00'::TIMESTAMPTZ,
             NULL,
             '2025-01-15 00:00:00+00'::TIMESTAMPTZ,
-            '2025-01-16 00:00:00+00'::TIMESTAMPTZ
+            '2025-01-16 00:00:00+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );
 
 -- Test 1.4: NULL rrule — single event outside range
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg NULL rrule — outside range',
+VALUES ('TZ overlaps', 'overlaps() NULL rrule — outside range',
     assert_true(
-        'TS overlaps NULL rrule outside',
-        NOT (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps NULL rrule outside',
+        NOT (SELECT rrule."overlaps"(
             '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
             '2025-01-01 11:00:00+00'::TIMESTAMPTZ,
             NULL,
             '2025-01-10 00:00:00+00'::TIMESTAMPTZ,
-            '2025-01-20 00:00:00+00'::TIMESTAMPTZ
+            '2025-01-20 00:00:00+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );
@@ -173,45 +136,48 @@ VALUES ('TS overlaps', 'overlaps() 5-arg NULL rrule — outside range',
 -- Event at 10:00 lasts 3h. Range starts at 12:00. Duration adjustment
 -- pulls mindate back by 3h so the 10:00 occurrence is found.
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg duration-adjusted mindate',
+VALUES ('TZ overlaps', 'overlaps() duration-adjusted mindate',
     assert_true(
-        'TS overlaps duration adjusted',
-        (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps duration adjusted',
+        (SELECT rrule."overlaps"(
             '2025-01-05 10:00:00+00'::TIMESTAMPTZ,
             '2025-01-05 13:00:00+00'::TIMESTAMPTZ,
             'FREQ=DAILY;COUNT=10',
             '2025-01-05 12:00:00+00'::TIMESTAMPTZ,
-            '2025-01-05 23:59:59+00'::TIMESTAMPTZ
+            '2025-01-05 23:59:59+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );
 
 -- Test 1.6: NULL dtend — zero-duration event
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg NULL dtend — zero-duration',
+VALUES ('TZ overlaps', 'overlaps() NULL dtend — zero-duration',
     assert_true(
-        'TS overlaps NULL dtend',
-        (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps NULL dtend',
+        (SELECT rrule."overlaps"(
             '2025-01-05 10:00:00+00'::TIMESTAMPTZ,
             NULL::TIMESTAMPTZ,
             'FREQ=DAILY;COUNT=10',
             '2025-01-05 00:00:00+00'::TIMESTAMPTZ,
-            '2025-01-06 00:00:00+00'::TIMESTAMPTZ
+            '2025-01-06 00:00:00+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );
 
 -- Test 1.7: Weekly rule — sparse occurrences, verify correct overlap detection
 INSERT INTO consensus2_test_results (test_group, test_name, status)
-VALUES ('TS overlaps', 'overlaps() 5-arg weekly — sparse occurrences',
+VALUES ('TZ overlaps', 'overlaps() weekly — sparse occurrences',
     assert_true(
-        'TS overlaps weekly sparse',
-        (SELECT pg_temp.overlaps_5arg(
+        'TZ overlaps weekly sparse',
+        (SELECT rrule."overlaps"(
             '2025-01-06 09:00:00+00'::TIMESTAMPTZ,
             '2025-01-06 10:00:00+00'::TIMESTAMPTZ,
             'FREQ=WEEKLY;BYDAY=MO;COUNT=10',
             '2025-02-03 00:00:00+00'::TIMESTAMPTZ,
-            '2025-02-04 00:00:00+00'::TIMESTAMPTZ
+            '2025-02-04 00:00:00+00'::TIMESTAMPTZ,
+            NULL
         ))
     )
 );

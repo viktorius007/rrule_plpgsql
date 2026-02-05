@@ -81,7 +81,8 @@ psql -d your_database -f src/install_with_subday.sql
 **Reported As:** Consensus gap 1.4 — TIMESTAMP `overlaps()` has dead code at lines 2617-2619 because NULL rrule check raises exception before single-event fallback.
 **Verified:** 2026-02-03
 **Verdict:** False Positive (Outdated Line Numbers)
-**Evidence:** Line numbers referenced are from an older version. Current code at lines 2979-3025 (TIMESTAMPTZ) and 3778-3845 correctly handles NULL rrule by returning single-event overlap check. No dead code exists.
+**Evidence:** Line numbers referenced are from an older version. The TIMESTAMPTZ overlaps() correctly handles NULL rrule by returning single-event overlap check. No dead code exists.
+**Note (2026-02-05):** The 5-param TIMESTAMP `overlaps()` was removed as unreachable dead code (ISSUE-002). Only the 6-param TIMESTAMPTZ version exists now.
 
 ---
 
@@ -170,3 +171,4 @@ psql -d your_database -f src/install_with_subday.sql
 **Verified:** 2026-02-03
 **Verdict:** Design Decision
 **Evidence:** The semantics are "touching = overlapping". Single-event check uses `(dtstart + duration) >= mindate`, meaning event ending at mindate counts as overlap. Recurring event check is consistent with this. Tested: event 10:00-11:00 with range [11:00, 12:00] returns TRUE (touching); range [11:01, 12:00] returns FALSE (not touching). Behavior is intentional and documented.
+**Note (2026-02-05):** The 5-param `overlaps()` function was removed as dead code (ISSUE-002). PostgreSQL always routed calls to the 6-param version with `timezone TEXT DEFAULT NULL`. This analysis remains valid for the 6-param version.

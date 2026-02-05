@@ -1809,13 +1809,13 @@ SELECT
         ) AS occurrence)
     );
 
--- Coverage Gap 22: overlaps() with 5-param signature (no timezone parameter)
+-- Coverage Gap 22: overlaps() TIMESTAMPTZ API with NULL timezone
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
-    'overlaps() 5-param',
-    'Test 14.8: overlaps() 5-param signature (match)',
+    'overlaps() NULL tz',
+    'Test 14.8: overlaps() NULL timezone (match)',
     assert_equals(
-        'overlaps 5-param TRUE',
+        'overlaps NULL tz TRUE',
         'true',
         (SELECT rrule."overlaps"(
             '2025-01-15 10:00:00+00'::TIMESTAMPTZ,
@@ -1829,10 +1829,10 @@ SELECT
 
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
-    'overlaps() 5-param',
-    'Test 14.9: overlaps() 5-param signature (no match)',
+    'overlaps() NULL tz',
+    'Test 14.9: overlaps() NULL timezone (no match)',
     assert_equals(
-        'overlaps 5-param FALSE',
+        'overlaps NULL tz FALSE',
         'false',
         (SELECT rrule."overlaps"(
             '2025-01-01 10:00:00+00'::TIMESTAMPTZ,
@@ -1844,10 +1844,7 @@ SELECT
         )::TEXT)
     );
 
--- NOTE: The true 5-param overlaps() (src/rrule.sql:2461) cannot be called distinctly
--- because the 6-param version (src/rrule.sql:3156) has DEFAULT NULL for timezone,
--- making the signatures ambiguous. Tests 14.8/14.9 above cover the NULL-timezone
--- path which exercises the TIMESTAMP generator via the 6-param dispatch.
+-- NOTE: Tests 14.8/14.9 cover the NULL-timezone path of the overlaps() TIMESTAMPTZ API.
 
 -- ============================================================================
 -- SECTION 15: BYHOUR/BYMINUTE/BYSECOND with DAILY frequency (standard install)
@@ -6210,8 +6207,8 @@ SELECT
         ) AS occurrence)
     );
 
--- Test 31.6: overlaps() with NULL rrule via 5-arg signature (single-event overlap check)
--- After fix, NULL rrule falls through to single-event check instead of raising exception
+-- Test 31.6: overlaps() with NULL rrule (single-event overlap check)
+-- NULL rrule falls through to single-event check instead of raising exception
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'overlaps NULL RRULE',

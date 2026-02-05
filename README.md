@@ -220,7 +220,7 @@ rrule."most_recent"(rrule, dtstart) → TIMESTAMP
 
 -- Utilities
 rrule."count"(rrule, dtstart) → INTEGER
-rrule."overlaps"(dtstart, dtend, rrule, mindate, maxdate) → BOOLEAN
+rrule."overlaps"(dtstart, dtend, rrule, mindate, maxdate, timezone DEFAULT NULL) → BOOLEAN
 ```
 
 ### Quick Example

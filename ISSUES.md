@@ -60,26 +60,26 @@ Also created `tests/security/test_dos_protection_monthly.sql` for `_advance_mont
 
 ---
 
-### ISSUE-002: `overlaps()` TIMESTAMPTZ API has 0% coverage
+### ISSUE-002: `overlaps()` 5-parameter signature was dead code
 
-**Status:** OPEN
-**Risk:** HIGH
-**Coverage Impact:** 13 statements
+**Status:** DONE
+**Risk:** N/A (resolved)
+**Coverage Impact:** 0 statements (removed)
 
-The 5-parameter `overlaps(dtstart, dtend, rrule_string, mindate, maxdate)` function has zero executed statements. This is a production API for conflict detection.
+**Root Cause:**
+The 5-parameter `overlaps(dtstart, dtend, rrule_string, mindate, maxdate)` function was unreachable dead code. PostgreSQL function resolution always preferred the 6-parameter version (which has `timezone TEXT DEFAULT NULL`). When users called `rrule."overlaps"()` with 5 TIMESTAMPTZ arguments, PostgreSQL matched the 6-parameter overload.
 
-**Evidence:**
-```
-rrule.overlaps(dtstart timestamptz, dtend timestamptz, rrule_string text,
-               mindate timestamptz, maxdate timestamptz)|13|0|13|0.00%
-```
+**Resolution:**
+Deleted the unreachable 5-parameter function from `src/rrule.sql`. The 6-parameter TIMESTAMPTZ API remains the sole `overlaps()` implementation and is fully tested.
 
-**Test Strategy:**
-- Add tests to `test_tz_api.sql` covering all overlaps() scenarios
-- Mirror existing TIMESTAMP overlaps() tests for the TZ variant
-- Test edge cases: exact boundary, zero-duration events, NULL rrule
+Updated `tests/test_consensus_gaps_2.sql` to call `rrule."overlaps"()` directly instead of using a workaround wrapper that replicated the dead code's logic.
 
-**Files:** `tests/test_tz_api.sql`
+**Verification:**
+- All tests pass with `./test.sh --standard`
+- Linters pass: `./lint.sh`, `./lint-tests.sh`
+- No API breaking changes (all existing calls already routed to 6-parameter version)
+
+**Files:** `src/rrule.sql` (removed lines 3055-3109), `tests/test_consensus_gaps_2.sql`
 
 ---
 
@@ -326,6 +326,9 @@ Added tests for critical DoS protection branches that prevent infinite loops whe
 - `_advance_monthly()`: Lines 1502-1503, 1524-1526 (day 32 never exists)
 
 Both functions now at 100% coverage. See `tests/security/test_dos_protection_yearly.sql` and `tests/security/test_dos_protection_monthly.sql`.
+
+### ISSUE-002: 5-parameter `overlaps()` dead code removed (2026-02-05)
+The 5-parameter `overlaps()` function was unreachable dead code because PostgreSQL function resolution always preferred the 6-parameter overload (with `timezone TEXT DEFAULT NULL`). Removed the dead function and updated tests to call `rrule."overlaps"()` directly. No API changes since all existing calls already routed to the 6-parameter TIMESTAMPTZ version.
 
 ---
 

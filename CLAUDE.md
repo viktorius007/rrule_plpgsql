@@ -49,7 +49,7 @@ psql -d your_db -f src/install.sql
 - `rrule."after"(rrule, dtstart, date, inc DEFAULT false)` / `rrule."before"(rrule, dtstart, date, inc DEFAULT false)` - Single occurrence
 - `rrule."next"(rrule, dtstart)` / `rrule."most_recent"(rrule, dtstart)` - Relative to dtstart
 - `rrule."count"(rrule, dtstart)` - Total count (inherits caps from `all()`)
-- `rrule."overlaps"(dtstart, dtend, rrule, min, max)` - Conflict detection
+- `rrule."overlaps"(dtstart, dtend, rrule, min, max, timezone DEFAULT NULL)` - Conflict detection
 
 **API Limits:** `all()` and `between()` cap results at 1000 occurrences and a 10-year window from dtstart. Rules without COUNT or UNTIL that hit the cap emit a `RAISE WARNING`. `count()` delegates to `all()` and inherits these caps. These limits exist because RFC 5545 rules without COUNT/UNTIL recur infinitely.
 
