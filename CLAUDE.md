@@ -125,6 +125,23 @@ The call chain from public API to occurrence generation:
 
 The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timezone using `AT TIME ZONE`, preserving wall-clock semantics across DST transitions.
 
+**Four parallel generators total:** TIMESTAMP and TIMESTAMPTZ variants exist in both `rrule.sql` and `rrule_subday.sql`. Any fix to loop logic must be applied to all 4.
+
+**Generator Loop Structure:**
+- WHILE loop (`current_base <= maxdate`) controls **period iteration** — when to stop generating new periods
+- Inner EXIT (`current > maxdate`) controls **candidate filtering** — skip candidates exceeding the boundary
+- These are different variables serving different purposes; both conditions are necessary
+
+**Iteration Limit Multipliers** (`calculate_safe_iteration_limit`):
+| Frequency | Multiplier | Rationale |
+|-----------|------------|-----------|
+| DAILY | 62x | Worst case: BYMONTHDAY=31 from Feb 1 → Mar 31 = 58 days gap |
+| WEEKLY | 8x | Standard week gaps |
+| MONTHLY | 13x | Month variations |
+| YEARLY | 2x | Leap year handling |
+
+**Boundary Workarounds:** The `+ INTERVAL '1 day'` patterns at lines 2803, 2928, 3488, 3665 handle `inc=true` for between/before/after functions — a different scenario from the WHILE loop boundary.
+
 ## Development Rules
 
 1. **RFC Compliance:** All features must comply with RFC 5545 (RRULE) or RFC 7529 (SKIP/RSCALE). Invalid combinations must be rejected with descriptive errors.
@@ -152,6 +169,14 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 12. **Run manual spot-checks from plans:** When a plan specifies manual verification queries, run them as a final step even if the test suite passes. Tests validate expected values set during development — spot-checks validate against the original specification.
 
 13. **Parallel Agent Git Isolation:** When launching multiple agents that edit files in parallel, each agent MUST use `git worktree add /tmp/{branch-name} -b {branch-name}` to get its own isolated working directory. Agents sharing a single checkout will clobber each other's uncommitted changes, switch branches out from under each other, and commit to wrong branches. After agents complete, merge worktree branches sequentially onto main from the primary checkout. Clean up worktrees with `git worktree remove`.
+
+14. **Update all 4 generators:** When fixing loop logic (boundary checks, EXIT conditions, caps), apply changes to all 4 generators: `rrule_event_instances_range()` and `rrule_event_instances_range_tz()` in both `rrule.sql` and `rrule_subday.sql`.
+
+15. **Search for outdated references after fixes:** After fixing an issue, search the codebase for comments, documentation, and test strategies that reference the old behavior. Common locations: ISSUES.md findings sections, `strategies.py` docstrings, `known_differences.py`.
+
+16. **Reinstall schema before manual spot-checks:** After `./test.sh`, the rrule schema may be dropped during cleanup. Run `psql -d rrule_test -f src/install.sql` before manual verification queries.
+
+17. **Verify property test strategies generate expected values:** When extending Hypothesis strategies (e.g., adding negative BYWEEKNO), verify the strategy actually generates the new values by sampling with a quick script.
 
 ## RRULE Parameters Supported
 

@@ -348,14 +348,13 @@ The `simple_rrule_for_differential()` strategy deliberately avoids edge cases to
 **Resolution:**
 Added edge case strategies and differential tests:
 
-1. **`edge_case_rrule_for_differential()`** - Generates BYMONTHDAY rules (28-31, -1, -2) with MONTHLY/YEARLY frequencies (avoids DAILY due to ISSUE-014)
+1. **`edge_case_rrule_for_differential()`** - Generates BYMONTHDAY rules (28-31, -1, -2) with MONTHLY/YEARLY frequencies
 2. **`dtstart_edge_case_for_differential()`** - Generates dtstart with day 28-31 in 31-day months
 3. **`test_bymonthday_matches_dateutil()`** - 300 examples comparing BYMONTHDAY edge cases
 4. **`test_edge_dtstart_bymonthday()`** - 200 examples with edge case dtstart + BYMONTHDAY
 
 Updated `known_differences.py` with:
 - Pattern-based detection for SKIP/RSCALE parameters (dateutil-incompatible)
-- Pattern-based detection for FREQ=DAILY + BYMONTHDAY>=29 (iteration limit issue, see ISSUE-014)
 - Comprehensive documentation of systematic vs extension vs limitation differences
 - Documented compatible behaviors (BYMONTHDAY with default SKIP=OMIT matches dateutil for MONTHLY/YEARLY)
 
@@ -365,8 +364,8 @@ Also tightened `simple_rrule_for_differential()` constraints:
 
 **Key Findings:**
 1. BYMONTHDAY with MONTHLY/YEARLY + default SKIP=OMIT matches python-dateutil exactly
-2. FREQ=DAILY + BYMONTHDAY>=29 has an iteration limit issue (filed as ISSUE-014)
-3. 10-year window boundary can cause off-by-one when occurrence lands exactly at maxdate
+2. ~~FREQ=DAILY + BYMONTHDAY>=29 had iteration limit issue~~ (fixed in ISSUE-014)
+3. ~~10-year window boundary off-by-one~~ (fixed in ISSUE-015)
 
 **Verification:**
 - All differential tests pass
@@ -382,16 +381,18 @@ Also tightened `simple_rrule_for_differential()` constraints:
 
 ### ISSUE-011: Feb 29 handling needs comprehensive testing
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** LOW
 
 Leap year Feb 29 with all three SKIP modes needs systematic testing.
 
-**Test Cases Needed:**
-- `FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=OMIT` - skip non-leap years
-- `FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=BACKWARD` - use Feb 28
-- `FREQ=YEARLY;BYMONTHDAY=29;BYMONTH=2;SKIP=FORWARD` - use Mar 1
-- Same patterns with INTERVAL=4 (every 4 years = every leap year)
+**Resolution:**
+Investigation found existing YEARLY + Feb 29 tests were already comprehensive (16+ tests). However, MONTHLY frequency starting Feb 29 with SKIP modes was missing. Added TEST GROUP 13 to `tests/test_skip_support.sql` with 5 tests:
+- MONTHLY SKIP=BACKWARD from Feb 29 2024 (COUNT=13, hits Feb 2025 → Feb 28)
+- MONTHLY SKIP=FORWARD from Feb 29 2024 (COUNT=13, hits Feb 2025 → Mar 1)
+- MONTHLY SKIP=OMIT from Feb 29 2024 (COUNT=12, skips Feb 2025)
+- MONTHLY INTERVAL=2 SKIP=BACKWARD from Feb 29 (every 2 months)
+- YEARLY SKIP=FORWARD UNTIL exactly on day before forwarded date
 
 **Files:** `tests/test_skip_support.sql`
 
@@ -399,76 +400,79 @@ Leap year Feb 29 with all three SKIP modes needs systematic testing.
 
 ### ISSUE-012: BYWEEKNO with negative week numbers
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** LOW
 
 Negative BYWEEKNO values (e.g., -1 = last week of year) may not be tested. RFC 5545 allows negative values for week selection.
 
-**Test Strategy:**
-- Test `FREQ=YEARLY;BYWEEKNO=-1` (last week)
-- Test `FREQ=YEARLY;BYWEEKNO=-2` (second to last week)
-- Verify against ISO 8601 week numbering
+**Resolution:**
+Added TEST GROUP 11 to `tests/test_wkst_support.sql` with 7 systematic tests for negative BYWEEKNO:
+- BYWEEKNO=-2 (second-to-last week)
+- BYWEEKNO=-26 (middle from end)
+- BYWEEKNO=-52 (first or second week depending on year)
+- BYWEEKNO=-1,-52 (last and near-first together)
+- YEARLY;INTERVAL=2;BYWEEKNO=-1 (last week every 2 years)
+- BYWEEKNO=-1 across 52/53 week year types
+- Mixed positive and negative BYWEEKNO=1,-1
 
-**Files:** `tests/test_wkst_support.sql`
+Also updated `tests/property/strategies.py` to include negative BYWEEKNO values (-52 to -1) in property-based testing.
+
+**Files:** `tests/test_wkst_support.sql`, `tests/property/strategies.py`
 
 ---
 
 ### ISSUE-014: FREQ=DAILY + BYMONTHDAY iteration limit insufficient for sparse days
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** LOW
 **Coverage Impact:** N/A (behavioral issue, not coverage gap)
 
-The `calculate_safe_iteration_limit()` function returns `COUNT * 40` days for DAILY frequency. This is insufficient for sparse BYMONTHDAY values:
-- BYMONTHDAY=31 occurs ~7 times/year (~52 days between occurrences)
-- BYMONTHDAY=30 occurs ~11 times/year (~33 days between occurrences)
-- BYMONTHDAY=29 occurs ~12 times/year (~30 days between occurrences)
+The `calculate_safe_iteration_limit()` function returned `COUNT * 40` days for DAILY frequency. This was insufficient for sparse BYMONTHDAY values like BYMONTHDAY=31 which can be up to 58 days apart (Feb 1 → Mar 31 in non-leap year).
 
-With COUNT=3 and BYMONTHDAY=31, the iteration limit is 120 days, but finding 3 occurrences of day 31 can require up to 156 days (e.g., starting Feb 1).
+**Resolution:**
+Increased DAILY multiplier from 40 to 62 in `calculate_safe_iteration_limit()` to handle worst-case BYMONTHDAY=31 gaps:
+- Worst case: Feb 1 → Mar 31 = 58 days
+- New multiplier 62 provides 4-day buffer for safety
 
-**Example:**
-```sql
--- PL/pgSQL returns 0 results (limit exceeded before finding any occurrence)
-SELECT * FROM rrule."all"('FREQ=DAILY;BYMONTHDAY=29;COUNT=1', '2021-02-01'::timestamp);
--- Expected: 2021-03-29 (56 days away, but limit is only 40 days)
-```
+Added regression tests in `tests/test_iteration_limits.sql`:
+- DAILY;BYMONTHDAY=31 from Feb 1 (worst case gap)
+- DAILY;BYMONTHDAY=29 leap year edge case
+- DAILY;BYMONTHDAY=31;COUNT=5 (needs ~200 days coverage)
+- DAILY;BYMONTHDAY=30 from Feb 1
+- TIMESTAMPTZ API parity tests
 
-**Workaround:** Use `FREQ=MONTHLY;BYMONTHDAY=31` instead of `FREQ=DAILY;BYMONTHDAY=31` for sparse day-of-month patterns.
+Removed workaround pattern from `tests/property/known_differences.py` that was excluding FREQ=DAILY + BYMONTHDAY>=29 from differential testing.
 
-**Potential Fix:** Increase DAILY multiplier when BYMONTHDAY is present, or detect sparse BYMONTHDAY values and adjust accordingly.
-
-**Files:** `src/rrule.sql` (calculate_safe_iteration_limit function, line ~1316)
+**Files:** `src/rrule.sql` (line 1335), `tests/test_iteration_limits.sql`, `tests/property/known_differences.py`
 
 ---
 
 ### ISSUE-015: 10-year window boundary excludes occurrences at exact boundary
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** LOW
 **Coverage Impact:** N/A (behavioral issue, not coverage gap)
 
-The 10-year window cap uses strict `< maxdate` comparison, which excludes occurrences that land exactly at the 10-year boundary.
+The 10-year window cap used strict `< maxdate` comparison, which excluded occurrences landing exactly at the 10-year boundary.
 
-**Example:**
-```sql
--- dtstart + 10 years = 2030-06-30
--- 21st occurrence lands exactly at 2030-06-30
-SELECT * FROM rrule."all"('FREQ=MONTHLY;COUNT=21;INTERVAL=4', '2020-06-30'::timestamp);
--- Returns 20 results instead of 21
--- Missing: 2030-06-30 (exactly at 10-year boundary)
-```
+**Resolution:**
+Changed `current_base < maxdate` to `current_base <= maxdate` in all 4 generator WHILE loops:
+- `src/rrule.sql` line 2459 (TIMESTAMP generator)
+- `src/rrule.sql` line 3143 (TIMESTAMPTZ generator)
+- `src/rrule_subday.sql` line 267 (TIMESTAMP generator with sub-day)
+- `src/rrule_subday.sql` line 516 (TIMESTAMPTZ generator with sub-day)
 
-**Behavior:**
-- PL/pgSQL: Returns 20 occurrences (excludes boundary)
-- python-dateutil: Returns 21 occurrences (no cap)
+The inner `EXIT WHEN current > maxdate` conditions remain unchanged (they handle per-occurrence filtering which is correct with strict `>`).
 
-**Root Cause:** In `rrule_event_instances_range()`, the condition `current_base < maxdate` excludes dates at exactly maxdate.
+Added regression tests in `tests/test_iteration_limits.sql`:
+- YEARLY;COUNT=11 from 2015-01-01 (11th occurrence at exactly 10-year boundary)
+- MONTHLY;COUNT=121 (121st occurrence at exactly 10-year boundary)
+- MONTHLY;INTERVAL=4;COUNT=21 (original example from issue)
+- WEEKLY;COUNT=521 near 10-year boundary
+- DAILY exact 10-year boundary verification
+- Generator parity tests for both APIs
 
-**Potential Fix:** Change `< maxdate` to `<= maxdate` in the main WHILE loop condition. Need to verify this doesn't cause off-by-one errors in other edge cases.
-
-**Workaround:** Use slightly lower COUNT values or ensure occurrences don't land exactly at the 10-year boundary.
-
-**Files:** `src/rrule.sql` (rrule_event_instances_range function, line ~2459)
+**Files:** `src/rrule.sql` (lines 2459, 3143), `src/rrule_subday.sql` (lines 267, 516), `tests/test_iteration_limits.sql`
 
 ---
 
@@ -573,15 +577,42 @@ Added edge case strategies and differential tests for BYMONTHDAY month-end handl
 
 **Updated `known_differences.py`:**
 - Pattern-based detection for SKIP/RSCALE parameters (dateutil-incompatible)
-- Pattern-based detection for FREQ=DAILY + BYMONTHDAY>=29 (iteration limit, see ISSUE-014)
 - Documentation of systematic, extension, limitation, and compatible behaviors
 
 **Key Findings:**
 - BYMONTHDAY with MONTHLY/YEARLY + SKIP=OMIT matches python-dateutil exactly
-- FREQ=DAILY + BYMONTHDAY>=29 has iteration limit issue (filed as ISSUE-014)
+- ~~FREQ=DAILY + BYMONTHDAY>=29 had iteration limit issue~~ (fixed in ISSUE-014)
 - Tightened `simple_rrule_for_differential()` constraints to avoid 10-year boundary issues
 
 See `tests/property/strategies.py`, `tests/property/test_differential.py`, and `tests/property/known_differences.py`.
+
+### ISSUE-011: Feb 29 handling comprehensive testing (2026-02-05)
+Added TEST GROUP 13 to `tests/test_skip_support.sql` with 5 tests for MONTHLY frequency starting Feb 29:
+- MONTHLY SKIP=BACKWARD from Feb 29 2024 (COUNT=13, hits Feb 2025 → Feb 28)
+- MONTHLY SKIP=FORWARD from Feb 29 2024 (COUNT=13, hits Feb 2025 → Mar 1)
+- MONTHLY SKIP=OMIT from Feb 29 2024 (COUNT=12, skips Feb 2025)
+- MONTHLY INTERVAL=2 SKIP=BACKWARD from Feb 29
+- YEARLY SKIP=FORWARD UNTIL exactly on day before forwarded date
+
+The existing YEARLY + Feb 29 tests (16+ tests) were already comprehensive.
+
+### ISSUE-012: Negative BYWEEKNO systematic testing (2026-02-05)
+Added TEST GROUP 11 to `tests/test_wkst_support.sql` with 7 tests:
+- BYWEEKNO=-2 (second-to-last week)
+- BYWEEKNO=-26 (middle from end)
+- BYWEEKNO=-52 (first or second week depending on year)
+- BYWEEKNO=-1,-52 (last and near-first together)
+- YEARLY;INTERVAL=2;BYWEEKNO=-1 (last week every 2 years)
+- BYWEEKNO=-1 across 52/53 week year types
+- Mixed positive and negative BYWEEKNO=1,-1
+
+Also updated property test strategies to include negative BYWEEKNO values (-52 to -1).
+
+### ISSUE-014: DAILY + BYMONTHDAY iteration limit fix (2026-02-05)
+Increased DAILY multiplier in `calculate_safe_iteration_limit()` from 40 to 62 to handle worst-case BYMONTHDAY=31 gaps (Feb 1 → Mar 31 = 58 days). Added regression tests in `tests/test_iteration_limits.sql` and removed workaround from `known_differences.py`.
+
+### ISSUE-015: 10-year boundary inclusion fix (2026-02-05)
+Changed `current_base < maxdate` to `current_base <= maxdate` in all 4 generator WHILE loops to include occurrences that land exactly at the 10-year boundary. Added regression tests in `tests/test_iteration_limits.sql`.
 
 ---
 
