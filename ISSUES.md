@@ -131,7 +131,7 @@ Adding artificial tests with variable inputs would create maintenance burden for
 
 ### ISSUE-004: TIMESTAMPTZ MONTHLY generator under-tested
 
-**Status:** OPEN
+**Status:** DONE
 **Risk:** HIGH
 **Coverage Impact:** 5 branches in `rrule_event_instances_range_tz()`
 
@@ -145,11 +145,27 @@ The TZ generator has 21.13% coverage vs TIMESTAMP generator's 98.61%. Specifical
 | 3366 | 28 | Sub-day frequency check |
 | 3368 | 29 | Else branch for unsupported freq |
 
-**Test Strategy:**
-- Add MONTHLY TIMESTAMPTZ tests to `test_tz_api.sql` that exercise:
-  - First occurrence (dtstart itself)
-  - Unbounded rules hitting 1000 cap
-  - Range queries with mindate filtering
+**Resolution:**
+Added TEST SUITE 22 to `tests/test_tz_api.sql` with 9 tests targeting MONTHLY TIMESTAMPTZ branches:
+
+| Test | Purpose | Branch Targeted |
+|------|---------|-----------------|
+| 22.1 | Simple MONTHLY COUNT=4 | Line 3203 TRUE (first iteration) |
+| 22.2 | MONTHLY between() with mindate > dtstart | Line 3219 (range filtering) |
+| 22.3 | Unbounded MONTHLY hitting 10-year window | Line 3208 (output_limit NULL) |
+| 22.4 | MONTHLY after() offset query | TZ API path |
+| 22.5 | MONTHLY before() offset query | TZ API path |
+| 22.6 | MONTHLY INTERVAL=2 | Line 3203 FALSE (subsequent iterations) |
+| 22.7 | MONTHLY with explicit COUNT | Line 3208 (output_limit non-NULL) |
+| 22.8 | HOURLY via TZ API raises error | Line 3310 (sub-day check) |
+| 22.9 | FREQ=INVALID raises error | Line 3312 (invalid freq) |
+
+Also fixed a pre-existing bug in test `before() with inc=TRUE includes boundary date` which was doing TEXT comparison instead of TIMESTAMPTZ comparison (same instant, different timezone formats). Added second failure check block at end of file to catch tests that were added after the original failure check.
+
+**Verification:**
+- All 28 test suites pass (`./test.sh --standard`)
+- Linters pass (`./lint-tests.sh`)
+- Manual spot-checks confirm expected behavior
 
 **Files:** `tests/test_tz_api.sql`
 
@@ -347,6 +363,9 @@ The 5-parameter `overlaps()` function was unreachable dead code because PostgreS
 
 ### ISSUE-003: BYWEEKNO functions profiler coverage (2026-02-05)
 FALSE POSITIVE. The 0% profiler coverage is caused by PostgreSQL's plan-time evaluation of IMMUTABLE functions, not missing tests. Functions are tested via direct tests in `test_internal_functions.sql` (Sections 19, 20, 24) and functional tests in `test_wkst_support.sql`.
+
+### ISSUE-004: TIMESTAMPTZ MONTHLY generator branch coverage (2026-02-05)
+Added TEST SUITE 22 to `test_tz_api.sql` with 9 tests covering MONTHLY frequency through the TIMESTAMPTZ API. Tests exercise first iteration, range filtering, output limits, after()/before() API paths, INTERVAL>1, and error handling for sub-day/invalid frequencies. Also fixed a pre-existing bug where test `before() with inc=TRUE includes boundary date` did TEXT comparison instead of TIMESTAMPTZ comparison.
 
 ---
 

@@ -2723,6 +2723,7 @@ BEGIN
     );
 
     -- Test: before() TZ with inc=TRUE includes the boundary date
+    -- Note: Compare as TIMESTAMPTZ not TEXT to avoid timezone formatting differences
     SELECT (rrule."before"(
         'FREQ=MONTHLY;BYMONTHDAY=1;COUNT=12',
         '2025-01-01 09:00:00-05'::TIMESTAMPTZ,
@@ -2735,11 +2736,273 @@ BEGIN
     INSERT INTO tz_api_test_results VALUES (
         'TZ before() efficiency',
         'before() with inc=TRUE includes boundary date',
-        result = '2025-06-01 09:00:00-04',
+        result::TIMESTAMPTZ = '2025-06-01 09:00:00-04'::TIMESTAMPTZ,
         result,
-        '2025-06-01 09:00:00-04'
+        '2025-06-01 09:00:00-04 (as TIMESTAMPTZ)'
     );
 END $$;
+
+
+-- ================================================================================================================
+-- TEST SUITE 22: MONTHLY TIMESTAMPTZ Branch Coverage (ISSUE-004)
+-- ================================================================================================================
+-- These tests target untested branches in rrule_event_instances_range_tz() MONTHLY section:
+-- - Line 3203: current_base = basedate (first iteration vs subsequent)
+-- - Line 3208: output_limit IS NULL (unbounded rules hitting 1000 cap)
+-- - Line 3219: current >= mindate (range queries filtering early occurrences)
+-- - Lines 3310-3313: Error handling for sub-day frequencies and invalid FREQ
+-- ================================================================================================================
+\echo ''
+\echo '--- TEST SUITE 22: MONTHLY TIMESTAMPTZ Branch Coverage ---'
+
+DO $$
+DECLARE
+    result_array TEXT[];
+    result_count INT;
+    result TEXT;
+    caught BOOLEAN;
+BEGIN
+    -- =====================================================================
+    -- Test 22.1: Simple MONTHLY without BYxxx (first iteration branch)
+    -- Targets line 3203 TRUE path: current_base = basedate on first iteration
+    -- =====================================================================
+    SELECT array_agg(ts::TEXT ORDER BY ts)
+    INTO result_array
+    FROM rrule."all"(
+        'FREQ=MONTHLY;COUNT=4',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.1: Simple MONTHLY COUNT=4',
+        result_array = ARRAY[
+            '2025-01-15 15:00:00+00',
+            '2025-02-15 15:00:00+00',
+            '2025-03-15 14:00:00+00',  -- DST transition: EDT
+            '2025-04-15 14:00:00+00'
+        ],
+        array_to_string(result_array, ', '),
+        '2025-01-15 15:00:00+00, 2025-02-15 15:00:00+00, 2025-03-15 14:00:00+00, 2025-04-15 14:00:00+00'
+    );
+    RAISE NOTICE 'Test 22.1: Simple MONTHLY - result: %', result_array;
+
+    -- =====================================================================
+    -- Test 22.2: MONTHLY between() with mindate > dtstart (range filtering)
+    -- Targets line 3219: current >= mindate filtering early occurrences
+    -- =====================================================================
+    SELECT array_agg(ts::TEXT ORDER BY ts)
+    INTO result_array
+    FROM rrule."between"(
+        'FREQ=MONTHLY;COUNT=12',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        '2025-04-01 00:00:00-04'::TIMESTAMPTZ,
+        '2025-06-01 00:00:00-04'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.2: MONTHLY between() filters Jan-Mar',
+        result_array = ARRAY[
+            '2025-04-15 14:00:00+00',
+            '2025-05-15 14:00:00+00'
+        ],
+        array_to_string(result_array, ', '),
+        '2025-04-15 14:00:00+00, 2025-05-15 14:00:00+00'
+    );
+    RAISE NOTICE 'Test 22.2: MONTHLY between() - result: %', result_array;
+
+    -- =====================================================================
+    -- Test 22.3: Unbounded MONTHLY hitting 10-year window cap
+    -- Targets line 3208: output_limit IS NULL triggers cap
+    -- The TIMESTAMPTZ all() uses a 10-year window (120 months for MONTHLY)
+    -- =====================================================================
+    SELECT COUNT(*)
+    INTO result_count
+    FROM rrule."all"(
+        'FREQ=MONTHLY',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.3: Unbounded MONTHLY hits 10-year cap (120)',
+        result_count = 120,
+        result_count::TEXT,
+        '120'
+    );
+    RAISE NOTICE 'Test 22.3: Unbounded MONTHLY cap - count: %', result_count;
+
+    -- =====================================================================
+    -- Test 22.4: MONTHLY after() offset query
+    -- Exercises TZ API path through after() function
+    -- Signature: after(rrule, dtstart, after_date, count, timezone, inc)
+    -- =====================================================================
+    SELECT ts::TEXT
+    INTO result
+    FROM rrule."after"(
+        'FREQ=MONTHLY;COUNT=12',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        '2025-03-01 00:00:00-05'::TIMESTAMPTZ,
+        1,
+        'America/New_York',
+        FALSE
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.4: MONTHLY after() finds Mar 15',
+        result = '2025-03-15 14:00:00+00',
+        result,
+        '2025-03-15 14:00:00+00'
+    );
+    RAISE NOTICE 'Test 22.4: MONTHLY after() - result: %', result;
+
+    -- =====================================================================
+    -- Test 22.5: MONTHLY before() offset query
+    -- Exercises TZ API path through before() function
+    -- =====================================================================
+    SELECT ts::TEXT
+    INTO result
+    FROM rrule."before"(
+        'FREQ=MONTHLY;COUNT=12',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        '2025-06-01 00:00:00-04'::TIMESTAMPTZ,
+        1,
+        'America/New_York',
+        FALSE
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.5: MONTHLY before() finds May 15',
+        result = '2025-05-15 14:00:00+00',
+        result,
+        '2025-05-15 14:00:00+00'
+    );
+    RAISE NOTICE 'Test 22.5: MONTHLY before() - result: %', result;
+
+    -- =====================================================================
+    -- Test 22.6: MONTHLY INTERVAL=2 (subsequent iterations branch)
+    -- Targets line 3203 FALSE path: current_base computed from previous
+    -- =====================================================================
+    SELECT array_agg(ts::TEXT ORDER BY ts)
+    INTO result_array
+    FROM rrule."all"(
+        'FREQ=MONTHLY;INTERVAL=2;COUNT=4',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.6: MONTHLY INTERVAL=2 COUNT=4',
+        result_array = ARRAY[
+            '2025-01-15 15:00:00+00',
+            '2025-03-15 14:00:00+00',  -- DST transition
+            '2025-05-15 14:00:00+00',
+            '2025-07-15 14:00:00+00'
+        ],
+        array_to_string(result_array, ', '),
+        '2025-01-15 15:00:00+00, 2025-03-15 14:00:00+00, 2025-05-15 14:00:00+00, 2025-07-15 14:00:00+00'
+    );
+    RAISE NOTICE 'Test 22.6: MONTHLY INTERVAL=2 - result: %', result_array;
+
+    -- =====================================================================
+    -- Test 22.7: MONTHLY with explicit COUNT (non-NULL output_limit)
+    -- Targets line 3208 with explicit limit (contrast with 22.3)
+    -- =====================================================================
+    SELECT COUNT(*)
+    INTO result_count
+    FROM rrule."all"(
+        'FREQ=MONTHLY;COUNT=5',
+        '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+        'America/New_York'
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.7: MONTHLY with COUNT=5 returns 5',
+        result_count = 5,
+        result_count::TEXT,
+        '5'
+    );
+    RAISE NOTICE 'Test 22.7: MONTHLY with COUNT - count: %', result_count;
+
+    -- =====================================================================
+    -- Test 22.8: HOURLY via TZ API raises error (sub-day check)
+    -- Targets line 3310: sub-day frequency error handling
+    -- =====================================================================
+    caught := FALSE;
+    BEGIN
+        PERFORM rrule."all"(
+            'FREQ=HOURLY;COUNT=5',
+            '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+            'America/New_York'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLERRM LIKE '%sub-day%' OR SQLERRM LIKE '%HOURLY%' OR SQLERRM LIKE '%not supported%' THEN
+                caught := TRUE;
+            ELSE
+                RAISE NOTICE 'Test 22.8: Unexpected error: %', SQLERRM;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.8: HOURLY via TZ API raises error',
+        caught,
+        CASE WHEN caught THEN 'Exception raised as expected' ELSE 'No exception raised' END,
+        'Exception raised as expected'
+    );
+    RAISE NOTICE 'Test 22.8: HOURLY error - caught: %', caught;
+
+    -- =====================================================================
+    -- Test 22.9: Invalid FREQ raises error
+    -- Targets line 3312: invalid frequency error handling
+    -- =====================================================================
+    caught := FALSE;
+    BEGIN
+        PERFORM rrule."all"(
+            'FREQ=INVALID;COUNT=5',
+            '2025-01-15 10:00:00-05'::TIMESTAMPTZ,
+            'America/New_York'
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLERRM LIKE '%FREQ%' OR SQLERRM LIKE '%frequency%' OR SQLERRM LIKE '%Invalid%' THEN
+                caught := TRUE;
+            ELSE
+                RAISE NOTICE 'Test 22.9: Unexpected error: %', SQLERRM;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'MONTHLY TZ Branch Coverage',
+        'Test 22.9: Invalid FREQ raises error',
+        caught,
+        CASE WHEN caught THEN 'Exception raised as expected' ELSE 'No exception raised' END,
+        'Exception raised as expected'
+    );
+    RAISE NOTICE 'Test 22.9: Invalid FREQ error - caught: %', caught;
+END;
+$$;
+
+-- Fail transaction if any tests failed
+DO $$
+DECLARE
+    failure_count INT;
+BEGIN
+    SELECT COUNT(*) INTO failure_count FROM tz_api_test_results WHERE NOT passed;
+    IF failure_count > 0 THEN
+        RAISE EXCEPTION '% test(s) failed', failure_count;
+    END IF;
+END;
+$$;
 
 
 ROLLBACK;
