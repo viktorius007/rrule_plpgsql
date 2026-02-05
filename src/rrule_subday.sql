@@ -264,7 +264,7 @@ BEGIN
     RETURN;
   END IF;
 
-  WHILE period_count < period_limit AND current_base < maxdate LOOP
+  WHILE period_count < period_limit AND current_base <= maxdate LOOP
     IF rule.freq = 'DAILY' THEN
       period_start := date_trunc('day', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
@@ -513,7 +513,7 @@ BEGIN
         RETURN;
     END IF;
 
-    WHILE period_count < period_limit AND current_base < maxdate LOOP
+    WHILE period_count < period_limit AND current_base <= maxdate LOOP
         IF rule.freq = 'DAILY' THEN
             period_start := date_trunc('day', current_base) + (current_base::time)::interval;
             min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;

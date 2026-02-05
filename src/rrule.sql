@@ -1306,7 +1306,7 @@ $$ LANGUAGE plpgsql STABLE;
 --     2. Preventing resource exhaustion (DoS caps)
 --
 -- Examples:
---   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 4000  (100 × 40)
+--   calculate_safe_iteration_limit('DAILY', NULL, 100)    → 6200  (100 × 62)
 --   calculate_safe_iteration_limit('WEEKLY', NULL, 50)    → 750   (50 × 15)
 --   calculate_safe_iteration_limit('MINUTELY', NULL, 5000) → 1440  (DoS cap, INTERVAL=1)
 --   calculate_safe_iteration_limit('SECONDLY', NULL, 5000, 60) -> 60  (3600/60, INTERVAL-aware)
@@ -1332,7 +1332,7 @@ BEGIN
   -- Apply frequency-specific safety multipliers for sparse filter protection
   -- LEAST(..., 2147483647) guards against INT4 overflow when effective_max is large
   RETURN CASE frequency
-    WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 40, 2147483647)::INT   -- Sparse: BYMONTHDAY filters (1/31 days match)
+    WHEN 'DAILY'    THEN LEAST(effective_max::BIGINT * 62, 2147483647)::INT   -- Sparse: BYMONTHDAY=31 worst case is Feb 1→Mar 31 (58 days)
     WHEN 'WEEKLY'   THEN LEAST(effective_max::BIGINT * 15, 2147483647)::INT   -- Sparse: BYMONTH filters (~4/52 weeks match = 13x needed)
     WHEN 'HOURLY'   THEN
       CASE WHEN has_sparse_calendar_filter
@@ -2456,7 +2456,7 @@ BEGIN
   IF rule.until IS NOT NULL AND rule.until < basedate THEN
     RETURN;
   END IF;
-  WHILE period_count < period_limit AND current_base < maxdate LOOP
+  WHILE period_count < period_limit AND current_base <= maxdate LOOP
     IF rule.freq = 'DAILY' THEN
       period_start := date_trunc('day', current_base) + (current_base::time)::interval;
       min_in_period := CASE WHEN current_base = basedate THEN basedate ELSE period_start END;
@@ -3140,7 +3140,7 @@ BEGIN
         RETURN;
     END IF;
 
-    WHILE period_count < period_limit AND current_base < maxdate LOOP
+    WHILE period_count < period_limit AND current_base <= maxdate LOOP
         IF rule.freq = 'DAILY' THEN
             -- Call the existing daily_set but convert to/from TIMESTAMPTZ for compatibility
             period_start := date_trunc('day', current_base) + (current_base::time)::interval;
@@ -3477,8 +3477,9 @@ BEGIN
     wall_clock_range_end := LEAST(wall_clock_range_end, wall_clock_start + INTERVAL '10 years');
 
     -- Generate occurrences
-    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
-    -- (the range function uses current_base < maxdate, which would otherwise exclude it)
+    -- When inc=true, extend maxdate by 1 day to ensure occurrences exactly at range_end are generated.
+    -- The range function uses current_base <= maxdate, but period-based frequencies may not generate
+    -- an occurrence exactly at the boundary without this extension.
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
             wall_clock_start,
