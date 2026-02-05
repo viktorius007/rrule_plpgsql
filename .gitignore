@@ -19,4 +19,6 @@ tests/output/
 tests/*.log
 CONSENSUS_TEST_GAPS.md
 coverage-report.json
+coverage-report.txt
+.hypothesis/
 .claude/settings.local.json

@@ -57,3 +57,27 @@ jobs:
 
       - name: Run SQL coding standards linter
         run: ./lint-tests.sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r tests/property/requirements.txt
+
+      - name: Run property tests
+        env:
+          PGDATABASE: rrule_test
+        run: pytest tests/property/ -v --hypothesis-profile=ci --hypothesis-seed=${{ github.run_id }}
+
+      - name: Generate coverage report
+        run: ./scripts/profiler-coverage.sh || true
+        continue-on-error: true
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report.txt
+          if-no-files-found: ignore

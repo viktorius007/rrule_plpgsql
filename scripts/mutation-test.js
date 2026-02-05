@@ -82,6 +82,54 @@ const MUTATIONS = [
   // NULL handling mutations
   ['null-1', /IS NOT NULL/g, 'IS NULL',
    'Invert first IS NOT NULL check (should break many things)'],
+
+  // ROR - Relational Operator Replacement
+  // EQUIVALENT: result_count >= max_results in inner set functions is an optimization;
+  // the outer generator loop's occurrence_count independently enforces COUNT/UNTIL limits,
+  // compensating for any extra result from the inner function.
+  ['ror-gte-gt', /result_count >= max_results/g, 'result_count > max_results',
+   'Change >= to > in result count check (equivalent: outer loop enforces limits)', true],
+
+  // Testing <= to < (removes boundary case)
+  ['ror-lte-lt', /requested_day <= daysinmonth/g, 'requested_day < daysinmonth',
+   'Change <= to < in day validation (should skip valid end-of-month days)'],
+
+  // Testing != to = (inverts not-equal check)
+  ['ror-neq-eq', /result\.freq != 'YEARLY'/g, "result.freq = 'YEARLY'",
+   'Invert BYWEEKNO YEARLY check (should reject valid YEARLY rules)'],
+
+  // LCR - Logical Connector Replacement
+  // AND to OR (widens condition)
+  ['lcr-and-or', /result\.count IS NOT NULL AND result\.count <= 0/g,
+   'result.count IS NOT NULL OR result.count <= 0',
+   'Change AND to OR in COUNT validation (should reject valid positive COUNTs)'],
+
+  // OR to AND (narrows condition - in bysecond/byminute/byhour range checks)
+  ['lcr-or-and', /result\.bysecond\[i\] < 0 OR result\.bysecond\[i\] > 60/g,
+   'result.bysecond[i] < 0 AND result.bysecond[i] > 60',
+   'Change OR to AND in BYSECOND range check (should accept invalid values)'],
+
+  // NLS - NULL to NOT NULL mutations (inverse of null-1)
+  ['nls-null-notnull', /IS NULL/g, 'IS NOT NULL',
+   'Change IS NULL to IS NOT NULL (should break NULL checks)'],
+
+  // NLF - COALESCE removal (return first arg only)
+  // Note: Pattern targets simple COALESCE(x, y) with no nested parens
+  ['nlf-coalesce', /COALESCE\(([^,()]+),\s*([^,()]+)\)/g, '$1',
+   'Remove COALESCE fallback, use first argument only'],
+
+  // AOR - Arithmetic Operator Replacement (+ to -, - to +)
+  // Pattern targets operators followed by digits to avoid variable expressions
+  ['aor-add-sub', / \+ (\d)/g, ' - $1',
+   'Replace addition with subtraction (+ N -> - N)'],
+  ['aor-sub-add', / - (\d)/g, ' + $1',
+   'Replace subtraction with addition (- N -> + N)'],
+
+  // INT - Interval mutations (1 day/month to 2 days/months)
+  ['int-day', /INTERVAL '1 day'/g, "INTERVAL '2 days'",
+   'Double INTERVAL 1 day (should space dates incorrectly)'],
+  ['int-month', /INTERVAL '1 month'/g, "INTERVAL '2 months'",
+   'Double INTERVAL 1 month (should break month calculations)'],
 ];
 
 // Quick subset of tests to run for mutation testing (full suite is too slow)
@@ -220,17 +268,34 @@ function main() {
     cleanup();
   }
 
-  // Report
-  console.log('');
-  console.log('='.repeat(70));
-  console.log('MUTATION TESTING RESULTS');
-  console.log('='.repeat(70));
-  console.log('');
+  // Calculate mutation score
+  const killed = results.caught.length;
+  const equivalent = results.equivalent.length;
+  const survived = results.survived.length;
+  const skipped = results.skipped.length;
+  const total = killed + equivalent + survived + skipped;
+  const nonEquivalent = total - equivalent;
 
-  console.log(`Caught: ${results.caught.length}`);
-  console.log(`Equivalent (expected to survive): ${results.equivalent.length}`);
-  console.log(`Survived (gaps): ${results.survived.length}`);
-  console.log(`Skipped: ${results.skipped.length}`);
+  // Mutation Score = Killed / (Total - Equivalent)
+  // If all mutations are equivalent (nonEquivalent = 0), score is 100% by definition
+  const mutationScore = nonEquivalent > 0 ? (killed / nonEquivalent) * 100 : 100;
+
+  // Helper for percentage formatting
+  const pct = (count, base) => base > 0 ? ((count / base) * 100).toFixed(1) : '0.0';
+
+  // Report - Formatted Summary
+  console.log('');
+  console.log('='.repeat(70));
+  console.log('MUTATION TESTING SUMMARY');
+  console.log('='.repeat(70));
+  console.log(`Total Mutations:     ${String(total).padStart(3)}`);
+  console.log(`Killed:              ${String(killed).padStart(3)} (${pct(killed, total)}%)`);
+  console.log(`Equivalent:          ${String(equivalent).padStart(3)} (${pct(equivalent, total)}%)`);
+  console.log(`Survived:            ${String(survived).padStart(3)} (${pct(survived, total)}%)`);
+  console.log(`Skipped:             ${String(skipped).padStart(3)} (${pct(skipped, total)}%)`);
+  console.log('');
+  console.log(`MUTATION SCORE: ${mutationScore.toFixed(1)}% (${killed}/${nonEquivalent} non-equivalent killed)`);
+  console.log('='.repeat(70));
   console.log('');
 
   if (results.caught.length > 0) {
@@ -259,11 +324,9 @@ function main() {
 
   // Exit with error only if non-equivalent mutations survived
   if (results.survived.length > 0) {
-    console.log('');
     console.log('FAIL: Some non-equivalent mutations survived - tests need improvement.');
     process.exit(1);
   } else {
-    console.log('');
     console.log('SUCCESS: All testable mutations were caught!');
     process.exit(0);
   }

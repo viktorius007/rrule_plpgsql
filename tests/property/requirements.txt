@@ -1,0 +1,4 @@
+hypothesis>=6.100.0
+psycopg2-binary>=2.9.0
+python-dateutil>=2.9.0
+pytest>=8.0.0
