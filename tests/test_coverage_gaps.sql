@@ -3011,14 +3011,14 @@ SELECT
 -- ============================================================================
 
 -- Test 24.14: YEARLY with no COUNT/UNTIL hits 10-year window cap
--- Produces exactly 10 results (2025-2034 inclusive)
+-- Produces exactly 11 results (2025-2035 inclusive, boundary is now included with <=)
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'API Limit Warning',
-    'Test 24.14: YEARLY no COUNT/UNTIL caps at 10-year window',
+    'Test 24.14: YEARLY no COUNT/UNTIL caps at 10-year window (inclusive)',
     assert_equals(
         'YEARLY 10-year cap',
-        '10',
+        '11',
         (SELECT COUNT(*)::TEXT FROM rrule."all"(
             'FREQ=YEARLY',
             '2025-01-01 00:00:00'::TIMESTAMP
@@ -6265,14 +6265,15 @@ SELECT
         ))
     );
 
--- Test 32.2: Yearly COUNT=20 capped by 10-year window (returns only 10)
+-- Test 32.2: Yearly COUNT=20 capped by 10-year window (returns 11 with inclusive boundary)
+-- 10-year window is now inclusive: dtstart through dtstart + 10 years = 11 years of occurrences
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'API Limits',
-    'Test 32.2: YEARLY COUNT=20 capped by 10-year window',
+    'Test 32.2: YEARLY COUNT=20 capped by 10-year window (inclusive)',
     assert_equals(
         'YEARLY COUNT=20 10-year cap',
-        '10',
+        '11',
         (SELECT COUNT(*)::TEXT FROM rrule."all"(
             'FREQ=YEARLY;COUNT=20',
             '2025-01-01 10:00:00'::TIMESTAMP

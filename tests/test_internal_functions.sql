@@ -294,13 +294,13 @@ SELECT 'parse_rrule_parts()', 'WKST defaults to NULL',
 \echo '--- Section 10: calculate_safe_iteration_limit() ---'
 
 -- Exact expected values based on function implementation:
--- DAILY: effective_max * 40 → 1000 * 40 = 40000
--- WEEKLY: effective_max * 10 → 1000 * 10 = 10000
+-- DAILY: effective_max * 62 → 1000 * 62 = 62000 (increased from 40 for BYMONTHDAY=31 worst case)
+-- WEEKLY: effective_max * 15 → 1000 * 15 = 15000
 -- MONTHLY: GREATEST(effective_max * 20, 1200) → GREATEST(20000, 1200) = 20000
 -- YEARLY: effective_max * 10 → 1000 * 10 = 10000
 INSERT INTO internal_test_results (test_category, test_name, status)
-SELECT 'calculate_safe_iteration_limit()', 'DAILY(10, 1000) = 40000',
-    assert_equals('Daily exact', '40000', rrule.calculate_safe_iteration_limit('DAILY', 10, 1000)::TEXT);
+SELECT 'calculate_safe_iteration_limit()', 'DAILY(10, 1000) = 62000',
+    assert_equals('Daily exact', '62000', rrule.calculate_safe_iteration_limit('DAILY', 10, 1000)::TEXT);
 
 INSERT INTO internal_test_results (test_category, test_name, status)
 SELECT 'calculate_safe_iteration_limit()', 'WEEKLY(10, 1000) = 15000',

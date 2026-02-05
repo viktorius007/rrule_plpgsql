@@ -76,6 +76,7 @@ TEST_FILES=(
   "tests/test_consensus_gaps.sql"
   "tests/test_consensus_gaps_2.sql"
   "tests/test_dual_path_consistency.sql"
+  "tests/test_iteration_limits.sql"
   # Comprehensive test suite (specification-derived)
   "tests/matrix/test_freq_byxxx_matrix.sql"
   "tests/matrix/test_api_boundary_matrix.sql"

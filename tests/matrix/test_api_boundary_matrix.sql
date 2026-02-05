@@ -115,9 +115,11 @@ SELECT assert_equals('all-COUNT-min', '1',
 SELECT assert_equals('all-unbounded-cap', '1000',
     (SELECT COUNT(*)::TEXT FROM rrule."all"('FREQ=DAILY', '2025-01-01 10:00:00'::TIMESTAMP)));
 
--- 10-year window cap verification
+-- 10-year window cap verification (inclusive boundary: dtstart + 10 years is included)
+-- With YEARLY frequency, we get exactly 11 results: 2025, 2026, ..., 2035
+-- MAX(r) should be exactly dtstart + 10 years = 2035-01-01
 SELECT assert_true('all-10year-cap',
-    (SELECT MAX(r) - '2025-01-01'::TIMESTAMP <= INTERVAL '10 years'
+    (SELECT MAX(r) = '2035-01-01 10:00:00'::TIMESTAMP
      FROM rrule."all"('FREQ=YEARLY', '2025-01-01 10:00:00'::TIMESTAMP) r));
 
 -- COUNT=0 is rejected (COUNT must be positive)
