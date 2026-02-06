@@ -9,7 +9,7 @@ Pure PL/pgSQL implementation of RFC 5545 iCalendar RRULE for PostgreSQL. No C ex
 ## Commands
 
 ```bash
-# Run all tests (400+ tests across 13 suites)
+# Run all tests (62 test suites total)
 npm test
 ./test.sh
 
@@ -63,11 +63,11 @@ psql -d your_db -f src/install.sql
 
 ## Key Files
 
-- `/src/rrule.sql` - Core implementation (~3400 lines)
+- `/src/rrule.sql` - Core implementation (~3900 lines)
 - `/src/rrule_subday.sql` - Sub-day frequency overrides (~774 lines)
 - `/src/install.sql` - Standard installation
 - `/src/install_with_subday.sql` - Installation with sub-day frequencies
-- `/tests/*.sql` - 13 test suites covering validation, frequencies, timezone, RFC compliance
+- `/tests/*.sql` and subdirectories - 33 test files covering validation, frequencies, timezone, RFC compliance, branch coverage, security, parity
 - `/tests/helpers.sql` - Shared test assertion functions (`assert_occurrences_equal`, `assert_equals`, `assert_true`)
 - `DECISIONS.md` - Prescriptive architectural decisions with verification links
 - `TESTING_STANDARDS.md` - Required test patterns (ROLLBACK, fixed timestamps, exact assertions)
@@ -120,6 +120,7 @@ The call chain from public API to occurrence generation:
 4. **BYxxx Helpers** (`rrule_month_byday_set`, `rrule_month_bymonthday_set`, `rrule_week_byday_set`, etc.) → expand candidates for specific BYxxx rules
 5. **Filter Functions** (`test_byday_rule`, `test_bymonth_rule`, `test_bymonthday_rule`, `test_byyearday_rule`, `byweekno_matches`) → filter candidates that don't match BYxxx constraints
 6. **BYSETPOS** (`rrule_bysetpos_filter`) → cursor-based post-filter that selects specific positions from the candidate set
+7. **Time Expansion** (`rrule_expand_dates_with_times`) → expands date candidates with BYHOUR/BYMINUTE/BYSECOND time slots for WEEKLY/MONTHLY/YEARLY frequencies
 
 **Two parallel generators exist:** `rrule_event_instances_range()` (TIMESTAMP, used by TIMESTAMP API) and `rrule_event_instances_range_tz()` (TIMESTAMP, used by TIMESTAMPTZ API). Both have identical structure with 4 frequency branches each. Changes to the main loop logic (caps, boundary checks, EXIT conditions) must be applied to both generators.
 
@@ -140,7 +141,7 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 | MONTHLY | 13x | Month variations |
 | YEARLY | 2x | Leap year handling |
 
-**Boundary Workarounds:** The `+ INTERVAL '1 day'` patterns at lines 2803, 2928, 3488, 3665 handle `inc=true` for between/before/after functions — a different scenario from the WHILE loop boundary.
+**Boundary Workarounds:** The `+ INTERVAL '1 day'` patterns at lines 2808, 2933, 3493, 3670 handle `inc=true` for between/before/after functions — a different scenario from the WHILE loop boundary.
 
 ## Development Rules
 
