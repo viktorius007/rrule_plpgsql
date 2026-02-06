@@ -178,6 +178,8 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 17. **Verify property test strategies generate expected values:** When extending Hypothesis strategies (e.g., adding negative BYWEEKNO), verify the strategy actually generates the new values by sampling with a quick script.
 
+18. **Profiler 0% coverage means the function was never called:** The `plpgsql_check` profiler accurately counts all PL/pgSQL executions. If a function shows 0%, it wasn't called during the profiler run — not a measurement limitation. The profiler script has its own test workload separate from the test suite; ensure it exercises all code paths. Example: `byweekno_matches()` showed 0% because the profiler workload only had pure BYWEEKNO rules (which use a generator path), not BYMONTH+BYWEEKNO rules (which use `byweekno_matches` as a filter).
+
 ## RRULE Parameters Supported
 
 FREQ, COUNT, UNTIL, INTERVAL, BYDAY (with ordinals like 2MO/-1FR), BYMONTHDAY, BYMONTH, BYYEARDAY, BYWEEKNO, BYSETPOS, WKST, TZID, SKIP (OMIT/BACKWARD/FORWARD), RSCALE (GREGORIAN only)
@@ -198,10 +200,15 @@ FREQ, COUNT, UNTIL, INTERVAL, BYDAY (with ordinals like 2MO/-1FR), BYMONTHDAY, B
 
 | Gap | Severity | Reason |
 |-----|----------|--------|
-| **Time filters (BYHOUR/BYMINUTE/BYSECOND) with WEEKLY/MONTHLY/YEARLY** | Low | Semantically ambiguous per RFC 5545. **Workaround:** Use `FREQ=DAILY;BYDAY=MO,WE,FR;BYHOUR=9,17` |
+| **Time filters (BYHOUR/BYMINUTE/BYSECOND) with WEEKLY/MONTHLY/YEARLY** | Low | Not yet implemented. **Workaround:** Use `FREQ=DAILY;BYDAY=MO,WE,FR;BYHOUR=9,17` |
 | **Sub-day frequencies disabled** | Low | Security design - DoS risk (31M+ occurrences/year). Enable via `install_with_subday.sql` |
-| **Non-Gregorian calendars** | Medium | HEBREW, ISLAMIC, CHINESE not supported - requires ICU library integration |
 | **Leap second (BYSECOND=60)** | Negligible | PostgreSQL TIMESTAMP limitation. RFC allows treating 60 as 59 |
+
+### Design Decisions (Will Not Implement)
+
+| Feature | Reason |
+|---------|--------|
+| **Non-Gregorian calendars** | HEBREW, ISLAMIC, CHINESE calendars require ICU library integration which would add C extension dependencies, defeating the project's core value proposition (pure PL/pgSQL, works on managed PostgreSQL services). Users needing non-Gregorian calendars should use application-layer libraries like Luxon or date-fns with calendar plugins. |
 
 ### Invalid Combinations (Raise Exceptions)
 - `BYMONTHDAY` with `FREQ=WEEKLY` - RFC 5545 prohibition

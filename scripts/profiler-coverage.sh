@@ -19,14 +19,11 @@
 #   - Console summary with coverage statistics
 #   - coverage-report.txt with detailed report including uncovered statements
 #
-# Known Limitations:
-#   IMMUTABLE functions may show 0% coverage even when properly tested.
-#   PostgreSQL's query planner evaluates IMMUTABLE functions at plan time
-#   when called with constant arguments. Since the profiler operates at
-#   execution time, these calls are not observed. This affects:
-#   - byweekno_matches() and related week number functions
-#   - Pure computational helpers like weekday_to_number()
-#   See ISSUES.md ISSUE-003 for detailed analysis.
+# Coverage Notes:
+#   The test workload exercises both "generator" and "filter" code paths:
+#   - Pure BYWEEKNO rules use rrule_yearly_byweekno_set() as a generator
+#   - BYMONTH+BYWEEKNO rules use byweekno_matches_for_year() as a WHERE filter
+#   Both paths are tested to ensure full coverage. See ISSUES.md ISSUE-003.
 #
 # Requirements:
 #   - PostgreSQL 12+ with plpgsql_check extension available
@@ -242,6 +239,8 @@ BEGIN
     PERFORM rrule."all"('FREQ=YEARLY;BYWEEKNO=1,20,52;COUNT=10', '2025-01-06 10:00:00'::TIMESTAMP);
     PERFORM rrule."all"('FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;COUNT=5', '2025-01-06 10:00:00'::TIMESTAMP);
     PERFORM rrule."all"('FREQ=YEARLY;BYWEEKNO=-1;COUNT=5', '2025-01-06 10:00:00'::TIMESTAMP);
+    -- BYMONTH+BYWEEKNO: exercises byweekno_matches_for_year() as WHERE filter (ISSUE-003)
+    PERFORM rrule."all"('FREQ=YEARLY;BYMONTH=1,7;BYWEEKNO=1,26;COUNT=20', '2025-01-06 10:00:00'::TIMESTAMP);
 
     -- =========================================================================
     -- SECTION 8: BYSETPOS
