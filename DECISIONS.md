@@ -136,7 +136,7 @@ PostgreSQL does not allow (or behaves unexpectedly with) set-returning functions
 
 ## 11. Fail safe on schema reinstall
 
-`DROP SCHEMA rrule CASCADE` only when no external dependencies (views, indexes, foreign keys) reference rrule functions. Otherwise fail with a migration guide pointing to MANUAL_MIGRATION.md.
+`DROP SCHEMA rrule CASCADE` only when no external dependencies (views, indexes, foreign keys) reference rrule functions. Otherwise fail with a migration guide pointing to [MIGRATION.md](docs/MIGRATION.md).
 
 This prevents silent deletion of production objects that depend on rrule functions.
 
@@ -145,3 +145,19 @@ This prevents silent deletion of production objects that depend on rrule functio
 ## 12. Schema-qualify all function calls in tests
 
 Tests use `rrule."all"(...)`, never unqualified `"all"(...)`, and reset `search_path` to `public`. This catches regressions where schema qualification is accidentally omitted from function bodies.
+
+---
+
+## 13. `overlaps()` is TIMESTAMPTZ-only (no TIMESTAMP variant)
+
+All other public API functions (`all`, `between`, `after`, `before`, `next`, `most_recent`, `count`) have both TIMESTAMP and TIMESTAMPTZ overloads. `overlaps()` intentionally has only a TIMESTAMPTZ variant.
+
+**Why no TIMESTAMP variant:**
+- `overlaps()` was designed directly in the TIMESTAMPTZ API. Its parameter shape `(dtstart, dtend, rrule, mindate, maxdate, timezone)` doesn't map cleanly to the TIMESTAMP API convention.
+- `overlaps()` returns BOOLEAN, not dates — so the TIMESTAMP vs TIMESTAMPTZ distinction doesn't affect downstream consumption.
+- PostgreSQL implicitly casts TIMESTAMP → TIMESTAMPTZ, so passing TIMESTAMP values works without errors.
+- Adding a TIMESTAMP variant would increase maintenance surface across all 4 generators for negligible benefit.
+
+**Edge case:** If a developer mixes the TIMESTAMP API (for `all()`, `between()`, etc.) with auto-cast TIMESTAMP→TIMESTAMPTZ for `overlaps()`, and the session timezone ≠ UTC, the implicit cast uses session timezone rather than UTC. This is unlikely in practice for anyone following the documentation.
+
+**See also:** [POTENTIAL_ISSUES.md (archived)](docs/archived/POTENTIAL_ISSUES.md) — assessed and closed as "Design Decision".

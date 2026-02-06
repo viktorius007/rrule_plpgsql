@@ -151,33 +151,40 @@ ORDER BY next_occ
 LIMIT 1;
 ```
 
-### Pattern 3: Checking Event Conflicts
+### Pattern 3: Checking for Occurrences in a Range
 
 #### ❌ Inefficient
 ```sql
--- DON'T: Expand all occurrences for conflict detection
-SELECT DISTINCT e1.id, e2.id
-FROM events e1, events e2,
-LATERAL rrule."all"(e1.rrule, e1.dtstart) AS occ1(t),
-LATERAL rrule."all"(e2.rrule, e2.dtstart) AS occ2(t)
-WHERE e1.id != e2.id
-  AND occ1.t = occ2.t;
+-- DON'T: Expand all occurrences just to check existence
+SELECT e.id, e.title
+FROM events e
+WHERE EXISTS (
+  SELECT 1
+  FROM rrule."between"(
+    e.rrule, e.dtstart,
+    '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+    '2025-06-30 23:59:59+00'::TIMESTAMPTZ
+  )
+);
 ```
 
 #### ✅ Efficient
 ```sql
--- DO: Use rrule."overlaps"() function
-SELECT e1.id, e2.id
-FROM events e1, events e2
-WHERE e1.id < e2.id
-  AND rrule."overlaps"(
-    e1.dtstart,
-    e1.dtend,
-    e1.rrule,
-    e2.dtstart,
-    e2.dtend
-  );
+-- DO: Use rrule."overlaps"() — stops at first match
+SELECT e.id, e.title
+FROM events e
+WHERE rrule."overlaps"(
+    e.dtstart::TIMESTAMPTZ,
+    e.dtend::TIMESTAMPTZ,
+    e.rrule,
+    '2025-06-01 00:00:00+00'::TIMESTAMPTZ,
+    '2025-06-30 23:59:59+00'::TIMESTAMPTZ
+);
 ```
+
+> **Note:** `overlaps()` checks if a single recurring event has occurrences within a date range.
+> For detecting conflicts *between* two recurring events, use the LATERAL JOIN approach
+> with `between()` — see [Conflict Detection in EXAMPLE_USAGE.md](EXAMPLE_USAGE.md#event-conflict-detection).
 
 ---
 
