@@ -10,11 +10,11 @@
 *  - DAILY frequency, including:
 *    BYDAY, BYMONTH, BYMONTHDAY, BYWEEKNO, BYYEARDAY, BYHOUR, BYMINUTE, BYSECOND, BYSETPOS
 *  - WEEKLY frequency, including:
-*    BYDAY, BYMONTH, BYMONTHDAY, BYWEEKNO, BYYEARDAY, BYSETPOS
+*    BYDAY, BYMONTH, BYMONTHDAY, BYWEEKNO, BYYEARDAY, BYHOUR, BYMINUTE, BYSECOND, BYSETPOS
 *  - MONTHLY frequency, including:
-*    BYDAY, BYMONTH, BYMONTHDAY, BYWEEKNO, BYYEARDAY, BYSETPOS
+*    BYDAY, BYMONTH, BYMONTHDAY, BYWEEKNO, BYYEARDAY, BYHOUR, BYMINUTE, BYSECOND, BYSETPOS
 *  - YEARLY frequency, including:
-*    BYMONTH, BYMONTHDAY, BYYEARDAY (positive & negative indices), BYWEEKNO, BYDAY, BYSETPOS
+*    BYMONTH, BYMONTHDAY, BYYEARDAY (positive & negative indices), BYWEEKNO, BYDAY, BYHOUR, BYMINUTE, BYSECOND, BYSETPOS
 *
 * ✅ UNIVERSAL MODIFIERS:
 *  - COUNT & UNTIL limits
@@ -549,22 +549,6 @@ BEGIN
         RAISE EXCEPTION 'Invalid RRULE: BYSETPOS=% is out of valid range. Valid values are 1-366 or -366 to -1.  RFC 5545 Section 3.3.10: Valid range is ±1-366', result.bysetpos[i];
       END IF;
     END LOOP;
-  END IF;
-
-  -- Validation: BYHOUR/BYMINUTE/BYSECOND not supported with WEEKLY/MONTHLY/YEARLY
-  -- RFC 5545 defines these as "Expand" operations, but this implementation does not yet
-  -- support time-level expansion for these frequencies. Reject explicitly rather than
-  -- silently ignoring. See SPEC_COMPLIANCE.md for workarounds.
-  IF result.freq IN ('WEEKLY', 'MONTHLY', 'YEARLY') THEN
-    IF result.byhour IS NOT NULL THEN
-      RAISE EXCEPTION 'Invalid RRULE: BYHOUR is not supported with FREQ=%. Use FREQ=DAILY;BYDAY=... with BYHOUR instead, or use sub-day frequencies (FREQ=HOURLY;BYDAY=...).  Note: RFC 5545 defines this as an "Expand" operation but this implementation does not yet support it.', result.freq;
-    END IF;
-    IF result.byminute IS NOT NULL THEN
-      RAISE EXCEPTION 'Invalid RRULE: BYMINUTE is not supported with FREQ=%. Use FREQ=DAILY with BYMINUTE instead, or use sub-day frequencies.  Note: RFC 5545 defines this as an "Expand" operation but this implementation does not yet support it.', result.freq;
-    END IF;
-    IF result.bysecond IS NOT NULL THEN
-      RAISE EXCEPTION 'Invalid RRULE: BYSECOND is not supported with FREQ=%. Use FREQ=DAILY with BYSECOND instead, or use sub-day frequencies.  Note: RFC 5545 defines this as an "Expand" operation but this implementation does not yet support it.', result.freq;
-    END IF;
   END IF;
 
   -- Validation: BYSETPOS not supported with HOURLY/MINUTELY/SECONDLY
@@ -1784,6 +1768,80 @@ $$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 
 
 ------------------------------------------------------------------------------------------------------
+-- Expand an array of dates with time-level expansion (BYHOUR/BYMINUTE/BYSECOND) and BYSETPOS
+-- Used by weekly_set, monthly_set, and yearly_set for RFC 5545 time expansion on frequencies
+-- where BYHOUR/BYMINUTE/BYSECOND act as "Expand" rules (WEEKLY, MONTHLY, YEARLY).
+------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION rrule_expand_dates_with_times(
+  dates TIMESTAMP WITH TIME ZONE[],
+  rule rrule.rrule_parts,
+  max_results INT DEFAULT NULL
+) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
+DECLARE
+  curse REFCURSOR;
+  has_time_filters BOOLEAN;
+  d TIMESTAMP WITH TIME ZONE;
+  t TIMESTAMP WITH TIME ZONE;
+  result_count INT := 0;
+BEGIN
+  -- Maintain STRICT semantics for required parameters
+  IF dates IS NULL OR rule IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Empty array check
+  IF array_length(dates, 1) IS NULL OR array_length(dates, 1) = 0 THEN
+    RETURN;
+  END IF;
+
+  has_time_filters := rule.byhour IS NOT NULL OR rule.byminute IS NOT NULL OR rule.bysecond IS NOT NULL;
+
+  IF NOT has_time_filters THEN
+    -- No time expansion needed - just apply BYSETPOS if present
+    IF rule.bysetpos IS NOT NULL THEN
+      OPEN curse SCROLL FOR SELECT unnest(dates) ORDER BY 1;
+      RETURN QUERY SELECT x FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) x;
+    ELSE
+      -- Direct output with optional limit
+      FOREACH d IN ARRAY dates LOOP
+        RETURN NEXT d;
+        result_count := result_count + 1;
+        IF max_results IS NOT NULL AND result_count >= max_results THEN
+          RETURN;
+        END IF;
+      END LOOP;
+    END IF;
+  ELSE
+    -- Has time filters - expand each date with time slots
+    IF rule.bysetpos IS NOT NULL THEN
+      -- BYSETPOS needs full set - expand all dates, then filter
+      -- Pass NULL to rrule_day_time_set to get all time slots
+      OPEN curse SCROLL FOR
+        SELECT x FROM unnest(dates) AS base_date
+        CROSS JOIN LATERAL rrule.rrule_day_time_set(base_date, rule, NULL) x
+        ORDER BY 1;
+      RETURN QUERY SELECT x FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) x;
+    ELSE
+      -- No BYSETPOS - direct expansion with early exit
+      FOREACH d IN ARRAY dates LOOP
+        FOR t IN SELECT x FROM rrule.rrule_day_time_set(d, rule,
+                    CASE WHEN max_results IS NULL THEN NULL
+                         ELSE max_results - result_count END) x
+                  ORDER BY 1 LOOP
+          RETURN NEXT t;
+          result_count := result_count + 1;
+          IF max_results IS NOT NULL AND result_count >= max_results THEN
+            RETURN;
+          END IF;
+        END LOOP;
+      END LOOP;
+    END IF;
+  END IF;
+END;
+$$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter
+
+
+------------------------------------------------------------------------------------------------------
 -- Return another day's worth of events
 -- Now supports BYHOUR, BYMINUTE, BYSECOND, and BYSETPOS for sub-day scheduling
 ------------------------------------------------------------------------------------------------------
@@ -1843,9 +1901,7 @@ $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT
 
 ------------------------------------------------------------------------------------------------------
 -- Return another week's worth of events
---
--- Doesn't handle truly obscure and unlikely stuff like BYWEEKNO=5;BYMONTH=1;BYDAY=WE,TH,FR;BYSETPOS=-2
--- Imagine that.
+-- Supports BYHOUR/BYMINUTE/BYSECOND for time-level expansion per RFC 5545.
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION weekly_set(
   after_ts TIMESTAMP WITH TIME ZONE,
@@ -1853,15 +1909,19 @@ CREATE OR REPLACE FUNCTION weekly_set(
   max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  curse REFCURSOR;
   weekno INT;
   weekyear INT;
   weeks_in_year INT;
+  dates_array TIMESTAMP WITH TIME ZONE[];
+  has_time_expansion BOOLEAN;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
     RETURN;
   END IF;
+
+  -- Detect if time expansion is needed
+  has_time_expansion := rule.byhour IS NOT NULL OR rule.byminute IS NOT NULL OR rule.bysecond IS NOT NULL;
 
   IF rule.byweekno IS NOT NULL THEN
     -- ISO 8601 week numbering with WKST; only match weeks within the calendar year
@@ -1887,14 +1947,14 @@ BEGIN
     END IF;
   END IF;
 
-  -- Performance optimization: bypass cursor when bysetpos IS NULL
-  IF rule.bysetpos IS NOT NULL THEN
-    -- Pass WKST and max_results to rrule_week_byday_set for proper week boundary calculation
-    OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
-    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
-  ELSE
-    RETURN QUERY SELECT r FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst, max_results) r ORDER BY 1;
-  END IF;
+  -- Collect day candidates into array
+  -- Pass NULL max_results when time expansion or BYSETPOS active (CLAUDE.md Rule 11)
+  SELECT array_agg(r ORDER BY r) INTO dates_array
+  FROM rrule.rrule_week_byday_set(after_ts, rule.byday, rule.wkst,
+    CASE WHEN has_time_expansion OR rule.bysetpos IS NOT NULL THEN NULL ELSE max_results END) r;
+
+  -- Apply time expansion (handles BYHOUR/BYMINUTE/BYSECOND and BYSETPOS)
+  RETURN QUERY SELECT x FROM rrule.rrule_expand_dates_with_times(dates_array, rule, max_results) x;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
@@ -1902,6 +1962,7 @@ $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT
 
 ------------------------------------------------------------------------------------------------------
 -- Return another month's worth of events
+-- Supports BYHOUR/BYMINUTE/BYSECOND for time-level expansion per RFC 5545.
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION monthly_set(
   after_ts TIMESTAMP WITH TIME ZONE,
@@ -1909,12 +1970,16 @@ CREATE OR REPLACE FUNCTION monthly_set(
   max_results INT DEFAULT NULL  -- NULL = unlimited, otherwise stop after N results
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  curse REFCURSOR;
+  dates_array TIMESTAMP WITH TIME ZONE[];
+  has_time_expansion BOOLEAN;
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
     RETURN;
   END IF;
+
+  -- Detect if time expansion is needed
+  has_time_expansion := rule.byhour IS NOT NULL OR rule.byminute IS NOT NULL OR rule.bysecond IS NOT NULL;
 
   /**
   * Need to investigate whether it is legal to set both of these, and whether
@@ -1954,33 +2019,26 @@ BEGIN
     END IF;
   END IF;
 
-  -- Performance optimization: bypass cursor when bysetpos IS NULL
-  IF rule.bysetpos IS NOT NULL THEN
-    -- Pass NULL to inner generators when INTERSECT post-filter may reject candidates
-    -- (CLAUDE.md rule 11: never limit candidate generation before post-filters)
-    IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
-      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
-                  INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
-                      ORDER BY 1;
-    ELSIF rule.bymonthday IS NOT NULL THEN
-      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
-    ELSE
-      OPEN curse SCROLL FOR SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
-    END IF;
-
-    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
+  -- Collect day candidates into array
+  -- Pass NULL max_results when time expansion, BYSETPOS active, or INTERSECT post-filter (CLAUDE.md Rule 11)
+  IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM (
+      SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
+      INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
+    ) sub;
+  ELSIF rule.bymonthday IS NOT NULL THEN
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip,
+      CASE WHEN has_time_expansion OR rule.bysetpos IS NOT NULL THEN NULL ELSE max_results END) r;
   ELSE
-    -- Direct query without cursor overhead
-    IF rule.byday IS NOT NULL AND rule.bymonthday IS NOT NULL THEN
-      RETURN QUERY SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, NULL) r
-                  INTERSECT SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, NULL) r
-                      ORDER BY 1;
-    ELSIF rule.bymonthday IS NOT NULL THEN
-      RETURN QUERY SELECT r FROM rrule.rrule_month_bymonthday_set(after_ts, rule.bymonthday, rule.skip, max_results) r ORDER BY 1;
-    ELSE
-      RETURN QUERY SELECT r FROM rrule.rrule_month_byday_set(after_ts, rule.byday, max_results) r ORDER BY 1;
-    END IF;
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM rrule.rrule_month_byday_set(after_ts, rule.byday,
+      CASE WHEN has_time_expansion OR rule.bysetpos IS NOT NULL THEN NULL ELSE max_results END) r;
   END IF;
+
+  -- Apply time expansion (handles BYHOUR/BYMINUTE/BYSECOND and BYSETPOS)
+  RETURN QUERY SELECT x FROM rrule.rrule_expand_dates_with_times(dates_array, rule, max_results) x;
 
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
@@ -2213,6 +2271,7 @@ $$ LANGUAGE plpgsql STABLE;  -- STRICT removed to allow NULL max_results
 
 ------------------------------------------------------------------------------------------------------
 -- Return another year's worth of events
+-- Supports BYHOUR/BYMINUTE/BYSECOND for time-level expansion per RFC 5545.
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION yearly_set(
   after_ts TIMESTAMP WITH TIME ZONE,
@@ -2221,10 +2280,10 @@ CREATE OR REPLACE FUNCTION yearly_set(
   min_in_period TIMESTAMP WITH TIME ZONE DEFAULT NULL  -- Filter: only return dates >= this value
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
 DECLARE
-  curse REFCURSOR;
   rr rrule.rrule_parts;
   year_start TIMESTAMP WITH TIME ZONE;
   has_yearly_ordinals BOOLEAN := FALSE;
+  dates_array TIMESTAMP WITH TIME ZONE[];
 BEGIN
   -- Maintain STRICT semantics for required parameters
   IF after_ts IS NULL OR rule IS NULL THEN
@@ -2237,6 +2296,10 @@ BEGIN
   -- Apply BYWEEKNO/BYYEARDAY at YEARLY level, not per-month
   rr.byweekno := NULL;
   rr.byyearday := NULL;
+  -- Also nullify time filters for inner monthly_set calls (handled at yearly level)
+  rr.byhour := NULL;
+  rr.byminute := NULL;
+  rr.bysecond := NULL;
 
   -- Detect YEARLY BYDAY ordinals without BYMONTH/BYWEEKNO (ordinals apply within the year)
   IF rule.byday IS NOT NULL AND rule.bymonth IS NULL AND rule.byweekno IS NULL THEN
@@ -2249,123 +2312,65 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- Build candidate set according to RFC 5545 order, then apply BYSETPOS last.
+  -- Build candidate set according to RFC 5545 order, then apply time expansion and BYSETPOS last.
   -- BYMONTH and BYYEARDAY are both "Expand" with YEARLY (RFC 5545 §3.3.10 table).
   -- When both are present, one generates candidates and the other filters (intersection).
   -- See DECISIONS.md #5.
+  -- Pass NULL max_results when time expansion, BYSETPOS, or post-filters active (CLAUDE.md Rule 11)
   IF rule.bymonth IS NOT NULL THEN
     -- BYMONTH primary
-    -- Pass NULL max_results when post-filters may reject candidates
     -- Use DISTINCT to deduplicate when SKIP=FORWARD overflows into adjacent BYMONTH months
-    OPEN curse SCROLL FOR
-      SELECT DISTINCT r
-      FROM rrule.rrule_yearly_bymonth_set(after_ts, rr,
-        CASE WHEN rule.byweekno IS NOT NULL OR rule.byyearday IS NOT NULL
-             THEN NULL ELSE max_results END) r
-      WHERE (min_in_period IS NULL OR r >= min_in_period)
-        AND (rule.byweekno IS NULL OR rrule.byweekno_matches_for_year(r, year_start, rule.wkst, rule.byweekno))
-        AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
-      ORDER BY 1;
+    SELECT array_agg(DISTINCT r ORDER BY r) INTO dates_array
+    FROM rrule.rrule_yearly_bymonth_set(after_ts, rr, NULL) r
+    WHERE (min_in_period IS NULL OR r >= min_in_period)
+      AND (rule.byweekno IS NULL OR rrule.byweekno_matches_for_year(r, year_start, rule.wkst, rule.byweekno))
+      AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday));
 
   ELSIF rule.byweekno IS NOT NULL THEN
     -- BYWEEKNO primary
-    -- Pass NULL max_results when post-filters may reject candidates
-    OPEN curse SCROLL FOR
-      SELECT r
-      FROM rrule.rrule_yearly_byweekno_set(after_ts, rule,
-        CASE WHEN rule.bymonth IS NOT NULL OR rule.byyearday IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
-             THEN NULL ELSE max_results END) r
-      WHERE (min_in_period IS NULL OR r >= min_in_period)
-        AND (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
-        AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
-        AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
-        AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
-      ORDER BY 1;
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM rrule.rrule_yearly_byweekno_set(after_ts, rule, NULL) r
+    WHERE (min_in_period IS NULL OR r >= min_in_period)
+      AND (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
+      AND (rule.byyearday IS NULL OR rrule.test_byyearday_rule(r, rule.byyearday))
+      AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
+      AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday));
 
   ELSIF rule.byyearday IS NOT NULL THEN
     -- BYYEARDAY primary (pass rule, not rr, because rr has byyearday nulled out)
-    -- Pass NULL max_results when post-filters may reject candidates
-    OPEN curse SCROLL FOR
-      SELECT r
-      FROM rrule.rrule_yearly_byyearday_set(after_ts, rule,
-        CASE WHEN rule.bymonth IS NOT NULL OR rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL
-             THEN NULL ELSE max_results END) r
-      WHERE (min_in_period IS NULL OR r >= min_in_period)
-        AND (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
-        AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
-        AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday))
-      ORDER BY 1;
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM rrule.rrule_yearly_byyearday_set(after_ts, rule, NULL) r
+    WHERE (min_in_period IS NULL OR r >= min_in_period)
+      AND (rule.bymonth IS NULL OR rrule.test_bymonth_rule(r, rule.bymonth))
+      AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
+      AND (rule.byday IS NULL OR rrule.test_byday_rule(r, rule.byday));
 
   ELSIF has_yearly_ordinals THEN
     -- YEARLY BYDAY ordinals (no BYMONTH/BYWEEKNO): ordinals apply across the year
-    OPEN curse SCROLL FOR
-      SELECT r
-      FROM rrule.rrule_year_byday_set(after_ts, rule.byday, CASE WHEN rule.bymonthday IS NULL THEN max_results ELSE NULL END) r
-      WHERE (min_in_period IS NULL OR r >= min_in_period)
-        AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday))
-      ORDER BY 1;
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM rrule.rrule_year_byday_set(after_ts, rule.byday, NULL) r
+    WHERE (min_in_period IS NULL OR r >= min_in_period)
+      AND (rule.bymonthday IS NULL OR rrule.test_bymonthday_rule(r, rule.bymonthday));
 
   ELSIF rule.bymonthday IS NOT NULL OR rule.byday IS NOT NULL THEN
-    -- Month/day filters without BYMONTH
-    IF rule.bysetpos IS NOT NULL THEN
-      -- BYSETPOS needs full candidate set - use cursor for bysetpos_filter
-      OPEN curse SCROLL FOR
-        SELECT r
-        FROM generate_series(1, 12) m
-        CROSS JOIN LATERAL rrule.monthly_set(
-          date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval,
-          rr,
-          NULL  -- No limit when BYSETPOS active
-        ) r
-        WHERE (min_in_period IS NULL OR r >= min_in_period)
-        ORDER BY 1;
-    ELSE
-      -- No BYSETPOS: iterate months with early exit optimization (Issue 51)
-      DECLARE
-        result_count INT := 0;
-        month_ts TIMESTAMP WITH TIME ZONE;
-        y TIMESTAMP WITH TIME ZONE;
-      BEGIN
-        FOR m IN 1..12 LOOP
-          month_ts := date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval;
-          FOR y IN SELECT r FROM rrule.monthly_set(month_ts, rr,
-                      CASE WHEN max_results IS NULL THEN NULL
-                           ELSE max_results - result_count END) r
-                    WHERE (min_in_period IS NULL OR r >= min_in_period)
-                    ORDER BY 1 LOOP
-            RETURN NEXT y;
-            result_count := result_count + 1;
-            IF max_results IS NOT NULL AND result_count >= max_results THEN
-              RETURN;
-            END IF;
-          END LOOP;
-        END LOOP;
-        RETURN;
-      END;
-    END IF;
+    -- Month/day filters without BYMONTH - iterate all 12 months
+    SELECT array_agg(r ORDER BY r) INTO dates_array
+    FROM generate_series(1, 12) m
+    CROSS JOIN LATERAL rrule.monthly_set(
+      date_trunc('year', after_ts) + make_interval(months => m - 1) + (after_ts::time)::interval,
+      rr,
+      NULL  -- No limit - time expansion/BYSETPOS need full candidate set
+    ) r
+    WHERE (min_in_period IS NULL OR r >= min_in_period);
 
   ELSE
     -- No BYMONTH/BYWEEKNO/BYYEARDAY/BYMONTHDAY/BYDAY - return anniversary of dtstart
-    RETURN NEXT after_ts;
-    RETURN;
+    dates_array := ARRAY[after_ts];
   END IF;
 
-  -- Performance optimization: bypass cursor when bysetpos IS NULL
-  IF rule.bysetpos IS NOT NULL THEN
-    RETURN QUERY SELECT d FROM rrule.rrule_bysetpos_filter(curse, rule.bysetpos) d;
-  ELSE
-    -- Fetch all from cursor directly
-    DECLARE
-      valid_date TIMESTAMP WITH TIME ZONE;
-    BEGIN
-      LOOP
-        FETCH curse INTO valid_date;
-        EXIT WHEN NOT FOUND;
-        RETURN NEXT valid_date;
-      END LOOP;
-      CLOSE curse;
-    END;
-  END IF;
+  -- Apply time expansion (handles BYHOUR/BYMINUTE/BYSECOND and BYSETPOS)
+  RETURN QUERY SELECT x FROM rrule.rrule_expand_dates_with_times(dates_array, rule, max_results) x;
+
 END;
 $$ LANGUAGE plpgsql VOLATILE;  -- VOLATILE: uses cursors/BYSETPOS filter; STRICT removed to allow NULL max_results
 

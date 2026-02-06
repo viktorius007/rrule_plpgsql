@@ -130,50 +130,43 @@ SELECT assert_rrule_rejected('BYMONTHDAY-with-WEEKLY-negative',
 
 
 --------------------------------------------------------------------------------
--- SECTION 5: TIME FILTER RESTRICTIONS (BYHOUR/BYMINUTE/BYSECOND)
+-- SECTION 5: TIME FILTER SUPPORT (BYHOUR/BYMINUTE/BYSECOND)
+-- Note: These combinations are now SUPPORTED per RFC 5545 time expansion.
+-- See test_time_expansion.sql for comprehensive tests.
 --------------------------------------------------------------------------------
 \echo ''
-\echo '--- TIME FILTER RESTRICTIONS ---'
+\echo '--- TIME FILTER SUPPORT (now accepted) ---'
 \echo ''
 
--- BYHOUR with WEEKLY (not supported - raises exception)
-SELECT assert_rrule_rejected('BYHOUR-with-WEEKLY',
-    'FREQ=WEEKLY;BYHOUR=9;COUNT=5',
-    '%BYHOUR%not supported with FREQ=WEEKLY%');
+-- BYHOUR with WEEKLY/MONTHLY/YEARLY - now supported (time expansion)
+SELECT assert_true('BYHOUR-with-WEEKLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=WEEKLY;BYHOUR=9;COUNT=5', '2025-01-06 09:00:00'::TIMESTAMP)));
 
-SELECT assert_rrule_rejected('BYHOUR-with-MONTHLY',
-    'FREQ=MONTHLY;BYHOUR=9;COUNT=5',
-    '%BYHOUR%not supported with FREQ=MONTHLY%');
+SELECT assert_true('BYHOUR-with-MONTHLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=MONTHLY;BYHOUR=9;COUNT=5', '2025-01-01 09:00:00'::TIMESTAMP)));
 
-SELECT assert_rrule_rejected('BYHOUR-with-YEARLY',
-    'FREQ=YEARLY;BYHOUR=9;COUNT=5',
-    '%BYHOUR%not supported with FREQ=YEARLY%');
+SELECT assert_true('BYHOUR-with-YEARLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=YEARLY;BYHOUR=9;COUNT=5', '2025-01-01 09:00:00'::TIMESTAMP)));
 
--- BYMINUTE with WEEKLY/MONTHLY/YEARLY
-SELECT assert_rrule_rejected('BYMINUTE-with-WEEKLY',
-    'FREQ=WEEKLY;BYMINUTE=30;COUNT=5',
-    '%BYMINUTE%not supported with FREQ=WEEKLY%');
+-- BYMINUTE with WEEKLY/MONTHLY/YEARLY - now supported
+SELECT assert_true('BYMINUTE-with-WEEKLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=WEEKLY;BYMINUTE=30;COUNT=5', '2025-01-06 09:30:00'::TIMESTAMP)));
 
-SELECT assert_rrule_rejected('BYMINUTE-with-MONTHLY',
-    'FREQ=MONTHLY;BYMINUTE=30;COUNT=5',
-    '%BYMINUTE%not supported with FREQ=MONTHLY%');
+SELECT assert_true('BYMINUTE-with-MONTHLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=MONTHLY;BYMINUTE=30;COUNT=5', '2025-01-01 09:30:00'::TIMESTAMP)));
 
-SELECT assert_rrule_rejected('BYMINUTE-with-YEARLY',
-    'FREQ=YEARLY;BYMINUTE=30;COUNT=5',
-    '%BYMINUTE%not supported with FREQ=YEARLY%');
+SELECT assert_true('BYMINUTE-with-YEARLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=YEARLY;BYMINUTE=30;COUNT=5', '2025-01-01 09:30:00'::TIMESTAMP)));
 
--- BYSECOND with WEEKLY/MONTHLY/YEARLY
-SELECT assert_rrule_rejected('BYSECOND-with-WEEKLY',
-    'FREQ=WEEKLY;BYSECOND=0;COUNT=5',
-    '%BYSECOND%not supported with FREQ=WEEKLY%');
+-- BYSECOND with WEEKLY/MONTHLY/YEARLY - now supported
+SELECT assert_true('BYSECOND-with-WEEKLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=WEEKLY;BYSECOND=0;COUNT=5', '2025-01-06 09:00:00'::TIMESTAMP)));
 
-SELECT assert_rrule_rejected('BYSECOND-with-MONTHLY',
-    'FREQ=MONTHLY;BYSECOND=0;COUNT=5',
-    '%BYSECOND%not supported with FREQ=MONTHLY%');
+SELECT assert_true('BYSECOND-with-MONTHLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=MONTHLY;BYSECOND=0;COUNT=5', '2025-01-01 09:00:00'::TIMESTAMP)));
 
-SELECT assert_rrule_rejected('BYSECOND-with-YEARLY',
-    'FREQ=YEARLY;BYSECOND=0;COUNT=5',
-    '%BYSECOND%not supported with FREQ=YEARLY%');
+SELECT assert_true('BYSECOND-with-YEARLY-accepted',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=YEARLY;BYSECOND=0;COUNT=5', '2025-01-01 09:00:00'::TIMESTAMP)));
 
 
 --------------------------------------------------------------------------------

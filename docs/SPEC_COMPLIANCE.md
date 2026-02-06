@@ -26,9 +26,9 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 | **Week Configuration** | | | | | | | |
 | `WKST` (week start day) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Time Filters** | | | | | | | |
-| `BYHOUR` | ✅ | 🚫<sup>1</sup> | 🚫<sup>1</sup> | 🚫<sup>1</sup> | ✅ | ✅ | ✅ |
-| `BYMINUTE` | ✅ | 🚫<sup>1</sup> | 🚫<sup>1</sup> | 🚫<sup>1</sup> | ✅ | ✅ | ✅ |
-| `BYSECOND` | ✅ | 🚫<sup>1</sup> | 🚫<sup>1</sup> | 🚫<sup>1</sup> | ✅ | ✅ | ✅ |
+| `BYHOUR` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYMINUTE` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `BYSECOND` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Position Selectors** | | | | | | | |
 | `BYSETPOS` | ✅ | ✅ | ✅ | ✅ | 🚫<sup>2</sup> | 🚫<sup>2</sup> | 🚫<sup>2</sup> |
 | **Special Combinations** | | | | | | | |
@@ -46,13 +46,12 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 
 ## Footnotes
 
-<sup>1</sup> **Time Filters (BYHOUR/BYMINUTE/BYSECOND) with WEEKLY/MONTHLY/YEARLY:**
-   - **Status:** Raises exception with workaround guidance
-   - **RFC 5545:** The RFC Section 3.3.10 expand/limit table defines these as "Expand" operations — the behavior is specified, not ambiguous. Both python-dateutil and rrule.js implement expansion for these combinations.
-   - **Current limitation:** This implementation does not yet support time-level expansion for WEEKLY/MONTHLY/YEARLY frequencies. Rules using these combinations are rejected with descriptive error messages.
-   - **Workarounds:**
-     - For hourly on specific days: `FREQ=HOURLY;BYDAY=MO,WE,FR` ✅
-     - For daily with specific hours: `FREQ=DAILY;BYHOUR=9,10,11` ✅
+<sup>1</sup> **Time Filters (BYHOUR/BYMINUTE/BYSECOND) with all frequencies:**
+   - **Status:** ✅ Fully supported
+   - **RFC 5545:** Section 3.3.10 defines these as "Expand" operations for WEEKLY/MONTHLY/YEARLY frequencies
+   - **Behavior:** Time filters expand each date candidate with the specified time slots
+   - **Example:** `FREQ=WEEKLY;BYDAY=MO,WE,FR;BYHOUR=9,17` generates 6 occurrences per week (3 days × 2 times)
+   - **BYSETPOS interaction:** Applied after time expansion (e.g., BYSETPOS=-1 selects the last time slot)
 
 <sup>2</sup> **BYSETPOS with HOURLY/MINUTELY/SECONDLY:**
    - **Status:** Raises exception with guidance
@@ -111,24 +110,24 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 - **Not supported:** BYDAY ordinals (2MO), BYYEARDAY, BYWEEKNO
 
 **`FREQ=WEEKLY`**
-- **Use case:** "Every Monday", "Mon/Wed/Fri", "Every 2 weeks"
-- **Max occurrences/year:** 52
+- **Use case:** "Every Monday", "Mon/Wed/Fri", "Every 2 weeks", "MWF at 9am and 5pm"
+- **Max occurrences/year:** 52 (more with time expansion)
 - **Performance:** Excellent
-- **Supports:** BYDAY, BYMONTH, BYSETPOS, WKST
-- **Not supported:** BYDAY ordinals, BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYHOUR/BYMINUTE/BYSECOND
+- **Supports:** BYDAY, BYMONTH, BYSETPOS, WKST, BYHOUR/BYMINUTE/BYSECOND
+- **Not supported:** BYDAY ordinals, BYMONTHDAY, BYYEARDAY, BYWEEKNO
 
 **`FREQ=MONTHLY`**
-- **Use case:** "Last day of month", "2nd Tuesday", "Every 3 months"
-- **Max occurrences/year:** 12
+- **Use case:** "Last day of month", "2nd Tuesday", "Every 3 months", "1st and 15th at 9am and 5pm"
+- **Max occurrences/year:** 12 (more with time expansion)
 - **Performance:** Excellent
-- **Supports:** BYDAY (with ordinals), BYMONTH, BYMONTHDAY, BYSETPOS
-- **Not supported:** BYYEARDAY, BYWEEKNO, BYHOUR/BYMINUTE/BYSECOND
+- **Supports:** BYDAY (with ordinals), BYMONTH, BYMONTHDAY, BYSETPOS, BYHOUR/BYMINUTE/BYSECOND
+- **Not supported:** BYYEARDAY, BYWEEKNO
 
 **`FREQ=YEARLY`**
-- **Use case:** "Birthday", "Anniversary", "Day 100 of each year", "Week 10 of each year"
-- **Max occurrences/year:** 1 (base), expandable with BYMONTH/BYDAY
+- **Use case:** "Birthday", "Anniversary", "Day 100 of each year", "Week 10 of each year", "June and December at 10am and 2pm"
+- **Max occurrences/year:** 1 (base), expandable with BYMONTH/BYDAY/time filters
 - **Performance:** Excellent
-- **Supports:** BYDAY (with ordinals), BYMONTH, BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYSETPOS
+- **Supports:** BYDAY (with ordinals), BYMONTH, BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYSETPOS, BYHOUR/BYMINUTE/BYSECOND
 - **Note:** BYMONTH and BYYEARDAY can be combined; results are the intersection (may be empty)
 - **Note:** BYDAY ordinals cannot be used when BYWEEKNO is specified (RFC 5545 prohibition)
 

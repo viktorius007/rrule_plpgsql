@@ -1033,20 +1033,17 @@ END $$;
 SELECT assert_true('matrix-daily-byhour',
     (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=DAILY;BYHOUR=9,12,17;COUNT=15', '2025-01-01 09:00:00'::TIMESTAMP)));
 
--- WEEKLY with BYHOUR should be rejected
-SELECT assert_rrule_rejected('reject-weekly-byhour',
-    'FREQ=WEEKLY;BYHOUR=9,12,17;COUNT=15',
-    '%BYHOUR%not supported with FREQ=%');
+-- WEEKLY with BYHOUR - now supported (time expansion)
+SELECT assert_true('matrix-weekly-byhour',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=WEEKLY;BYHOUR=9,12,17;COUNT=15', '2025-01-06 09:00:00'::TIMESTAMP)));
 
--- MONTHLY with BYHOUR should be rejected
-SELECT assert_rrule_rejected('reject-monthly-byhour',
-    'FREQ=MONTHLY;BYHOUR=9,12,17;COUNT=15',
-    '%BYHOUR%not supported with FREQ=%');
+-- MONTHLY with BYHOUR - now supported (time expansion)
+SELECT assert_true('matrix-monthly-byhour',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=MONTHLY;BYHOUR=9,12,17;COUNT=15', '2025-01-01 09:00:00'::TIMESTAMP)));
 
--- YEARLY with BYHOUR should be rejected
-SELECT assert_rrule_rejected('reject-yearly-byhour',
-    'FREQ=YEARLY;BYHOUR=9,12,17;COUNT=15',
-    '%BYHOUR%not supported with FREQ=%');
+-- YEARLY with BYHOUR - now supported (time expansion)
+SELECT assert_true('matrix-yearly-byhour',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=YEARLY;BYHOUR=9,12,17;COUNT=15', '2025-01-01 09:00:00'::TIMESTAMP)));
 
 -- HOURLY with BYHOUR=9,12,17 (subday-only)
 DO $$
@@ -1113,20 +1110,17 @@ END $$;
 SELECT assert_true('matrix-daily-byminute',
     (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=DAILY;BYMINUTE=0,30;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
--- WEEKLY with BYMINUTE should be rejected
-SELECT assert_rrule_rejected('reject-weekly-byminute',
-    'FREQ=WEEKLY;BYMINUTE=0,30;COUNT=10',
-    '%BYMINUTE%not supported with FREQ=%');
+-- WEEKLY with BYMINUTE - now supported (time expansion)
+SELECT assert_true('matrix-weekly-byminute',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=WEEKLY;BYMINUTE=0,30;COUNT=10', '2025-01-06 10:00:00'::TIMESTAMP)));
 
--- MONTHLY with BYMINUTE should be rejected
-SELECT assert_rrule_rejected('reject-monthly-byminute',
-    'FREQ=MONTHLY;BYMINUTE=0,30;COUNT=10',
-    '%BYMINUTE%not supported with FREQ=%');
+-- MONTHLY with BYMINUTE - now supported (time expansion)
+SELECT assert_true('matrix-monthly-byminute',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=MONTHLY;BYMINUTE=0,30;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
--- YEARLY with BYMINUTE should be rejected
-SELECT assert_rrule_rejected('reject-yearly-byminute',
-    'FREQ=YEARLY;BYMINUTE=0,30;COUNT=10',
-    '%BYMINUTE%not supported with FREQ=%');
+-- YEARLY with BYMINUTE - now supported (time expansion)
+SELECT assert_true('matrix-yearly-byminute',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=YEARLY;BYMINUTE=0,30;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- HOURLY with BYMINUTE=0,30 (subday-only)
 DO $$
@@ -1193,20 +1187,17 @@ END $$;
 SELECT assert_true('matrix-daily-bysecond',
     (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=DAILY;BYSECOND=0,30;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
--- WEEKLY with BYSECOND should be rejected
-SELECT assert_rrule_rejected('reject-weekly-bysecond',
-    'FREQ=WEEKLY;BYSECOND=0,30;COUNT=10',
-    '%BYSECOND%not supported with FREQ=%');
+-- WEEKLY with BYSECOND - now supported (time expansion)
+SELECT assert_true('matrix-weekly-bysecond',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=WEEKLY;BYSECOND=0,30;COUNT=10', '2025-01-06 10:00:00'::TIMESTAMP)));
 
--- MONTHLY with BYSECOND should be rejected
-SELECT assert_rrule_rejected('reject-monthly-bysecond',
-    'FREQ=MONTHLY;BYSECOND=0,30;COUNT=10',
-    '%BYSECOND%not supported with FREQ=%');
+-- MONTHLY with BYSECOND - now supported (time expansion)
+SELECT assert_true('matrix-monthly-bysecond',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=MONTHLY;BYSECOND=0,30;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
--- YEARLY with BYSECOND should be rejected
-SELECT assert_rrule_rejected('reject-yearly-bysecond',
-    'FREQ=YEARLY;BYSECOND=0,30;COUNT=10',
-    '%BYSECOND%not supported with FREQ=%');
+-- YEARLY with BYSECOND - now supported (time expansion)
+SELECT assert_true('matrix-yearly-bysecond',
+    (SELECT COUNT(*) >= 1 FROM rrule."all"('FREQ=YEARLY;BYSECOND=0,30;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- HOURLY with BYSECOND=0,30 (subday-only)
 DO $$

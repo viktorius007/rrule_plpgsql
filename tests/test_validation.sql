@@ -1259,68 +1259,14 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- SECTION 8: BYHOUR/BYMINUTE/BYSECOND Frequency Restriction Tests
+-- SECTION 8: Additional Edge Case Validations
 -- ============================================================================
+-- Note: BYHOUR/BYMINUTE/BYSECOND restriction tests removed - these combinations
+-- are now fully supported per RFC 5545. See test_time_expansion.sql for tests.
 \echo ''
-\echo '--- Section 8: BYHOUR/BYMINUTE/BYSECOND Frequency Restrictions ---'
+\echo '--- Section 8: Additional Edge Case Validations ---'
 
--- Test 8.1: BYHOUR with WEEKLY should be rejected
-INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=WEEKLY (should be rejected)',
-    assert_rrule_rejected(
-        'BYHOUR with WEEKLY',
-        'FREQ=WEEKLY;BYHOUR=9;COUNT=3',
-        '%BYHOUR is not supported with FREQ=WEEKLY%'
-    )
-);
-
--- Test 8.2: BYHOUR with MONTHLY should be rejected
-INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=MONTHLY (should be rejected)',
-    assert_rrule_rejected(
-        'BYHOUR with MONTHLY',
-        'FREQ=MONTHLY;BYHOUR=9;COUNT=3',
-        '%BYHOUR is not supported with FREQ=MONTHLY%'
-    )
-);
-
--- Test 8.3: BYHOUR with YEARLY should be rejected
-INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYHOUR with FREQ=YEARLY (should be rejected)',
-    assert_rrule_rejected(
-        'BYHOUR with YEARLY',
-        'FREQ=YEARLY;BYHOUR=9;COUNT=3',
-        '%BYHOUR is not supported with FREQ=YEARLY%'
-    )
-);
-
--- Test 8.4: BYMINUTE with MONTHLY should be rejected
-INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYMINUTE with FREQ=MONTHLY (should be rejected)',
-    assert_rrule_rejected(
-        'BYMINUTE with MONTHLY',
-        'FREQ=MONTHLY;BYMINUTE=30;COUNT=3',
-        '%BYMINUTE is not supported with FREQ=MONTHLY%'
-    )
-);
-
--- Test 8.5: BYSECOND with YEARLY should be rejected
-INSERT INTO validation_test_results (test_category, test_name, status)
-VALUES ('BYHOUR/BYMINUTE/BYSECOND Restrictions', 'BYSECOND with FREQ=YEARLY (should be rejected)',
-    assert_rrule_rejected(
-        'BYSECOND with YEARLY',
-        'FREQ=YEARLY;BYSECOND=0;COUNT=3',
-        '%BYSECOND is not supported with FREQ=YEARLY%'
-    )
-);
-
--- ============================================================================
--- SECTION 9: Additional Edge Case Validations
--- ============================================================================
-\echo ''
-\echo '--- Section 9: Additional Edge Case Validations ---'
-
--- Test 9.1: Empty RRULE string should be rejected (missing FREQ)
+-- Test 8.1: Empty RRULE string should be rejected (missing FREQ)
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('Empty/Malformed RRULE', 'Empty string (should be rejected)',
     assert_rrule_rejected(
@@ -1330,7 +1276,7 @@ VALUES ('Empty/Malformed RRULE', 'Empty string (should be rejected)',
     )
 );
 
--- Test 9.2: Negative INTERVAL value
+-- Test 8.2: Negative INTERVAL value
 -- The parser now explicitly checks for negative INTERVAL values and raises an error.
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('INTERVAL Validation', 'INTERVAL=-1 (should be rejected)',
@@ -1341,7 +1287,7 @@ VALUES ('INTERVAL Validation', 'INTERVAL=-1 (should be rejected)',
     )
 );
 
--- Test 9.3: UNTIL with syntactically valid but semantically invalid date (month 13)
+-- Test 8.3: UNTIL with syntactically valid but semantically invalid date (month 13)
 -- Passes the regex check ([0-9TZ]+) and the Z-suffix check, but fails the ::TIMESTAMPTZ cast.
 -- This exercises the EXCEPTION WHEN OTHERS handler in parse_rrule_parts().
 INSERT INTO validation_test_results (test_category, test_name, status)
@@ -1353,7 +1299,7 @@ VALUES ('UNTIL Cast Validation', 'UNTIL=20251301T000000Z (month 13, invalid cast
     )
 );
 
--- Test 9.4: UNTIL with syntactically valid but semantically invalid date (Feb 30)
+-- Test 8.4: UNTIL with syntactically valid but semantically invalid date (Feb 30)
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('UNTIL Cast Validation', 'UNTIL=20250230T000000Z (Feb 30, invalid cast)',
     assert_rrule_rejected(
@@ -1364,12 +1310,12 @@ VALUES ('UNTIL Cast Validation', 'UNTIL=20250230T000000Z (Feb 30, invalid cast)'
 );
 
 -- ============================================================================
--- SECTION 10: Additional Error Rejection Tests
+-- SECTION 9: Additional Error Rejection Tests
 -- ============================================================================
 \echo ''
-\echo '--- Section 10: Additional Error Rejection Tests ---'
+\echo '--- Section 9: Additional Error Rejection Tests ---'
 
--- Test 10.1: Invalid SKIP value should be rejected
+-- Test 9.1: Invalid SKIP value should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('SKIP Validation', 'SKIP=INVALID (should be rejected)',
     assert_rrule_rejected(
@@ -1379,7 +1325,7 @@ VALUES ('SKIP Validation', 'SKIP=INVALID (should be rejected)',
     )
 );
 
--- Test 10.2: Unsupported frequency BIWEEKLY should be rejected
+-- Test 9.2: Unsupported frequency BIWEEKLY should be rejected
 INSERT INTO validation_test_results (test_category, test_name, status)
 VALUES ('Frequency Validation', 'FREQ=BIWEEKLY (should be rejected)',
     assert_rrule_rejected(

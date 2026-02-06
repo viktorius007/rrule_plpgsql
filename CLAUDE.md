@@ -200,7 +200,6 @@ FREQ, COUNT, UNTIL, INTERVAL, BYDAY (with ordinals like 2MO/-1FR), BYMONTHDAY, B
 
 | Gap | Severity | Reason |
 |-----|----------|--------|
-| **Time filters (BYHOUR/BYMINUTE/BYSECOND) with WEEKLY/MONTHLY/YEARLY** | Low | Not yet implemented. **Workaround:** Use `FREQ=DAILY;BYDAY=MO,WE,FR;BYHOUR=9,17` |
 | **Sub-day frequencies disabled** | Low | Security design - DoS risk (31M+ occurrences/year). Enable via `install_with_subday.sql` |
 | **Leap second (BYSECOND=60)** | Negligible | PostgreSQL TIMESTAMP limitation. RFC allows treating 60 as 59 |
 

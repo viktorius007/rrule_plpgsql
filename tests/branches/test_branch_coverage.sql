@@ -1067,47 +1067,18 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 SELECT assert_true('BRANCH-parse-64-bysetpos-range', TRUE);
 
--- BRANCH-parse-65: BYHOUR not supported with WEEKLY
-DO $$
-BEGIN
-    PERFORM rrule."all"('FREQ=WEEKLY;BYHOUR=9', '2025-01-01'::TIMESTAMP);
-    RAISE EXCEPTION 'Expected error for BYHOUR with WEEKLY';
-EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM ~ 'BYHOUR' AND SQLERRM ~ 'not supported' THEN
-        NULL; -- Expected
-    ELSE
-        RAISE;
-    END IF;
-END $$;
-SELECT assert_true('BRANCH-parse-65-byhour-weekly', TRUE);
+-- BRANCH-parse-65: BYHOUR NOW SUPPORTED with WEEKLY (time expansion)
+-- This validation block was removed - BYHOUR/BYMINUTE/BYSECOND now work with all frequencies
+SELECT assert_true('BRANCH-parse-65-byhour-weekly-supported',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=WEEKLY;BYHOUR=9;COUNT=5', '2025-01-06 09:00:00'::TIMESTAMP)));
 
--- BRANCH-parse-66: BYMINUTE not supported with MONTHLY
-DO $$
-BEGIN
-    PERFORM rrule."all"('FREQ=MONTHLY;BYMINUTE=30', '2025-01-01'::TIMESTAMP);
-    RAISE EXCEPTION 'Expected error for BYMINUTE with MONTHLY';
-EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM ~ 'BYMINUTE' AND SQLERRM ~ 'not supported' THEN
-        NULL; -- Expected
-    ELSE
-        RAISE;
-    END IF;
-END $$;
-SELECT assert_true('BRANCH-parse-66-byminute-monthly', TRUE);
+-- BRANCH-parse-66: BYMINUTE NOW SUPPORTED with MONTHLY (time expansion)
+SELECT assert_true('BRANCH-parse-66-byminute-monthly-supported',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=MONTHLY;BYMINUTE=30;COUNT=5', '2025-01-01 10:30:00'::TIMESTAMP)));
 
--- BRANCH-parse-67: BYSECOND not supported with YEARLY
-DO $$
-BEGIN
-    PERFORM rrule."all"('FREQ=YEARLY;BYSECOND=30', '2025-01-01'::TIMESTAMP);
-    RAISE EXCEPTION 'Expected error for BYSECOND with YEARLY';
-EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM ~ 'BYSECOND' AND SQLERRM ~ 'not supported' THEN
-        NULL; -- Expected
-    ELSE
-        RAISE;
-    END IF;
-END $$;
-SELECT assert_true('BRANCH-parse-67-bysecond-yearly', TRUE);
+-- BRANCH-parse-67: BYSECOND NOW SUPPORTED with YEARLY (time expansion)
+SELECT assert_true('BRANCH-parse-67-bysecond-yearly-supported',
+    (SELECT COUNT(*) = 5 FROM rrule."all"('FREQ=YEARLY;BYSECOND=30;COUNT=5', '2025-01-01 10:00:30'::TIMESTAMP)));
 
 
 --------------------------------------------------------------------------------

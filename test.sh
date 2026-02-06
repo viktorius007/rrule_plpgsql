@@ -62,6 +62,7 @@ trap 'rm -rf "$LOCKDIR"' EXIT
 # Test suite files in execution order
 TEST_FILES=(
   "tests/test_validation.sql"
+  "tests/test_time_expansion.sql"
   "tests/test_rrule_functions.sql"
   "tests/test_tzid_support.sql"
   "tests/test_wkst_support.sql"
