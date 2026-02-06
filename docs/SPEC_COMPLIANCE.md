@@ -241,7 +241,7 @@ FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17;BYSETPOS=1,-1
 
 ## RFC 5545 & RFC 7529 Compliance Summary
 
-**Coverage:** ~97% of RFC 5545 RRULE specification + RFC 7529 SKIP/RSCALE support
+**Coverage:** ~99% of RFC 5545 RRULE specification + RFC 7529 SKIP/RSCALE support (effectively complete for Gregorian calendars)
 
 ### RFC 5545 Supported Features
 
@@ -309,8 +309,7 @@ FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17;BYSETPOS=1,-1
 ## Why Not 100%?
 
 The remaining gaps are:
-- **Time-level expansion** for WEEKLY/MONTHLY/YEARLY (RFC-specified but not yet implemented; rejected with workaround guidance)
-- **Non-Gregorian calendars** (HEBREW, ISLAMIC, CHINESE — requires ICU integration)
+- **Non-Gregorian calendars** (HEBREW, ISLAMIC, CHINESE — requires ICU integration, intentionally not implemented)
 - **Leap seconds** (BYSECOND=60 — PostgreSQL TIMESTAMP limitation)
 
 This implementation covers all standard scheduling needs. Unsupported combinations are rejected with descriptive errors rather than silently ignored.
