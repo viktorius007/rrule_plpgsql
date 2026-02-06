@@ -133,13 +133,13 @@ See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for prescriptive testing rules 
    - Master installation script
    - Creates `rrule` schema for namespace isolation
    - Loads core functions and API
-   - Safe reinstall with dependency checking (see [MANUAL_MIGRATION.md](MANUAL_MIGRATION.md) if needed)
+   - Safe reinstall with dependency checking (see [MIGRATION.md](docs/MIGRATION.md) if needed)
 
 3. **install_with_subday.sql**
    - Optional installation with sub-day frequencies
    - Includes HOURLY, MINUTELY, SECONDLY support
    - Displays security warnings during installation
-   - See [INCLUDING_SUBDAY_OPERATIONS.md](INCLUDING_SUBDAY_OPERATIONS.md)
+   - See [SUBDAY_OPERATIONS.md](docs/SUBDAY_OPERATIONS.md)
 
 4. **test_*.sql** (13 test suites, 400+ tests)
    - Comprehensive test coverage
