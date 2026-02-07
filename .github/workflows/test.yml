@@ -13,7 +13,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:14
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -47,10 +47,18 @@ jobs:
       - name: Install plpgsql_check extension
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-14-plpgsql-check
+          sudo apt-get install -y postgresql-17-plpgsql-check || \
+          sudo apt-get install -y postgresql-plpgsql-check
 
       - name: Run test suite (standard + sub-day)
+        env:
+          DATABASE_URL: rrule_test
         run: ./test.sh --both
+
+      - name: Run package SQL export contract tests
+        env:
+          DATABASE_URL: rrule_test
+        run: npm run test:package-contract
 
       - name: Run PL/pgSQL linter
         run: ./lint.sh
@@ -65,6 +73,12 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r tests/property/requirements.txt
+
+      - name: Prepare database for property tests
+        run: |
+          psql -d postgres -c "DROP DATABASE IF EXISTS rrule_test"
+          psql -d postgres -c "CREATE DATABASE rrule_test"
+          psql -d rrule_test -f src/install.sql
 
       - name: Run property tests
         env:
