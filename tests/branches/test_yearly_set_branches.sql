@@ -59,8 +59,8 @@ SELECT assert_equals('yearly-branch-1-BYMONTH-primary', '4',
         'FREQ=YEARLY;BYMONTH=1,4,7,10;COUNT=4', '2025-01-15 10:00:00'::TIMESTAMP)));
 
 -- Branch 1 with post-filters: BYMONTH + BYWEEKNO filter
-SELECT assert_true('yearly-branch-1-BYMONTH-BYWEEKNO-filter',
-    (SELECT COUNT(*) >= 0 FROM rrule."all"(
+SELECT assert_equals('yearly-branch-1-BYMONTH-BYWEEKNO-filter', '1',
+    (SELECT COUNT(*)::TEXT FROM rrule."all"(
         'FREQ=YEARLY;BYMONTH=3;BYWEEKNO=10;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- Branch 1 with post-filters: BYMONTH + BYYEARDAY filter
@@ -90,13 +90,13 @@ SELECT assert_equals('yearly-branch-2-BYWEEKNO-BYDAY', '3',
         'FREQ=YEARLY;BYWEEKNO=10;BYDAY=MO,WE,FR;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- Branch 2 with BYMONTHDAY filter
-SELECT assert_true('yearly-branch-2-BYWEEKNO-BYMONTHDAY',
-    (SELECT COUNT(*) >= 0 FROM rrule."all"(
+SELECT assert_equals('yearly-branch-2-BYWEEKNO-BYMONTHDAY', '1',
+    (SELECT COUNT(*)::TEXT FROM rrule."all"(
         'FREQ=YEARLY;BYWEEKNO=10;BYMONTHDAY=5;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- Branch 2 with BYYEARDAY filter (intersection)
-SELECT assert_true('yearly-branch-2-BYWEEKNO-BYYEARDAY',
-    (SELECT COUNT(*) >= 0 FROM rrule."all"(
+SELECT assert_equals('yearly-branch-2-BYWEEKNO-BYYEARDAY', '1',
+    (SELECT COUNT(*)::TEXT FROM rrule."all"(
         'FREQ=YEARLY;BYWEEKNO=10;BYYEARDAY=65;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- Branch 3: BYYEARDAY primary path
@@ -135,8 +135,8 @@ SELECT assert_equals('yearly-branch-4-BYDAY-neg-ordinal', '3',
         'FREQ=YEARLY;BYDAY=-1FR;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- Branch 4 with BYMONTHDAY filter
-SELECT assert_true('yearly-branch-4-BYDAY-BYMONTHDAY',
-    (SELECT COUNT(*) >= 0 FROM rrule."all"(
+SELECT assert_equals('yearly-branch-4-BYDAY-BYMONTHDAY', '2',
+    (SELECT COUNT(*)::TEXT FROM rrule."all"(
         'FREQ=YEARLY;BYDAY=2MO;BYMONTHDAY=13;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- Branch 5: BYMONTHDAY/BYDAY with BYSETPOS
@@ -201,8 +201,8 @@ SELECT assert_equals('monthly-BYMONTHDAY-only', '6',
         'FREQ=MONTHLY;BYMONTHDAY=15;COUNT=6', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- BYMONTHDAY + BYDAY (intersection)
-SELECT assert_true('monthly-BYMONTHDAY-BYDAY',
-    (SELECT COUNT(*) >= 0 FROM rrule."all"(
+SELECT assert_equals('monthly-BYMONTHDAY-BYDAY', '3',
+    (SELECT COUNT(*)::TEXT FROM rrule."all"(
         'FREQ=MONTHLY;BYMONTHDAY=13;BYDAY=FR;COUNT=3', '2025-01-01 10:00:00'::TIMESTAMP)));
 
 -- BYSETPOS path

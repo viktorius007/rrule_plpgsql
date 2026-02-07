@@ -223,6 +223,68 @@ BEGIN
 END;
 $$;
 
+-- Test 1.4: lowercase tzid key in RRULE string (no explicit timezone)
+DO $$
+DECLARE
+    results TIMESTAMPTZ[];
+    expected TEXT[] := ARRAY[
+        '2025-03-08 10:00:00 EST',
+        '2025-03-09 10:00:00 EDT',
+        '2025-03-10 10:00:00 EDT'
+    ];
+    actual TEXT[];
+    matches BOOLEAN;
+BEGIN
+    SELECT array_agg(ts ORDER BY ts) INTO results
+    FROM rrule."all"(
+        'tzid=America/New_York;FREQ=DAILY;COUNT=3',
+        '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
+        NULL
+    ) ts;
+
+    SELECT array_agg(format_ts_in_tz(ts, 'America/New_York') ORDER BY ordinality) INTO actual FROM unnest(results) WITH ORDINALITY AS t(ts, ordinality);
+    matches := (actual = expected);
+
+    INSERT INTO tz_api_test_results VALUES (
+        'DST Spring Forward',
+        'lowercase tzid in RRULE string works correctly',
+        matches,
+        array_to_string(actual, E'\n  '),
+        array_to_string(expected, E'\n  ')
+    );
+END;
+$$;
+
+-- Test 1.5: invalid lowercase tzid key should raise validation error
+DO $$
+DECLARE
+    caught BOOLEAN := FALSE;
+    err TEXT;
+BEGIN
+    BEGIN
+        PERFORM rrule."all"(
+            'FREQ=DAILY;COUNT=1;tzid=Invalid/Zone',
+            '2025-03-08 10:00:00-05'::TIMESTAMPTZ,
+            NULL
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            err := SQLERRM;
+            IF err LIKE '%Invalid timezone%' THEN
+                caught := TRUE;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'DST Spring Forward',
+        'invalid lowercase tzid is rejected',
+        caught,
+        COALESCE(err, 'no exception'),
+        'Invalid timezone error'
+    );
+END;
+$$;
+
 
 -- ================================================================================================================
 -- TEST SUITE 2: DST Fall Back (November 2, 2025 - America/New_York)

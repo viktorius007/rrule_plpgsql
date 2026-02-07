@@ -63,7 +63,7 @@ DECLARE
     caught BOOLEAN := FALSE;
 BEGIN
     BEGIN
-        result := (SELECT array_agg(r) FROM rrule."all"(NULL::TEXT, '2025-01-01'::TIMESTAMP) r);
+        result := (SELECT array_agg(r ORDER BY r) FROM rrule."all"(NULL::TEXT, '2025-01-01'::TIMESTAMP) r);
     EXCEPTION WHEN OTHERS THEN
         caught := TRUE;
     END;
@@ -80,7 +80,7 @@ DECLARE
     caught BOOLEAN := FALSE;
 BEGIN
     BEGIN
-        result := (SELECT array_agg(r) FROM rrule."all"('FREQ=DAILY;COUNT=5', NULL::TIMESTAMP) r);
+        result := (SELECT array_agg(r ORDER BY r) FROM rrule."all"('FREQ=DAILY;COUNT=5', NULL::TIMESTAMP) r);
     EXCEPTION WHEN OTHERS THEN
         caught := TRUE;
     END;
@@ -97,7 +97,7 @@ DECLARE
     caught BOOLEAN := FALSE;
 BEGIN
     BEGIN
-        result := (SELECT array_agg(r) FROM rrule."all"('', '2025-01-01'::TIMESTAMP) r);
+        result := (SELECT array_agg(r ORDER BY r) FROM rrule."all"('', '2025-01-01'::TIMESTAMP) r);
     EXCEPTION WHEN OTHERS THEN
         caught := TRUE;
     END;
@@ -154,7 +154,7 @@ DECLARE
     caught BOOLEAN := FALSE;
 BEGIN
     BEGIN
-        result := (SELECT array_agg(r) FROM rrule."between"(NULL::TEXT, '2025-01-01'::TIMESTAMP,
+        result := (SELECT array_agg(r ORDER BY r) FROM rrule."between"(NULL::TEXT, '2025-01-01'::TIMESTAMP,
             '2025-01-01'::TIMESTAMP, '2025-12-31'::TIMESTAMP) r);
     EXCEPTION WHEN OTHERS THEN
         caught := TRUE;
@@ -172,7 +172,7 @@ DECLARE
     caught BOOLEAN := FALSE;
 BEGIN
     BEGIN
-        result := (SELECT array_agg(r) FROM rrule."between"('FREQ=DAILY;COUNT=100', NULL::TIMESTAMP,
+        result := (SELECT array_agg(r ORDER BY r) FROM rrule."between"('FREQ=DAILY;COUNT=100', NULL::TIMESTAMP,
             '2025-01-01'::TIMESTAMP, '2025-12-31'::TIMESTAMP) r);
     EXCEPTION WHEN OTHERS THEN
         caught := TRUE;

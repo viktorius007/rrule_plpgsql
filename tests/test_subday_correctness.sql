@@ -137,6 +137,22 @@ VALUES ('HOURLY Filters', 'FREQ=HOURLY;BYDAY=MO;INTERVAL=6;COUNT=3 only Monday o
     )
 );
 
+-- Test 1.6: HOURLY BYMINUTE expands within each hour (not just filtering base minute)
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('HOURLY Filters', 'FREQ=HOURLY;BYMINUTE=0,30 expands both minute slots per hour',
+    assert_occurrences_equal(
+        'FREQ=HOURLY;BYMINUTE=0,30 expands both minute slots per hour',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-01 10:30:00'::TIMESTAMP,
+            '2025-01-01 11:00:00'::TIMESTAMP,
+            '2025-01-01 11:30:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=HOURLY;BYMINUTE=0,30;COUNT=4', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
+
 -- ============================================================================
 -- SECTION 2: MINUTELY Frequency Tests
 -- ============================================================================
@@ -190,6 +206,22 @@ FROM rrule."all"(
     'FREQ=MINUTELY;COUNT=1',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS occurrence;
+
+-- Test 2.4: MINUTELY BYSECOND expands within each minute (not just filtering base second)
+INSERT INTO subday_test_results (test_category, test_name, status)
+VALUES ('MINUTELY Filters', 'FREQ=MINUTELY;BYSECOND=0,30 expands both second slots per minute',
+    assert_occurrences_equal(
+        'FREQ=MINUTELY;BYSECOND=0,30 expands both second slots per minute',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-01 10:00:30'::TIMESTAMP,
+            '2025-01-01 10:01:00'::TIMESTAMP,
+            '2025-01-01 10:01:30'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."all"('FREQ=MINUTELY;BYSECOND=0,30;COUNT=4', '2025-01-01 10:00:00'::TIMESTAMP) AS occurrence)
+    )
+);
 
 -- ============================================================================
 -- SECTION 3: SECONDLY Frequency Tests

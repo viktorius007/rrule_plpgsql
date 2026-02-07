@@ -6778,6 +6778,81 @@ SELECT
         )::TEXT)
     );
 
+-- ============================================================================
+-- SECTION: Issue 62 — after()/overlaps() far-future windows should not
+-- false-negative due to generator budget shortcuts
+-- ============================================================================
+\echo ''
+\echo '--- Issue 62: far-future after()/overlaps() budget ---'
+
+-- Test: TIMESTAMP after() with far-future reference date on unbounded DAILY rule
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 62: far-future budget',
+    'TIMESTAMP: after() finds next occurrence in year 2200',
+    assert_equals(
+        'after() far-future daily',
+        '2200-01-02 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=DAILY',
+            '2000-01-01 00:00:00'::TIMESTAMP,
+            '2200-01-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test: TIMESTAMPTZ after() with far-future reference date on unbounded DAILY rule
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 62: far-future budget',
+    'TIMESTAMPTZ: after() finds next occurrence in year 2200',
+    assert_equals(
+        'after() TZ far-future daily',
+        '2200-01-02 00:00:00+00',
+        (SELECT (x.*)::TEXT FROM rrule."after"(
+            'FREQ=DAILY',
+            '2000-01-01 00:00:00+00'::TIMESTAMPTZ,
+            '2200-01-01 00:00:00+00'::TIMESTAMPTZ,
+            1,
+            'UTC',
+            FALSE
+        ) x LIMIT 1)
+    );
+
+-- Test: Long-interval rule requires lookahead > 10 years from after_date
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 62: far-future budget',
+    'TIMESTAMP: after() finds next occurrence for INTERVAL=50 yearly rule',
+    assert_equals(
+        'after() yearly interval 50',
+        '2050-01-01 00:00:00',
+        (SELECT rrule."after"(
+            'FREQ=YEARLY;INTERVAL=50;COUNT=10',
+            '2000-01-01 00:00:00'::TIMESTAMP,
+            '2001-01-01 00:00:00'::TIMESTAMP,
+            FALSE
+        )::TEXT)
+    );
+
+-- Test: overlaps() should still detect recurring events in far-future windows
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Issue 62: far-future budget',
+    'TIMESTAMPTZ: overlaps() detects far-future recurring overlap',
+    assert_equals(
+        'overlaps() far-future daily',
+        'true',
+        (SELECT rrule."overlaps"(
+            '2000-01-01 09:00:00+00'::TIMESTAMPTZ,
+            '2000-01-01 10:00:00+00'::TIMESTAMPTZ,
+            'FREQ=DAILY',
+            '2200-01-01 00:00:00+00'::TIMESTAMPTZ,
+            '2200-01-02 00:00:00+00'::TIMESTAMPTZ,
+            'UTC'
+        )::TEXT)
+    );
+
 -- Test Issue 31: before() iteration budget is reasonable
 -- Verify before() still works correctly with reduced max_count (1M instead of 50M)
 INSERT INTO coverage_gap_results (test_category, test_name, status)

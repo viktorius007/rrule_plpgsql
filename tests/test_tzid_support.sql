@@ -330,6 +330,40 @@ BEGIN
     END IF;
 END $$;
 
+-- Test 13a: lowercase tzid key should be validated the same as TZID
+DO $$
+DECLARE
+    error_raised BOOLEAN := FALSE;
+    error_message TEXT;
+BEGIN
+    BEGIN
+        PERFORM (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;COUNT=3;tzid=Invalid/Timezone',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence);
+    EXCEPTION
+        WHEN OTHERS THEN
+            error_raised := TRUE;
+            error_message := SQLERRM;
+
+            IF error_message LIKE '%Invalid timezone%' THEN
+                INSERT INTO tzid_test_results (test_name, status)
+                VALUES ('Invalid lowercase tzid raises exception',
+                        'PASS [Invalid lowercase tzid raises exception]');
+            ELSE
+                INSERT INTO tzid_test_results (test_name, status)
+                VALUES ('Invalid lowercase tzid raises exception',
+                        'FAIL: Wrong error message: ' || error_message);
+            END IF;
+    END;
+
+    IF NOT error_raised THEN
+        INSERT INTO tzid_test_results (test_name, status)
+        VALUES ('Invalid lowercase tzid raises exception',
+                'FAIL: Expected exception was not raised');
+    END IF;
+END $$;
+
 \echo ''
 \echo '==================================================================='
 \echo 'TEST GROUP 6: TZID with Different Frequencies'
@@ -535,6 +569,20 @@ VALUES ('UNTIL with TZID WEEKLY',
     )
 ));
 
+-- Test 24a: UTC UNTIL before first absolute occurrence should produce zero rows
+-- DTSTART is wall-clock New York 23:00 (= 2025-01-02 04:00Z), but UNTIL is 2025-01-01 23:00Z.
+INSERT INTO tzid_test_results (test_name, status)
+VALUES ('UNTIL before first absolute occurrence',
+    assert_occurrences_equal(
+        'UNTIL before first absolute occurrence',
+        ARRAY[]::TIMESTAMP[],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'FREQ=DAILY;UNTIL=20250101T230000Z;TZID=America/New_York',
+            '2025-01-01 23:00:00'::TIMESTAMP
+        ) AS occurrence
+    )
+));
+
 \echo ''
 \echo '==================================================================='
 \echo 'TEST RESULTS SUMMARY'
@@ -580,10 +628,10 @@ BEGIN
     ) AS occurrence;
 
     -- Must produce exactly 3 occurrences (no crash/skip on the gap date)
-    -- Wall-clock: Mar 8 02:30, Mar 9 02:30 (gap → PG produces 02:30 in TIMESTAMP), Mar 10 02:30
+    -- Wall-clock: Mar 8 02:30, Mar 9 03:30 (gap coerced forward), Mar 10 02:30
     IF result_count = 3
         AND actual[1] = '2025-03-08 02:30:00'::TIMESTAMP
-        AND actual[2] = '2025-03-09 02:30:00'::TIMESTAMP
+        AND actual[2] = '2025-03-09 03:30:00'::TIMESTAMP
         AND actual[3] = '2025-03-10 02:30:00'::TIMESTAMP
     THEN
         INSERT INTO tzid_test_results (test_name, status)
@@ -591,7 +639,7 @@ BEGIN
     ELSE
         INSERT INTO tzid_test_results (test_name, status)
         VALUES ('DST spring-forward gap 2:30 AM (TZID)',
-            'FAIL: Expected 3 occurrences at 02:30, got ' || result_count || ': ' || actual::TEXT);
+            'FAIL: Expected [02:30,03:30,02:30], got ' || result_count || ': ' || actual::TEXT);
     END IF;
 END;
 $$;
