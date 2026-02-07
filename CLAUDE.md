@@ -42,6 +42,16 @@ npm run test:package-contract
 npm run test:isolation
 python3 -m pytest tests/property/test_session_isolation.py -v
 
+# Property tests (CI split)
+python3 -m pytest tests/property/ -v -k "not stateful_model" --hypothesis-profile=ci --hypothesis-seed=424242
+python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424242
+
+# Coverage gates (branch + statement policies)
+npm run test:coverage:gates
+
+# Mutation tests
+npm run test:mutations
+
 # Manual performance regression checks (PG17, not CI-gated)
 npm run test:perf
 npm run test:perf -- --update-baseline
@@ -124,7 +134,14 @@ GitHub Actions (`.github/workflows/test.yml`) runs on push/PR to main:
 2. `npm run test:package-contract` — validates SQL export contract for npm package outputs
 3. `./lint.sh` — plpgsql_check semantic linting (requires PostgreSQL + plpgsql_check extension)
 4. `./lint-tests.sh` — static SQL coding standards (bash-based, no database required)
-5. `pytest tests/property/` — Hypothesis-based property and differential tests
+5. `pytest tests/property/ -k "not stateful_model" --hypothesis-profile=ci` — non-stateful property tests
+6. `pytest tests/property/test_stateful_model.py --hypothesis-profile=stateful_ci` — stateful model tests
+7. `npm run test:coverage:gates` — blocking coverage checks:
+   - Branch coverage: `100.0%` and `0` untested branches
+   - Standard statement coverage: `>= 80.00%` (blocking)
+   - Subday statement coverage: warn `< 80.00%`, fail `< 50.00%`
+
+Mutation testing runs separately in `.github/workflows/mutation-nightly.yml` (scheduled + manual dispatch, advisory to PR flow).
 
 All quality gates must pass. Uses PostgreSQL 17 and Node.js 20.
 

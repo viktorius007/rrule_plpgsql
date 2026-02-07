@@ -84,6 +84,16 @@ curl -sL https://raw.githubusercontent.com/sirrodgepodge/rrule_plpgsql/main/src/
 # Full SQL suite (standard + sub-day install paths)
 ./test.sh --both
 
+# Property tests (CI split)
+pytest tests/property/ -v -k "not stateful_model" --hypothesis-profile=ci --hypothesis-seed=424242
+pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424242
+
+# Coverage gates (branch + statement thresholds)
+npm run test:coverage:gates
+
+# Mutation suite
+npm run test:mutations
+
 # SQL export contract tests (npm package output)
 npm run test:package-contract
 
