@@ -314,13 +314,13 @@ SELECT COUNT(*) FROM rrule."all"(
 -- Expected: 5
 ```
 
-If these return 0 results, sub-day frequencies are not enabled. Use `install_with_subday.sql`.
+If sub-day frequencies are not enabled, these calls raise an exception indicating that HOURLY/MINUTELY/SECONDLY are disabled in standard installation. Use `install_with_subday.sql`.
 
 ---
 
 ## Troubleshooting
 
-### Sub-Day Frequencies Return 0 Results
+### Sub-Day Frequencies Raise "Not Supported in Standard Installation"
 
 **Problem**: Installed with `install.sql` instead of `install_with_subday.sql`
 
@@ -389,7 +389,7 @@ psql -d your_database -c "DROP SCHEMA IF EXISTS rrule CASCADE;"
 psql -d your_database -f src/install.sql
 ```
 
-**Note**: Existing RRULEs with sub-day frequencies will return 0 results and show a NOTICE message.
+**Note**: Existing RRULEs with sub-day frequencies will raise an exception until sub-day support is re-enabled.
 
 ---
 

@@ -39,8 +39,8 @@ This package exports raw SQL strings for PostgreSQL. While this approach is tran
    ```
 
 2. **Small, Auditable Codebase**
-   - `index.js`: 40 lines (just file reading)
-   - Total SQL: ~2,600 lines (pure PL/pgSQL, no obfuscation)
+   - `index.js`: ~128 lines (SQL loading/export helpers)
+   - Total SQL sources: ~5,000+ lines (`src/rrule.sql`, `src/rrule_subday.sql`, install wrappers)
    - Easy to review in 30 minutes
 
 3. **Git Commit Signing** (recommended for maintainers)

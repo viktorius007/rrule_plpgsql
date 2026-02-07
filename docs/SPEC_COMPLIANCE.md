@@ -38,7 +38,7 @@ Complete feature support matrix and compliance details for rrule_plpgsql.
 
 **Legend:**
 - ✅ = Fully supported and enabled
-- ⚠️ = Fully implemented but **disabled by default** (see footnote 5)
+- ⚠️ = Fully implemented but **disabled by default** (see footnote 3)
 - ❌ = Not supported (see footnotes below)
 - 🚫 = **Raises exception** with descriptive error message
 
@@ -260,6 +260,20 @@ FREQ=DAILY;BYHOUR=9,10,11,12,13,14,15,16,17;BYSETPOS=1,-1
 - ✅ **Auto-compliance** - Automatically adds RSCALE=GREGORIAN when SKIP is used (RFC 7529 requirement)
 - ⚠️ **Non-Gregorian calendars** - Not yet supported (HEBREW, ISLAMIC, CHINESE, etc.)
   - Leap month syntax (e.g., "5L") is also not supported as it only applies to non-Gregorian calendars
+
+---
+
+## Operational Safety Limits
+
+These are implementation safeguards (not RFC requirements):
+
+- `rrule."all"` and `rrule."between"` cap output at 1,000 occurrences.
+- `rrule."all"` and `rrule."between"` cap search horizon at 10 years from `dtstart`.
+- `rrule."after"` uses a 50-year lookahead window from `GREATEST(dtstart, after_date)` and adaptive search budget (`1000..10000`) for far-future lookups.
+- `rrule."overlaps"` defaults null bounds to `dtstart ± 10 years` and uses adaptive search budget (`1000..10000`).
+- `rrule."count"` delegates to `rrule."all"` and inherits its caps.
+
+These bounds prevent unbounded scans on infinite or sparse recurrence rules.
 
 ---
 

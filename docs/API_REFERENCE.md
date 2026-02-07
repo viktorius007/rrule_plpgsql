@@ -87,6 +87,10 @@ Returns occurrences between two dates (streaming via SETOF).
 
 **Returns:** `SETOF TIMESTAMP` - Occurrences in range
 
+**Limits:**
+- Up to 1,000 occurrences
+- Search range is clamped to `dtstart + INTERVAL '10 years'`
+
 **Example:**
 ```sql
 SELECT * FROM rrule."between"(
@@ -112,6 +116,10 @@ Returns the first occurrence after a specific date.
 - `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
 **Returns:** `TIMESTAMP` - Next occurrence, or `NULL` if none
+
+**Search behavior:**
+- Uses a lookahead window of `GREATEST(dtstart, after_date) + INTERVAL '50 years'`
+- Uses adaptive internal search budget (`1000..10000`) for far-future lookups
 
 **Example:**
 ```sql
@@ -139,6 +147,10 @@ Returns the last occurrence before a specific date.
 
 **Returns:** `TIMESTAMP` - Previous occurrence, or `NULL` if none
 
+**Search behavior:**
+- Scans occurrences up to `before_date` (or inclusive boundary when `inc=true`)
+- For unbounded rules (no `COUNT` and no `UNTIL`), emits a warning when large scans are required
+
 **Example:**
 ```sql
 SELECT rrule."before"(
@@ -162,6 +174,8 @@ Returns the total number of occurrences.
 - `dtstart`: `TIMESTAMP` - Start date/time
 
 **Returns:** `INTEGER` - Total occurrence count
+
+**Limit behavior:** `count()` delegates to `rrule."all"()` and inherits its 1,000-occurrence / 10-year cap.
 
 **Example:**
 ```sql
@@ -214,6 +228,10 @@ Returns all occurrences matching the RRULE with proper DST handling.
 
 **Returns:** `SETOF TIMESTAMPTZ` - Streamed occurrences with timezone
 
+**Limits:**
+- Up to 1,000 occurrences
+- Up to 10 years from `dtstart` (in target wall-clock timezone)
+
 **Examples:**
 ```sql
 -- Explicit timezone parameter (highest priority)
@@ -252,6 +270,10 @@ Returns occurrences between two dates with DST handling.
 - `timezone`: `TEXT` (optional) - Timezone name
 - `inc`: `BOOLEAN` - Include boundaries when true (default: false)
 
+**Limits:**
+- Up to 1,000 occurrences
+- Search range is clamped to `dtstart + INTERVAL '10 years'` (in target wall-clock timezone)
+
 **Example:**
 ```sql
 SELECT * FROM rrule."between"(
@@ -280,6 +302,10 @@ Returns N occurrences after a specific date with DST handling.
 - `timezone`: `TEXT` (optional) - Timezone name
 - `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
+**Search behavior:**
+- Uses a lookahead window of `GREATEST(dtstart, after_date) + INTERVAL '50 years'` (in target wall-clock timezone)
+- Uses adaptive internal search budget (`1000..10000`) for far-future lookups
+
 **Example:**
 ```sql
 SELECT * FROM rrule."after"(
@@ -306,6 +332,10 @@ Returns N occurrences before a specific date with DST handling.
 - `timezone`: `TEXT` (optional) - Timezone name
 - `inc`: `BOOLEAN` - Include boundary when true (default: false)
 
+**Search behavior:**
+- Scans occurrences up to `before_date` (or inclusive boundary when `inc=true`) and returns the last `count`
+- For unbounded rules (no `COUNT` and no `UNTIL`), emits a warning when large scans are required
+
 **Example:**
 ```sql
 SELECT * FROM rrule."before"(
@@ -320,19 +350,59 @@ SELECT * FROM rrule."before"(
 
 ---
 
+### `rrule."count"(rrule, dtstart, timezone DEFAULT NULL) -> INTEGER`
+
+Returns the total number of occurrences using the TIMESTAMPTZ API.
+
+**Parameters:**
+- `rrule`: `TEXT` - RRULE string
+- `dtstart`: `TIMESTAMPTZ` - Start date/time
+- `timezone`: `TEXT` (optional) - Timezone name
+
+**Returns:** `INTEGER` - Total occurrence count
+
+**Limit behavior:** Delegates to TIMESTAMPTZ `rrule."all"()` and inherits its 1,000-occurrence / 10-year cap.
+
+---
+
+### `rrule.next(rrule, dtstart, timezone DEFAULT NULL, reference_time DEFAULT NULL) -> TIMESTAMPTZ`
+
+Returns the next occurrence from `reference_time` (or `NOW()` when NULL), preserving wall-clock semantics.
+
+**Parameters:**
+- `rrule`: `TEXT` - RRULE string
+- `dtstart`: `TIMESTAMPTZ` - Start date/time
+- `timezone`: `TEXT` (optional) - Timezone override
+- `reference_time`: `TIMESTAMPTZ` (optional) - Reference timestamp
+
+---
+
+### `rrule.most_recent(rrule, dtstart, timezone DEFAULT NULL, reference_time DEFAULT NULL) -> TIMESTAMPTZ`
+
+Returns the most recent occurrence before `reference_time` (or `NOW()` when NULL), preserving wall-clock semantics.
+
+**Parameters:**
+- `rrule`: `TEXT` - RRULE string
+- `dtstart`: `TIMESTAMPTZ` - Start date/time
+- `timezone`: `TEXT` (optional) - Timezone override
+- `reference_time`: `TIMESTAMPTZ` (optional) - Reference timestamp
+
+---
+
 ## Convenience Methods
 
-### `rrule."next"(rrule, dtstart) -> TIMESTAMP`
+### `rrule."next"(rrule, dtstart, reference_time DEFAULT NULL) -> TIMESTAMP`
 
-Get the next occurrence from NOW (current timestamp).
+Get the next occurrence from NOW (current timestamp) or a provided reference timestamp.
 
 **Common use case:** "When does this event occur next?"
 
 **Parameters:**
 - `rrule`: `VARCHAR` - RRULE string
 - `dtstart`: `TIMESTAMP` - Start date/time
+- `reference_time`: `TIMESTAMP` (optional) - Reference time. Defaults to `NOW()::TIMESTAMP` when NULL.
 
-**Returns:** `TIMESTAMP` - Next occurrence from NOW
+**Returns:** `TIMESTAMP` - Next occurrence from `reference_time` (or NOW when NULL)
 
 **Example:**
 ```sql
@@ -342,21 +412,22 @@ SELECT rrule."next"(
 ) AS next_monday;
 ```
 
-**Note:** Equivalent to `rrule."after"(rrule, dtstart, NOW()::TIMESTAMP, inc DEFAULT false)`
+**Note:** Equivalent to `rrule."after"(rrule, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP), inc DEFAULT false)`
 
 ---
 
-### `rrule."most_recent"(rrule, dtstart) -> TIMESTAMP`
+### `rrule."most_recent"(rrule, dtstart, reference_time DEFAULT NULL) -> TIMESTAMP`
 
-Get the most recent occurrence before NOW.
+Get the most recent occurrence before NOW or a provided reference timestamp.
 
 **Common use case:** "When did this event last occur?"
 
 **Parameters:**
 - `rrule`: `VARCHAR` - RRULE string
 - `dtstart`: `TIMESTAMP` - Start date/time
+- `reference_time`: `TIMESTAMP` (optional) - Reference time. Defaults to `NOW()::TIMESTAMP` when NULL.
 
-**Returns:** `TIMESTAMP` - Most recent occurrence before NOW
+**Returns:** `TIMESTAMP` - Most recent occurrence before `reference_time` (or NOW when NULL)
 
 **Example:**
 ```sql
@@ -366,7 +437,7 @@ SELECT rrule."most_recent"(
 ) AS last_occurrence;
 ```
 
-**Note:** Equivalent to `rrule."before"(rrule, dtstart, NOW()::TIMESTAMP, inc DEFAULT false)`
+**Note:** Equivalent to `rrule."before"(rrule, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP), inc DEFAULT false)`
 
 ---
 
@@ -376,19 +447,19 @@ The SETOF functions are memory-efficient (streaming), but sometimes you need mat
 
 ### Converting SETOF to Arrays
 
-**Pattern:** Wrap SETOF functions with `array_agg()` and alias with `AS occurrence`
+**Pattern:** Wrap SETOF functions with `array_agg(... ORDER BY ...)` and alias with `AS occurrence` for deterministic output ordering.
 
 **Examples:**
 ```sql
 -- Get array of all occurrences
-SELECT array_agg(occurrence) FROM rrule."all"(
+SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS occurrence;
 -- Returns: {"2025-01-01 10:00:00", "2025-01-02 10:00:00", ...}
 
 -- Get array of occurrences in range
-SELECT array_agg(occurrence) FROM rrule."between"(
+SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(
     'FREQ=DAILY;INTERVAL=1',
     '2025-01-01 10:00:00'::TIMESTAMP,
     '2025-01-01'::TIMESTAMP,
@@ -396,7 +467,7 @@ SELECT array_agg(occurrence) FROM rrule."between"(
 ) AS occurrence;
 
 -- Use with unnest for iteration
-SELECT unnest(array_agg(occurrence)) AS occurrence FROM rrule."all"(
+SELECT unnest(array_agg(occurrence ORDER BY occurrence)) AS occurrence FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01 10:00:00'::TIMESTAMP
 ) AS occurrence;
@@ -431,6 +502,12 @@ Check if a recurring event has ANY occurrences overlapping a date range. Optimiz
 
 **Returns:** `BOOLEAN` - True if any overlap found
 
+**Behavior notes:**
+- Stops at first matching occurrence (`LIMIT 1`).
+- If `mindate` or `maxdate` are NULL, defaults to `dtstart ± INTERVAL '10 years'`.
+- Uses adaptive internal search budget (`1000..10000`) for far-future windows.
+- If `rrule` is NULL, performs single-event overlap check using `dtstart`/`dtend`.
+
 **Example:**
 ```sql
 -- Does this meeting conflict with vacation dates?
@@ -463,91 +540,38 @@ Our API aligns with de facto standards from popular RRULE libraries:
 | Function | rrule.js | python-dateutil | Our Implementation |
 |----------|----------|-----------------|-------------------|
 | Get all occurrences | `.all()` | `list(rule)` | `rrule."all"(rrule, dtstart)` returns SETOF |
-| Get all as array | `.all()` | `list(rule)` | `array_agg(occurrence) FROM rrule."all"(...) AS occurrence` |
+| Get all as array | `.all()` | `list(rule)` | `array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(...) AS occurrence` |
 | Get in range | `.between(s,e)` | `.between(s,e)` | `rrule."between"(rrule, dtstart, start, end, inc DEFAULT false)` returns SETOF |
-| Get range as array | `.between(s,e)` | `.between(s,e)` | `array_agg(occurrence) FROM rrule."between"(...) AS occurrence` |
+| Get range as array | `.between(s,e)` | `.between(s,e)` | `array_agg(occurrence ORDER BY occurrence) FROM rrule."between"(...) AS occurrence` |
 | After specific date | `.after(date)` | `.after(date)` | `rrule."after"(rrule, dtstart, date, inc DEFAULT false)` |
 | Before specific date | `.before(date)` | `.before(date)` | `rrule."before"(rrule, dtstart, date, inc DEFAULT false)` |
-| **Next from now** | `.after(new Date())` | `.after(now())` | `rrule."next"(rrule, dtstart)` ⭐ |
-| **Most recent** | `.before(new Date())` | `.before(now())` | `rrule."most_recent"(rrule, dtstart)` ⭐ |
+| **Next from now** | `.after(new Date())` | `.after(now())` | `rrule."next"(rrule, dtstart, reference_time DEFAULT NULL)` ⭐ |
+| **Most recent** | `.before(new Date())` | `.before(now())` | `rrule."most_recent"(rrule, dtstart, reference_time DEFAULT NULL)` ⭐ |
 | Count | - | - | `rrule."count"(rrule, dtstart)` |
 
 ⭐ = Convenience functions that simplify common use cases (not in standard libraries)
 
 ---
 
-## NULL Handling
+## Required Parameter Validation
 
-All rrule_plpgsql functions use PostgreSQL's `STRICT` mode, which provides consistent NULL handling:
-
-**Behavior:**
-- **NULL inputs return NULL** (not an error)
-- Functions will not execute if any required parameter is NULL
-- This follows PostgreSQL conventions for immutable functions
+Public API functions explicitly validate required parameters and raise exceptions for NULL inputs.
 
 **Examples:**
-
 ```sql
--- NULL rrule parameter returns NULL
+-- Raises: Invalid RRULE: FREQ parameter is required.
 SELECT rrule."all"(NULL, '2025-01-01 10:00:00'::TIMESTAMP);
--- Result: NULL (no rows returned)
 
--- NULL dtstart parameter returns NULL
+-- Raises: dtstart is required and cannot be NULL
 SELECT rrule."all"('FREQ=DAILY;COUNT=5', NULL);
--- Result: NULL (no rows returned)
 
--- Both NULL parameters return NULL
-SELECT rrule."all"(NULL, NULL);
--- Result: NULL (no rows returned)
-
--- Valid parameters return results as expected
-SELECT rrule."all"('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
--- Result: SETOF TIMESTAMP with 5 dates
+-- Raises: after_date is required and cannot be NULL
+SELECT rrule."after"('FREQ=DAILY', '2025-01-01 10:00:00'::TIMESTAMP, NULL);
 ```
 
-**Why STRICT mode?**
-- ✅ Performance: Avoids function execution for NULL inputs
-- ✅ Consistency: Standard PostgreSQL behavior
-- ✅ Immutability: Allows aggressive query optimization and caching
-- ✅ No side effects: NULL input → NULL output (deterministic)
-
-**Handling NULLs in your application:**
-
-```sql
--- Check for NULL before calling (recommended)
-SELECT
-  CASE
-    WHEN user_rrule IS NOT NULL AND dtstart IS NOT NULL
-    THEN rrule."all"(user_rrule, dtstart)
-    ELSE NULL
-  END AS occurrences
-FROM events;
-
--- Use COALESCE to provide defaults
-SELECT rrule."all"(
-  COALESCE(user_rrule, 'FREQ=DAILY;COUNT=1'),  -- Default RRULE if NULL
-  COALESCE(dtstart, CURRENT_TIMESTAMP)          -- Default to now if NULL
-);
-
--- Filter out NULL results in aggregations
-SELECT array_agg(occurrence) FILTER (WHERE occurrence IS NOT NULL)
-FROM events
-CROSS JOIN LATERAL rrule."all"(rrule_string, start_date) AS occurrence;
-```
-
-**Exception handling:**
-
-STRICT mode applies to NULL inputs. Invalid RRULE strings will still raise exceptions with descriptive error messages:
-
-```sql
--- NULL input: Returns NULL (no error)
-SELECT rrule."all"(NULL, '2025-01-01'::TIMESTAMP);
-
--- Invalid RRULE: Raises exception with helpful message
-SELECT rrule."all"('FREQ=INVALID', '2025-01-01'::TIMESTAMP);
--- ERROR: Invalid RRULE: FREQ parameter is required.
--- Specify one of: SECONDLY, MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY, or YEARLY
-```
+**Optional NULLs:**
+- `timezone` is optional in TIMESTAMPTZ APIs (falls back to `TZID` in RRULE, then `UTC`).
+- `rrule` may be NULL only for `rrule."overlaps"` single-event checks.
 
 ---
 

@@ -125,7 +125,7 @@ All validation errors provide:
 ### Missing FREQ (required)
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule."all"('COUNT=10;BYMONTHDAY=15', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT * FROM rrule."all"('COUNT=10;BYMONTHDAY=15', '2025-01-01'::TIMESTAMP);
 ```
 
 **Error:**
@@ -140,7 +140,7 @@ ERROR: Invalid RRULE: FREQ parameter is required.
 ### COUNT and UNTIL together (mutually exclusive)
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule."all"('FREQ=DAILY;COUNT=10;UNTIL=20251231T235959Z', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT * FROM rrule."all"('FREQ=DAILY;COUNT=10;UNTIL=20251231T235959Z', '2025-01-01'::TIMESTAMP);
 ```
 
 **Error:**
@@ -156,7 +156,7 @@ ERROR: Invalid RRULE: COUNT and UNTIL are mutually exclusive.
 ### BYWEEKNO with wrong frequency
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule."all"('FREQ=MONTHLY;BYWEEKNO=10;COUNT=3', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT * FROM rrule."all"('FREQ=MONTHLY;BYWEEKNO=10;COUNT=3', '2025-01-01'::TIMESTAMP);
 ```
 
 **Error:**
@@ -172,7 +172,7 @@ ERROR: Invalid RRULE: BYWEEKNO can only be used with FREQ=YEARLY.
 ### Parameter out of range
 
 ```sql
-SELECT array_agg(occurrence) FROM rrule."all"('FREQ=DAILY;BYHOUR=24;COUNT=1', '2025-01-01'::TIMESTAMP) AS occurrence;
+SELECT * FROM rrule."all"('FREQ=DAILY;BYHOUR=24;COUNT=1', '2025-01-01'::TIMESTAMP);
 ```
 
 **Error:**
@@ -186,9 +186,9 @@ ERROR: Invalid RRULE: BYHOUR=24 is out of valid range.
 
 ## Validation Test Coverage
 
-The validation implementation includes a comprehensive test suite with 60+ test cases covering:
+Validation behavior is covered by `tests/test_validation.sql` and additional cross-suite checks (`tests/test_coverage_gaps.sql`, matrix/branch suites, and timezone suites).
 
-### Group 1: Critical MUST/MUST NOT Constraints (24 tests)
+### Group 1: Critical MUST/MUST NOT Constraints
 - FREQ required validation
 - COUNT+UNTIL mutual exclusion
 - UNTIL UTC DATE-TIME format (Z required, date-only rejected)
@@ -200,17 +200,17 @@ The validation implementation includes a comprehensive test suite with 60+ test 
 - BYDAY ordinals not with YEARLY+BYWEEKNO
 - BYSETPOS requires other BYxxx parameters
 
-### Group 2: Parameter Range Validations (16 tests)
+### Group 2: Parameter Range Validations
 - BYSECOND, BYMINUTE, BYHOUR valid ranges
 - BYMONTH valid range (1-12)
 - All parameter ranges thoroughly tested
 
-### Group 3: Zero Values and Extended Ranges (16 tests)
+### Group 3: Zero Values and Extended Ranges
 - BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYSETPOS zero rejection
 - Negative index support and validation
 - Extended range validation (±366, ±53, etc.), including BYDAY ordinal bounds
 
-### Group 4: Complex Validation Scenarios (5 tests)
+### Group 4: Complex Validation Scenarios
 - Multiple constraint violations
 - Complex valid RRULEs
 - Edge cases (BYMONTHDAY=31, BYYEARDAY=366)
@@ -220,11 +220,13 @@ The validation implementation includes a comprehensive test suite with 60+ test 
 ## Running Validation Tests
 
 ```bash
-# Run validation test suite
-psql -d test_database -f tests/test_validation.sql
-```
+# Full CI-equivalent test run
+./test.sh --both
 
-**Expected output:** All 61 tests pass with 100% success rate.
+# Run validation suite only (requires installed schema)
+PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
+  psql -d rrule_test -f tests/test_validation.sql
+```
 
 ---
 
