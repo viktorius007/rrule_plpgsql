@@ -75,6 +75,13 @@ CREATE OR REPLACE FUNCTION hourly_set(
   after_ts TIMESTAMP WITH TIME ZONE,
   rule rrule.rrule_parts
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
+DECLARE
+  period_start TIMESTAMP WITH TIME ZONE;
+  occurrence TIMESTAMP WITH TIME ZONE;
+  minute_val INT;
+  second_val INT;
+  minute_idx INT;
+  second_idx INT;
 BEGIN
   -- Apply day-level filters first
   IF rule.bymonth IS NOT NULL AND NOT date_part('month', after_ts) = ANY (rule.bymonth) THEN
@@ -98,16 +105,32 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Apply minute/second filters if specified
-  IF rule.byminute IS NOT NULL AND NOT date_part('minute', after_ts) = ANY (rule.byminute) THEN
-    RETURN;
-  END IF;
+  -- FREQ=HOURLY: BYMINUTE/BYSECOND expand within the hour.
+  period_start := date_trunc('hour', after_ts);
 
-  IF rule.bysecond IS NOT NULL AND NOT date_part('second', after_ts)::INT = ANY (rule.bysecond) THEN
-    RETURN;
-  END IF;
+  minute_idx := 1;
+  LOOP
+    EXIT WHEN rule.byminute IS NULL AND minute_idx > 1;
+    EXIT WHEN rule.byminute IS NOT NULL AND rule.byminute[minute_idx] IS NULL;
 
-  RETURN NEXT after_ts;
+    minute_val := COALESCE(rule.byminute[minute_idx], date_part('minute', after_ts)::INT);
+
+    second_idx := 1;
+    LOOP
+      EXIT WHEN rule.bysecond IS NULL AND second_idx > 1;
+      EXIT WHEN rule.bysecond IS NOT NULL AND rule.bysecond[second_idx] IS NULL;
+
+      second_val := COALESCE(rule.bysecond[second_idx], date_part('second', after_ts)::INT);
+      occurrence := period_start + make_interval(mins => minute_val, secs => second_val);
+      RETURN NEXT occurrence;
+
+      second_idx := second_idx + 1;
+      EXIT WHEN rule.bysecond IS NULL;
+    END LOOP;
+
+    minute_idx := minute_idx + 1;
+    EXIT WHEN rule.byminute IS NULL;
+  END LOOP;
 END;
 $$ LANGUAGE plpgsql STABLE STRICT;
 
@@ -123,6 +146,11 @@ CREATE OR REPLACE FUNCTION minutely_set(
   after_ts TIMESTAMP WITH TIME ZONE,
   rule rrule.rrule_parts
 ) RETURNS SETOF TIMESTAMP WITH TIME ZONE AS $$
+DECLARE
+  period_start TIMESTAMP WITH TIME ZONE;
+  occurrence TIMESTAMP WITH TIME ZONE;
+  second_val INT;
+  second_idx INT;
 BEGIN
   -- Apply all filters
   IF rule.bymonth IS NOT NULL AND NOT date_part('month', after_ts) = ANY (rule.bymonth) THEN
@@ -149,11 +177,20 @@ BEGIN
     RETURN;
   END IF;
 
-  IF rule.bysecond IS NOT NULL AND NOT date_part('second', after_ts)::INT = ANY (rule.bysecond) THEN
-    RETURN;
-  END IF;
+  -- FREQ=MINUTELY: BYSECOND expands within the minute.
+  period_start := date_trunc('minute', after_ts);
+  second_idx := 1;
+  LOOP
+    EXIT WHEN rule.bysecond IS NULL AND second_idx > 1;
+    EXIT WHEN rule.bysecond IS NOT NULL AND rule.bysecond[second_idx] IS NULL;
 
-  RETURN NEXT after_ts;
+    second_val := COALESCE(rule.bysecond[second_idx], date_part('second', after_ts)::INT);
+    occurrence := period_start + make_interval(secs => second_val);
+    RETURN NEXT occurrence;
+
+    second_idx := second_idx + 1;
+    EXIT WHEN rule.bysecond IS NULL;
+  END LOOP;
 END;
 $$ LANGUAGE plpgsql STABLE STRICT;
 

@@ -2711,21 +2711,26 @@ BEGIN
 
     max_count := 1000;
 
-    -- Extract TZID from rrule string
-    tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
+    -- Extract TZID from rrule string (case-insensitive key, preserve value case)
+    tzid := substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
 
     -- Validate TZID if provided (using centralized validation helper)
     PERFORM rrule.validate_timezone(tzid);
 
-    -- CRITICAL: For TZID support, we generate occurrences in naive TIMESTAMP space
-    -- treating it as UTC, then the naive timestamps are interpreted as wall-clock times
-    -- in the target timezone. This ensures "10 AM" stays "10 AM" across DST transitions.
-    --
-    -- Example: FREQ=DAILY with TZID=America/New_York
-    --   - Generate: 2025-03-08 10:00, 2025-03-09 10:00, 2025-03-10 10:00 (naive)
-    --   - Interpret as: 10 AM EST, 10 AM EDT, 10 AM EDT (wall-clock times)
-    --   - NOT: 10 AM EST (15:00 UTC), 11 AM EDT (15:00 UTC) ← wrong!
+    -- If TZID is present, delegate to the TIMESTAMPTZ API to preserve wall-clock semantics
+    -- while honoring absolute UTC UNTIL boundaries correctly.
+    IF tzid IS NOT NULL THEN
+        RETURN QUERY
+            SELECT (d AT TIME ZONE tzid)::TIMESTAMP
+            FROM rrule."all"(
+                rrule_string::TEXT,
+                dtstart AT TIME ZONE tzid,
+                tzid
+            ) d;
+        RETURN;
+    END IF;
 
+    -- Legacy path for RRULEs without TZID: treat naive TIMESTAMP values as UTC.
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     maxdate_utc := dtstart_utc + INTERVAL '10 years';
 
@@ -2784,13 +2789,29 @@ BEGIN
 
     max_count := 1000;
 
-    -- Extract TZID from rrule string
-    tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
+    -- Extract TZID from rrule string (case-insensitive key, preserve value case)
+    tzid := substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
 
     -- Validate TZID if provided (using centralized validation helper)
     PERFORM rrule.validate_timezone(tzid);
 
-    -- Generate in naive TIMESTAMP space (see all() function for explanation)
+    -- If TZID is present, delegate to TIMESTAMPTZ API so UTC UNTIL and boundaries are
+    -- evaluated in absolute time for the target timezone.
+    IF tzid IS NOT NULL THEN
+        RETURN QUERY
+            SELECT (d AT TIME ZONE tzid)::TIMESTAMP
+            FROM rrule."between"(
+                rrule_string::TEXT,
+                dtstart AT TIME ZONE tzid,
+                start_date AT TIME ZONE tzid,
+                end_date AT TIME ZONE tzid,
+                tzid,
+                inc
+            ) d;
+        RETURN;
+    END IF;
+
+    -- No TZID: generate in naive TIMESTAMP space treated as UTC.
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     start_utc := start_date AT TIME ZONE 'UTC';
     end_utc := end_date AT TIME ZONE 'UTC';
@@ -2834,6 +2855,8 @@ DECLARE
     dtstart_utc TIMESTAMPTZ;
     after_utc TIMESTAMPTZ;
     maxdate_utc TIMESTAMPTZ;
+    gap_days INT;
+    search_budget INT := 1000;
     tzid TEXT;
 BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
@@ -2849,26 +2872,43 @@ BEGIN
         RAISE EXCEPTION 'after_date is required and cannot be NULL';
     END IF;
 
-    -- Extract TZID from rrule string
-    tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
+    -- Extract TZID from rrule string (case-insensitive key, preserve value case)
+    tzid := substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
 
     -- Validate TZID if provided (using centralized validation helper)
     PERFORM rrule.validate_timezone(tzid);
+
+    -- If TZID is present, delegate to TIMESTAMPTZ API for correct absolute-time UNTIL behavior.
+    IF tzid IS NOT NULL THEN
+        SELECT (d AT TIME ZONE tzid)::TIMESTAMP INTO next_occurrence
+        FROM rrule."after"(
+            rrule_string::TEXT,
+            dtstart AT TIME ZONE tzid,
+            after_date AT TIME ZONE tzid,
+            1,
+            tzid,
+            inc
+        ) d
+        LIMIT 1;
+        RETURN next_occurrence;
+    END IF;
 
     -- Optimized: call range function directly with after_date as mindate
     -- This skips generating all occurrences before after_date (O(1) vs O(N))
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     after_utc := after_date AT TIME ZONE 'UTC';
-    maxdate_utc := GREATEST(dtstart_utc, after_utc) + INTERVAL '10 years';
+    maxdate_utc := GREATEST(dtstart_utc, after_utc) + INTERVAL '50 years';
+    gap_days := GREATEST(0, GREATEST(dtstart_utc, after_utc)::DATE - dtstart_utc::DATE);
+    search_budget := LEAST(10000, GREATEST(1000, CEIL(gap_days / 62.0)::INT + 64));
 
-    -- max_count=1000: sparse rules may need many periods before finding occurrence after after_date
+    -- Adaptive max_count widens period budget for far-future reference dates
     SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP INTO next_occurrence
     FROM rrule.rrule_event_instances_range(
         dtstart_utc,
         rrule_string,
         after_utc,
         maxdate_utc,
-        1000
+        search_budget
     ) d
     WHERE CASE
         WHEN inc THEN (d AT TIME ZONE 'UTC')::TIMESTAMP >= after_date
@@ -2916,11 +2956,26 @@ BEGIN
         RAISE EXCEPTION 'before_date is required and cannot be NULL';
     END IF;
 
-    -- Extract TZID from rrule string
-    tzid := substring(rrule_string from 'TZID=([^;]+)(;|$)');
+    -- Extract TZID from rrule string (case-insensitive key, preserve value case)
+    tzid := substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
 
     -- Validate TZID if provided (using centralized validation helper)
     PERFORM rrule.validate_timezone(tzid);
+
+    -- If TZID is present, delegate to TIMESTAMPTZ API for correct absolute-time UNTIL behavior.
+    IF tzid IS NOT NULL THEN
+        SELECT (d AT TIME ZONE tzid)::TIMESTAMP INTO previous_occurrence
+        FROM rrule."before"(
+            rrule_string::TEXT,
+            dtstart AT TIME ZONE tzid,
+            before_date AT TIME ZONE tzid,
+            1,
+            tzid,
+            inc
+        ) d
+        LIMIT 1;
+        RETURN previous_occurrence;
+    END IF;
 
     -- Check if the rule has a natural bound (COUNT or UNTIL)
     has_bound := (rrule_string ~* '(^|;)COUNT=' OR rrule_string ~* '(^|;)UNTIL=');
@@ -3392,7 +3447,7 @@ BEGIN
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3464,7 +3519,7 @@ BEGIN
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3526,6 +3581,8 @@ DECLARE
     wall_clock_start TIMESTAMP;
     wall_clock_after TIMESTAMP;
     wall_clock_end TIMESTAMP;
+    gap_days INT;
+    search_budget INT := 1000;
     naive_occurrence TIMESTAMP;
     occurrence_count INT := 0;
 BEGIN
@@ -3545,7 +3602,7 @@ BEGIN
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3565,7 +3622,9 @@ BEGIN
     -- Convert to wall-clock time
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_after := after_date AT TIME ZONE tz_name;
-    wall_clock_end := GREATEST(wall_clock_start, wall_clock_after) + INTERVAL '10 years';
+    wall_clock_end := GREATEST(wall_clock_start, wall_clock_after) + INTERVAL '50 years';
+    gap_days := GREATEST(0, GREATEST(wall_clock_start, wall_clock_after)::DATE - wall_clock_start::DATE);
+    search_budget := LEAST(10000, GREATEST(1000, CEIL(gap_days / 62.0)::INT + 64));
 
     -- Generate occurrences
     FOR naive_occurrence IN
@@ -3574,7 +3633,7 @@ BEGIN
             rrule_string,
             wall_clock_after,
             wall_clock_end,
-            1000
+            search_budget
         )
     LOOP
         IF inc THEN
@@ -3610,7 +3669,6 @@ DECLARE
     tz_name TEXT;
     wall_clock_start TIMESTAMP;
     wall_clock_before TIMESTAMP;
-    results TIMESTAMP[];
     scan_count BIGINT := 0;
     has_bound BOOLEAN;
 BEGIN
@@ -3630,7 +3688,7 @@ BEGIN
     -- Determine timezone
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3655,14 +3713,14 @@ BEGIN
     wall_clock_before := before_date AT TIME ZONE tz_name;
 
     -- Generate all occurrences up to before_date, then select the last N using ORDER BY DESC LIMIT.
-    -- This avoids O(N) array append/slice operations by letting PostgreSQL use an efficient top-N sort.
+    -- This avoids materializing large arrays in PL/pgSQL memory.
     -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period.
     -- before() must scan all occurrences to find the last N, so we pass a large output_limit.
     -- Use 1000000 to limit iteration budget while being large enough for scanning within the maxdate window.
 
-    -- Collect filtered occurrences into array for counting + selection
-    SELECT array_agg(d ORDER BY d), COUNT(*)
-    INTO results, scan_count
+    -- Count filtered occurrences for warning behavior parity with all()/between()
+    SELECT COUNT(*)
+    INTO scan_count
     FROM rrule.rrule_event_instances_range_tz(
         wall_clock_start,
         rrule_string,
@@ -3681,16 +3739,26 @@ BEGIN
         RAISE WARNING 'rrule: before() scanned % occurrences to find the last match. The recurrence rule has no COUNT or UNTIL and produced many results. Consider adding bounds to the rule.', scan_count;
     END IF;
 
-    -- Return the last N occurrences using ORDER BY DESC LIMIT for efficiency
+    -- Return the last N occurrences using top-N sort, then re-order ascending for API consistency.
     RETURN QUERY
-        SELECT (sub.occ AT TIME ZONE tz_name)
+        SELECT (sub.d AT TIME ZONE tz_name)
         FROM (
-            SELECT unnest AS occ
-            FROM unnest(results)
-            ORDER BY unnest DESC
+            SELECT d
+            FROM rrule.rrule_event_instances_range_tz(
+                wall_clock_start,
+                rrule_string,
+                wall_clock_start,
+                wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+                1000000
+            ) AS d
+            WHERE CASE
+                WHEN inc THEN d <= wall_clock_before
+                ELSE d < wall_clock_before
+            END
+            ORDER BY d DESC
             LIMIT count
         ) sub
-        ORDER BY sub.occ ASC;
+        ORDER BY sub.d ASC;
 END;
 $$ LANGUAGE plpgsql VOLATILE SET timezone = 'UTC';
 
@@ -3744,7 +3812,7 @@ BEGIN
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3783,7 +3851,7 @@ BEGIN
     -- Determine timezone (priority: explicit param > TZID in RRULE > UTC)
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3820,6 +3888,8 @@ DECLARE
     duration INTERVAL;
     adjusted_maxdate TIMESTAMPTZ;
     adjusted_mindate TIMESTAMPTZ;
+    gap_days INT;
+    search_budget INT := 1000;
 BEGIN
     -- Handle NULL dtstart
     IF dtstart IS NULL THEN
@@ -3829,7 +3899,7 @@ BEGIN
     -- Determine timezone (priority: explicit param > TZID in RRULE > session timezone)
     tz_name := COALESCE(
         timezone,
-        substring(rrule_string from 'TZID=([^;]+)(;|$)'),
+        substring(rrule_string from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)'),
         'UTC'
     );
 
@@ -3857,6 +3927,11 @@ BEGIN
     IF duration > INTERVAL '0' THEN
         adjusted_mindate := adjusted_mindate - duration;
     END IF;
+    gap_days := GREATEST(
+        0,
+        (adjusted_mindate AT TIME ZONE tz_name)::DATE - (base_date AT TIME ZONE tz_name)::DATE
+    );
+    search_budget := LEAST(10000, GREATEST(1000, CEIL(gap_days / 62.0)::INT + 64));
 
     -- Use generator directly with LIMIT 1 for streaming efficiency (avoids materializing between())
     PERFORM d
@@ -3865,7 +3940,7 @@ BEGIN
         rrule_string,
         (adjusted_mindate AT TIME ZONE tz_name)::TIMESTAMP,
         (adjusted_maxdate AT TIME ZONE tz_name)::TIMESTAMP,
-        1000
+        search_budget
     ) d
     LIMIT 1;
 
