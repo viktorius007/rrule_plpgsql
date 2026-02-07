@@ -52,6 +52,18 @@ is_comment() {
   [[ "$1" =~ ^[[:space:]]*(--|\[*]) ]]
 }
 
+# SQL test files covered by static lint checks (includes matrix/branch/security suites).
+shopt -s nullglob
+TEST_SQL_FILES=(
+  tests/test_*.sql
+  tests/matrix/*.sql
+  tests/branches/*.sql
+  tests/security/*.sql
+  tests/parity/*.sql
+  tests/mutation/*.sql
+  tests/fuzz/*.sql
+)
+
 # --- Check functions ---
 
 # Rule 8: No COMMIT in test files
@@ -66,14 +78,14 @@ check_no_commit() {
     [[ "$content" =~ ROLLBACK ]] && continue
     report_violation "$file" "$lineno" "COMMIT; found — use ROLLBACK instead"
     count=$((count + 1))
-  done < <(grep -niE 'COMMIT[[:space:]]*;' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -niE 'COMMIT[[:space:]]*;' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No COMMIT in test files (Rule 8)" "$count"
 }
 
 # Rule 8: Every test file must have BEGIN and ROLLBACK
 check_transaction_wrapper() {
   local count=0
-  for file in tests/test_*.sql; do
+  for file in "${TEST_SQL_FILES[@]}"; do
     if ! grep -q '^BEGIN;' "$file"; then
       report_violation "$file" "1" "Missing BEGIN; — test files must be wrapped in BEGIN; ... ROLLBACK;"
       count=$((count + 1))
@@ -99,7 +111,7 @@ check_no_now() {
     is_comment "$content" && continue
     report_violation "$file" "$lineno" "NOW() found — use fixed reference timestamps"
     count=$((count + 1))
-  done < <(grep -niE 'NOW[[:space:]]*\(\)' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -niE 'NOW[[:space:]]*\(\)' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No NOW() in test files (Rule 8)" "$count"
 }
 
@@ -114,7 +126,7 @@ check_no_always_true_assertions() {
     is_comment "$content" && continue
     report_violation "$file" "$lineno" "COUNT(*) >= 0 is always true — use exact assertions"
     count=$((count + 1))
-  done < <(grep -nE 'COUNT[[:space:]]*\([[:space:]]*\*[[:space:]]*\)[[:space:]]*>=[[:space:]]*0' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -nE 'COUNT[[:space:]]*\([[:space:]]*\*[[:space:]]*\)[[:space:]]*>=[[:space:]]*0' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No always-true assertions (Rule 8)" "$count"
 }
 
@@ -135,7 +147,7 @@ check_array_agg_order_by() {
       report_violation "$file" "$lineno" "array_agg() without ORDER BY"
       count=$((count + 1))
     fi
-  done < <(grep -nE 'array_agg[[:space:]]*\(' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -nE 'array_agg[[:space:]]*\(' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "array_agg must have ORDER BY (Rule 8)" "$count"
 }
 
@@ -152,7 +164,7 @@ check_no_permanent_tables() {
     [[ "$content" =~ [Tt][Ee][Mm][Pp]([Oo][Rr][Aa][Rr][Yy])?[[:space:]]+[Tt][Aa][Bb][Ll][Ee] ]] && continue
     report_violation "$file" "$lineno" "CREATE TABLE without TEMP/TEMPORARY — use CREATE TEMP TABLE"
     count=$((count + 1))
-  done < <(grep -niE 'CREATE[[:space:]]+TABLE' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -niE 'CREATE[[:space:]]+TABLE' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No permanent tables in test files (Rule 8)" "$count"
 }
 
@@ -175,7 +187,7 @@ check_schema_qualification() {
       report_violation "$file" "$lineno" "Unqualified API call — use rrule.\"func\"() prefix"
       count=$((count + 1))
     fi
-  done < <(grep -nE "$api_pattern" tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -nE "$api_pattern" "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "Schema-qualified API calls in test files (Rule 2)" "$count"
 }
 
@@ -274,7 +286,7 @@ check_when_others_without_message_check() {
       report_violation "$file" "$lineno" "WHEN OTHERS handler unconditionally returns PASS — check err_msg content"
       count=$((count + 1))
     fi
-  done < <(grep -niE 'WHEN[[:space:]]+OTHERS[[:space:]]+THEN' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -niE 'WHEN[[:space:]]+OTHERS[[:space:]]+THEN' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No unconditional PASS in WHEN OTHERS handlers (Rule 8)" "$count"
 }
 
@@ -289,7 +301,7 @@ check_min_is_not_null() {
     is_comment "$content" && continue
     report_violation "$file" "$lineno" "MIN(...) IS NOT NULL is a loose assertion — use COUNT(*) FILTER (WHERE col IS NOT NULL)"
     count=$((count + 1))
-  done < <(grep -nE 'MIN[[:space:]]*\([^)]+\)[[:space:]]+IS[[:space:]]+NOT[[:space:]]+NULL' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -nE 'MIN[[:space:]]*\([^)]+\)[[:space:]]+IS[[:space:]]+NOT[[:space:]]+NULL' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No MIN(...) IS NOT NULL loose assertions (Rule 8)" "$count"
 }
 
@@ -302,7 +314,7 @@ check_no_emoji() {
     local lineno="${rest%%:*}"
     report_violation "$file" "$lineno" "Unicode emoji found — use ASCII [PASS]/[FAIL] instead"
     count=$((count + 1))
-  done < <(grep -n '[✓✗✅❌✔✘]' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -n '[✓✗✅❌✔✘]' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   report_rule_result "No Unicode emoji in test files (Rule 8)" "$count"
 }
 
@@ -317,7 +329,7 @@ check_count_text_antipattern() {
     is_comment "$content" && continue
     echo -e "  ${YELLOW}⚠${NC} ${file}:${lineno} — COUNT(*)::TEXT assertion — consider using exact date array assertion"
     count=$((count + 1))
-  done < <(grep -nE 'COUNT\(\*\)::TEXT' tests/test_*.sql 2>/dev/null || true)
+  done < <(grep -nE 'COUNT\(\*\)::TEXT' "${TEST_SQL_FILES[@]}" 2>/dev/null || true)
   if [ "$count" -eq 0 ]; then
     echo -e "${GREEN}✓${NC} No COUNT(*)::TEXT anti-pattern in tests (Rule 8, advisory)"
   else
@@ -380,7 +392,7 @@ check_null_dtstart_validation() {
 # --- Main ---
 
 main() {
-  echo -e "${BLUE}Test file checks (tests/test_*.sql)${NC}"
+  echo -e "${BLUE}Test file checks (tests/**/*.sql)${NC}"
   echo ""
   check_no_commit
   check_transaction_wrapper
