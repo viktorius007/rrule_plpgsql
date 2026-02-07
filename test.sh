@@ -184,22 +184,22 @@ run_all_tests() {
   local fail_count=0
 
   for test_file in "${TEST_FILES[@]}"; do
-    ((suite_count++))
+    suite_count=$((suite_count + 1))
     if run_test "$test_file" "$install_script"; then
-      ((pass_count++))
+      pass_count=$((pass_count + 1))
     else
-      ((fail_count++))
+      fail_count=$((fail_count + 1))
     fi
   done
 
   # Run sub-day specific tests when using sub-day installation
   if [[ "$install_script" == *"subday"* ]]; then
     for test_file in "${SUBDAY_TEST_FILES[@]}"; do
-      ((suite_count++))
+      suite_count=$((suite_count + 1))
       if run_test "$test_file" "$install_script"; then
-        ((pass_count++))
+        pass_count=$((pass_count + 1))
       else
-        ((fail_count++))
+        fail_count=$((fail_count + 1))
       fi
     done
   fi
