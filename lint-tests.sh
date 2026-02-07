@@ -56,6 +56,7 @@ is_comment() {
 shopt -s nullglob
 TEST_SQL_FILES=(
   tests/test_*.sql
+  tests/install/*.sql
   tests/matrix/*.sql
   tests/branches/*.sql
   tests/security/*.sql
@@ -182,6 +183,7 @@ check_schema_qualification() {
 
     # Strip all rrule."func"( patterns, then check if unqualified calls remain
     local stripped="${content//rrule./}"
+    stripped="${stripped//rrule_update./}"
     # If stripping rrule. removed the match, it was qualified
     if [[ "$stripped" == "$content" ]]; then
       report_violation "$file" "$lineno" "Unqualified API call — use rrule.\"func\"() prefix"

@@ -18,7 +18,11 @@
     "lint": "./lint.sh",
     "lint:tests": "./lint-tests.sh",
     "generate:matrix-tests": "node scripts/generate-matrix-tests.js > tests/matrix/test_generated_matrix.sql",
-    "test:mutations": "node scripts/mutation-test.js"
+    "test:mutations": "node scripts/mutation-test.js",
+    "test:install-contract": "./scripts/test-install-contract.sh",
+    "test:package-contract": "./scripts/test-package-contract.sh",
+    "test:isolation": "python3 -m pytest tests/property/test_session_isolation.py -v",
+    "test:perf": "./scripts/perf-regression.sh"
   },
   "repository": {
     "type": "git",

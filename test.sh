@@ -2,7 +2,7 @@
 #
 # Automated Test Runner for rrule_plpgsql
 #
-# Runs all 13 test suites and reports results.
+# Runs all configured test suites and reports results.
 # Tests both standard and sub-day installations to ensure complete coverage.
 #
 # Usage:
@@ -19,7 +19,7 @@
 #   DATABASE_URL=<name>     # Override database name (default: rrule_test_{branch})
 #
 # Requirements:
-#   - PostgreSQL 12+ installed and running
+#   - PostgreSQL 17.x installed and running
 #   - psql command available in PATH
 #   - Database will be created/dropped automatically
 #
@@ -78,6 +78,8 @@ TEST_FILES=(
   "tests/test_consensus_gaps_2.sql"
   "tests/test_dual_path_consistency.sql"
   "tests/test_iteration_limits.sql"
+  "tests/install/test_install_contract.sql"
+  "tests/install/test_migration_contract.sql"
   # Comprehensive test suite (specification-derived)
   "tests/matrix/test_freq_byxxx_matrix.sql"
   "tests/matrix/test_api_boundary_matrix.sql"

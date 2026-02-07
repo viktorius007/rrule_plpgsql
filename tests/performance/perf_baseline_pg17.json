@@ -1,0 +1,24 @@
+{
+  "postgres_major": 17,
+  "default_runs": 7,
+  "default_threshold_pct": 20,
+  "generated_at_utc": "2026-02-07T10:54:57.572Z",
+  "benchmarks": {
+    "daily_cap_1000": {
+      "description": "High-volume DAILY rule to 1000 cap",
+      "median_ms": 10.656
+    },
+    "complex_bysetpos": {
+      "description": "Complex YEARLY with BYSETPOS and multi-BY filters",
+      "median_ms": 7.658
+    },
+    "tz_dst_daily": {
+      "description": "TIMESTAMPTZ recurrence across DST boundary",
+      "median_ms": 5.979
+    },
+    "overlaps_table_style": {
+      "description": "Table-style overlaps workload",
+      "median_ms": 192.245
+    }
+  }
+}
