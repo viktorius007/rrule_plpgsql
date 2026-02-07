@@ -1156,6 +1156,32 @@ SELECT assert_true('BRANCH-advance_yearly-3-maxdate',
 SELECT assert_true('BRANCH-advance_yearly-4-until',
     (SELECT COUNT(*) < 10 FROM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;UNTIL=20280101T000000Z', '2020-02-29 10:00:00'::TIMESTAMP)));
 
+-- BRANCH-advance_yearly-5: SKIP=OMIT period count limit (line 1589)
+-- Directly call helper with period_limit=1 so the first OMIT increment terminates.
+DO $$
+DECLARE
+    r rrule._skip_result;
+BEGIN
+    r := rrule._advance_yearly(
+        '2021-02-28 10:00:00+00'::TIMESTAMPTZ,  -- day 28 (mismatch with dtstart_day=29)
+        '2020-02-29 10:00:00+00'::TIMESTAMPTZ,  -- leap-day anchor
+        29,                                      -- desired day-of-month
+        1,                                       -- interval
+        'OMIT',                                  -- force OMIT path
+        NULL::TIMESTAMPTZ,                       -- no UNTIL short-circuit
+        '2035-01-01 00:00:00+00'::TIMESTAMPTZ,   -- far maxdate to avoid early termination
+        1,                                       -- tiny period limit to trigger branch
+        0,                                       -- omit_count
+        0                                        -- period_count
+    );
+
+    PERFORM assert_true(
+        'BRANCH-advance_yearly-5-omit-limit',
+        r.done AND r.omit_count = 1 AND r.current_base > '2021-02-28 10:00:00+00'::TIMESTAMPTZ
+    );
+END $$;
+SELECT assert_true('BRANCH-advance_yearly-5-omit-limit', TRUE);
+
 -- BRANCH-advance_yearly-6: SKIP=FORWARD branch
 SELECT assert_true('BRANCH-advance_yearly-6-skip-forward',
     (SELECT COUNT(*) = 10 FROM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;SKIP=FORWARD;COUNT=10', '2020-02-29 10:00:00'::TIMESTAMP)));
@@ -1168,6 +1194,34 @@ SELECT assert_true('BRANCH-advance_yearly-7-forward-until',
 SELECT assert_true('BRANCH-advance_yearly-8-forward-maxdate',
     (SELECT MAX(r) - '2020-02-29'::TIMESTAMP < INTERVAL '11 years'
      FROM rrule."all"('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;SKIP=FORWARD', '2020-02-29 10:00:00'::TIMESTAMP) r));
+
+-- BRANCH-advance_yearly-9: SKIP=FORWARD period count limit (line 1611)
+-- Directly call helper with period_limit=1 so the first FORWARD increment terminates.
+DO $$
+DECLARE
+    r rrule._skip_result;
+BEGIN
+    r := rrule._advance_yearly(
+        '2021-02-28 10:00:00+00'::TIMESTAMPTZ,  -- day 28 (mismatch with dtstart_day=29)
+        '2020-02-29 10:00:00+00'::TIMESTAMPTZ,  -- leap-day anchor
+        29,
+        1,
+        'FORWARD',                               -- force FORWARD path
+        NULL::TIMESTAMPTZ,                       -- no UNTIL short-circuit
+        '2035-01-01 00:00:00+00'::TIMESTAMPTZ,   -- far maxdate to avoid early termination
+        1,                                       -- tiny period limit to trigger branch
+        0,
+        0
+    );
+
+    PERFORM assert_true(
+        'BRANCH-advance_yearly-9-forward-limit',
+        r.done
+        AND r.period_count = 1
+        AND r.forward_ts = '2021-03-01 10:00:00+00'::TIMESTAMPTZ
+    );
+END $$;
+SELECT assert_true('BRANCH-advance_yearly-9-forward-limit', TRUE);
 
 -- BRANCH-advance_yearly-10: SKIP=BACKWARD (else branch)
 SELECT assert_true('BRANCH-advance_yearly-10-skip-backward',
@@ -1280,6 +1334,40 @@ SELECT assert_true('BRANCH-tz-10-forward-emission',
 SELECT assert_true('BRANCH-tz-11-mindate',
     (SELECT MIN(r) >= '2025-01-05'::TIMESTAMPTZ FROM rrule."between"('FREQ=DAILY;COUNT=10'::TEXT,
         '2025-01-01 10:00:00'::TIMESTAMPTZ, '2025-01-05'::TIMESTAMPTZ, '2025-01-20'::TIMESTAMPTZ, 'America/New_York', FALSE) r));
+
+-- BRANCH-tz-12: TZ API MONTHLY first-period CASE (current_base = basedate)
+-- Direct internal call keeps max_count NULL and targets MONTHLY branch specifically.
+SELECT assert_true('BRANCH-tz-12-monthly-first-period',
+    (SELECT MIN(r) = '2025-01-15 10:00:00'::TIMESTAMP
+     FROM rrule.rrule_event_instances_range_tz(
+         '2025-01-15 10:00:00'::TIMESTAMP,
+         'FREQ=MONTHLY',
+         '2025-01-15 10:00:00'::TIMESTAMP,
+         '2025-03-20 10:00:00'::TIMESTAMP,
+         NULL
+     ) r));
+
+-- BRANCH-tz-13: TZ API MONTHLY output_limit IS NULL branch
+SELECT assert_true('BRANCH-tz-13-monthly-no-output-limit',
+    (SELECT COUNT(*) = 3
+     FROM rrule.rrule_event_instances_range_tz(
+         '2025-01-15 10:00:00'::TIMESTAMP,
+         'FREQ=MONTHLY',
+         '2025-01-15 10:00:00'::TIMESTAMP,
+         '2025-03-20 10:00:00'::TIMESTAMP,
+         NULL
+     ) r));
+
+-- BRANCH-tz-14: TZ API MONTHLY current >= mindate filter branch
+SELECT assert_true('BRANCH-tz-14-monthly-mindate-filter',
+    (SELECT MIN(r) >= '2025-02-01 00:00:00'::TIMESTAMP
+     FROM rrule.rrule_event_instances_range_tz(
+         '2025-01-15 10:00:00'::TIMESTAMP,
+         'FREQ=MONTHLY',
+         '2025-02-01 00:00:00'::TIMESTAMP,
+         '2025-04-20 10:00:00'::TIMESTAMP,
+         NULL
+     ) r));
 
 
 --------------------------------------------------------------------------------
@@ -1491,6 +1579,72 @@ BEGIN
     END;
 END $$;
 SELECT assert_true('BRANCH-tz-27-subday-error', TRUE);
+
+-- BRANCH-tz-28: TZ API sub-day unsupported-frequency branch (line 3377)
+-- Hit directly via internal generator when sub-day frequencies are not installed.
+DO $$
+DECLARE
+    subday_installed BOOLEAN;
+    saw_expected BOOLEAN := FALSE;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'rrule' AND p.proname = 'hourly_set'
+    ) INTO subday_installed;
+
+    IF subday_installed THEN
+        RAISE NOTICE 'SKIP [BRANCH-tz-28-subday-unsupported]: Subday installed';
+    ELSE
+        BEGIN
+            PERFORM rrule.rrule_event_instances_range_tz(
+                '2025-01-01 10:00:00'::TIMESTAMP,
+                'FREQ=HOURLY;COUNT=2',
+                '2025-01-01 10:00:00'::TIMESTAMP,
+                '2025-01-03 10:00:00'::TIMESTAMP,
+                NULL
+            );
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLERRM ~ 'not supported' OR SQLERRM ~ 'HOURLY' THEN
+                saw_expected := TRUE;
+            ELSE
+                RAISE;
+            END IF;
+        END;
+    END IF;
+
+    PERFORM assert_true('BRANCH-tz-28-subday-unsupported', subday_installed OR saw_expected);
+END $$;
+SELECT assert_true('BRANCH-tz-28-subday-unsupported', TRUE);
+
+-- BRANCH-tz-29: TZ API generic unsupported-frequency else branch (line 3379)
+-- Invalid FREQ should always be rejected (either parser validation or generator fallback).
+DO $$
+DECLARE
+    saw_expected BOOLEAN := FALSE;
+BEGIN
+    BEGIN
+        PERFORM rrule.rrule_event_instances_range_tz(
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            'FREQ=NOT_A_REAL_FREQ;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP,
+            NULL
+        );
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLERRM ~ 'Unsupported frequency'
+           OR SQLERRM ~ 'Invalid RRULE'
+           OR SQLERRM ~ 'FREQ'
+        THEN
+            saw_expected := TRUE;
+        ELSE
+            RAISE;
+        END IF;
+    END;
+
+    PERFORM assert_true('BRANCH-tz-29-generic-unsupported', saw_expected);
+END $$;
+SELECT assert_true('BRANCH-tz-29-generic-unsupported', TRUE);
 
 -- BRANCH-tz-30: TZ API output limit termination (line 3379)
 SELECT assert_true('BRANCH-tz-30-output-limit',

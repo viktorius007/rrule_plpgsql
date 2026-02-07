@@ -17,6 +17,7 @@
  * 8. Edge cases (leap years, month boundaries)
  * 9. Advanced BYxxx combinations (BYMONTH+BYDAY, BYYEARDAY, BYDAY+BYMONTHDAY)
  * 10. YEARLY + BYDAY/BYMONTHDAY without BYMONTH (12-month scan path)
+ * 11. Boundary regression coverage for between()/before() on complex BYxxx rules
  *
  * Usage:
  *   psql -d your_database -f test_rrule_functions.sql
@@ -533,6 +534,50 @@ INSERT INTO test_results VALUES (28, 'WEEKLY BYDAY=MO,WE,FR + BYMONTH=3 INTERVAL
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;BYMONTH=3;COUNT=3',
             '2025-01-06 10:00:00'::TIMESTAMP) AS occurrence)
+    ));
+
+-- ============================================================================
+-- TEST GROUP 11: Boundary Regression Coverage
+-- ============================================================================
+
+\echo ''
+\echo '==================================================================='
+\echo 'TEST GROUP 11: Boundary Regression Coverage'
+\echo '==================================================================='
+
+-- Test 29: YEARLY+BYWEEKNO+BYDAY boundary period in between() (regression)
+-- The end boundary falls just after the first Monday of ISO week 1 in 2022.
+-- between() must include both 2021-01-04 and 2022-01-03.
+INSERT INTO test_results VALUES (29, 'between() includes YEARLY BYWEEKNO boundary-period candidate',
+    assert_occurrences_equal(
+        'between yearly byweekno boundary-period',
+        ARRAY[
+            '2021-01-04 00:00:00'::TIMESTAMP,
+            '2022-01-03 00:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence)
+         FROM rrule."between"(
+            'FREQ=YEARLY;INTERVAL=1;BYWEEKNO=1;BYDAY=MO;UNTIL=20240104T000000Z',
+            '2021-01-04 00:00:00'::TIMESTAMP,
+            '2021-01-03 23:59:59'::TIMESTAMP,
+            '2022-01-03 00:00:01'::TIMESTAMP,
+            FALSE
+         ) AS occurrence)
+    ));
+
+-- Test 30: MONTHLY+BYDAY boundary period in before() (regression)
+-- before_date is one second after 2021-08-01 00:00:00, so before() should
+-- return that exact Sunday occurrence (not a prior month).
+INSERT INTO test_results VALUES (30, 'before() returns latest MONTHLY BYDAY boundary-period candidate',
+    assert_equals(
+        'before monthly byday boundary-period',
+        '2021-08-01 00:00:00',
+        (SELECT rrule."before"(
+            'FREQ=MONTHLY;INTERVAL=1;BYDAY=SU;UNTIL=20220103T000000Z',
+            '2021-01-03 00:00:00'::TIMESTAMP,
+            '2021-08-01 00:00:01'::TIMESTAMP,
+            FALSE
+        )::TEXT)
     ));
 
 -- ============================================================================

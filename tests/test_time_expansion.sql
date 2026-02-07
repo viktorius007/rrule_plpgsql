@@ -763,6 +763,78 @@ SELECT 'Real-world scenario', 'Annual Q2/Q4 reviews at 10am and 2pm',
 
 \echo ''
 \echo '====================================================================='
+\echo 'TEST GROUP 11: Internal Expansion Helper Coverage'
+\echo '====================================================================='
+
+-- Test 11.1: rrule_expand_dates_with_times no-time path honors max_results
+INSERT INTO time_expansion_test_results (test_category, test_name, status)
+SELECT 'Internal helper', 'No-time path with max_results=1 returns first date only',
+    assert_occurrences_equal(
+        'expand_dates_with_times no-time + limit',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP],
+        (
+            SELECT array_agg(x::TIMESTAMP ORDER BY x)
+            FROM rrule.rrule_expand_dates_with_times(
+                ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ, '2025-01-08 10:00:00+00'::TIMESTAMPTZ],
+                rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;COUNT=5'),
+                1
+            ) x
+        )
+    );
+
+-- Test 11.2: rrule_expand_dates_with_times no-time + BYSETPOS cursor path
+INSERT INTO time_expansion_test_results (test_category, test_name, status)
+SELECT 'Internal helper', 'No-time + BYSETPOS path selects first sorted date',
+    assert_occurrences_equal(
+        'expand_dates_with_times no-time + bysetpos',
+        ARRAY['2025-01-06 10:00:00'::TIMESTAMP],
+        (
+            SELECT array_agg(x::TIMESTAMP ORDER BY x)
+            FROM rrule.rrule_expand_dates_with_times(
+                ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ, '2025-01-08 10:00:00+00'::TIMESTAMPTZ],
+                rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYDAY=MO;BYSETPOS=1;COUNT=5'),
+                NULL
+            ) x
+        )
+    );
+
+-- Test 11.3: rrule_expand_dates_with_times time-expansion path
+INSERT INTO time_expansion_test_results (test_category, test_name, status)
+SELECT 'Internal helper', 'Time-expansion path returns BYHOUR cross-product',
+    assert_occurrences_equal(
+        'expand_dates_with_times time expansion',
+        ARRAY[
+            '2025-01-06 09:00:00'::TIMESTAMP,
+            '2025-01-06 17:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg(x::TIMESTAMP ORDER BY x)
+            FROM rrule.rrule_expand_dates_with_times(
+                ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ],
+                rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYHOUR=9,17;COUNT=5'),
+                NULL
+            ) x
+        )
+    );
+
+-- Test 11.4: rrule_expand_dates_with_times time-expansion + BYSETPOS path
+INSERT INTO time_expansion_test_results (test_category, test_name, status)
+SELECT 'Internal helper', 'Time-expansion + BYSETPOS keeps last slot',
+    assert_occurrences_equal(
+        'expand_dates_with_times time + bysetpos',
+        ARRAY['2025-01-06 17:00:00'::TIMESTAMP],
+        (
+            SELECT array_agg(x::TIMESTAMP ORDER BY x)
+            FROM rrule.rrule_expand_dates_with_times(
+                ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ],
+                rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYHOUR=9,17;BYSETPOS=-1;COUNT=5'),
+                NULL
+            ) x
+        )
+    );
+
+\echo ''
+\echo '====================================================================='
 \echo 'Test Results Summary'
 \echo '====================================================================='
 

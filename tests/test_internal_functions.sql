@@ -1202,6 +1202,104 @@ SELECT 'TIMESTAMP convenience defaults', 'most_recent(TIMESTAMP) uses UTC-normal
     );
 
 -- ============================================================================
+-- SECTION 26: Direct Helper Branch Coverage
+-- ============================================================================
+\echo ''
+\echo '--- Section 26: direct helper branch coverage ---'
+
+-- Test 26.1: _advance_yearly OMIT period-limit branch
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT '_advance_yearly()', 'OMIT period_limit branch sets done=true at limit',
+    assert_true(
+        'OMIT period_limit',
+        (
+            SELECT (r).done
+                   AND (r).omit_count = 1
+                   AND (r).current_base > '2021-02-28 10:00:00+00'::TIMESTAMPTZ
+            FROM (
+                SELECT rrule._advance_yearly(
+                    '2021-02-28 10:00:00+00'::TIMESTAMPTZ,
+                    '2020-02-29 10:00:00+00'::TIMESTAMPTZ,
+                    29,
+                    1,
+                    'OMIT',
+                    NULL::TIMESTAMPTZ,
+                    '2035-01-01 00:00:00+00'::TIMESTAMPTZ,
+                    1,
+                    0,
+                    0
+                ) AS r
+            ) q
+        )
+    );
+
+-- Test 26.2: _advance_yearly FORWARD period-limit branch
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT '_advance_yearly()', 'FORWARD period_limit branch sets done=true at limit',
+    assert_true(
+        'FORWARD period_limit',
+        (
+            SELECT (r).done
+                   AND (r).period_count = 1
+                   AND (r).forward_ts = '2021-03-01 10:00:00+00'::TIMESTAMPTZ
+            FROM (
+                SELECT rrule._advance_yearly(
+                    '2021-02-28 10:00:00+00'::TIMESTAMPTZ,
+                    '2020-02-29 10:00:00+00'::TIMESTAMPTZ,
+                    29,
+                    1,
+                    'FORWARD',
+                    NULL::TIMESTAMPTZ,
+                    '2035-01-01 00:00:00+00'::TIMESTAMPTZ,
+                    1,
+                    0,
+                    0
+                ) AS r
+            ) q
+        )
+    );
+
+-- Test 26.3: weekly_set BYWEEKNO filter branch (manual rule mutation)
+DO $$
+DECLARE
+    wr rrule.rrule_parts;
+    c INT;
+BEGIN
+    wr := rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO;COUNT=6');
+    wr.byweekno := ARRAY[10]; -- Jan 6 is not in ISO week 10
+
+    SELECT COUNT(*) INTO c
+    FROM rrule.weekly_set('2025-01-06 10:00:00+00'::TIMESTAMPTZ, wr, NULL);
+
+    INSERT INTO internal_test_results (test_category, test_name, status)
+    VALUES (
+        'weekly_set()',
+        'Manual BYWEEKNO filter path returns no rows on mismatch',
+        CASE WHEN c = 0 THEN 'PASS' ELSE 'FAIL - expected 0 rows, got ' || c::TEXT END
+    );
+END $$;
+
+-- Test 26.4: weekly_set BYYEARDAY filter branch (manual rule mutation)
+DO $$
+DECLARE
+    wr rrule.rrule_parts;
+    c INT;
+BEGIN
+    wr := rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO;COUNT=6');
+    wr.byyearday := ARRAY[200]; -- Jan 6 is day 6, so this should filter out
+
+    SELECT COUNT(*) INTO c
+    FROM rrule.weekly_set('2025-01-06 10:00:00+00'::TIMESTAMPTZ, wr, NULL);
+
+    INSERT INTO internal_test_results (test_category, test_name, status)
+    VALUES (
+        'weekly_set()',
+        'Manual BYYEARDAY filter path returns no rows on mismatch',
+        CASE WHEN c = 0 THEN 'PASS' ELSE 'FAIL - expected 0 rows, got ' || c::TEXT END
+    );
+END $$;
+
+-- ============================================================================
 -- TEST RESULTS SUMMARY
 -- ============================================================================
 \echo ''

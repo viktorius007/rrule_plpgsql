@@ -2678,6 +2678,119 @@ BEGIN
 END;
 $$;
 
+-- ================================================================================================================
+-- TEST SUITE 23: Internal TZ Generator Edge Paths
+-- ================================================================================================================
+\echo ''
+\echo '=================================================='
+\echo 'TEST SUITE 23: Internal TZ Generator Edge Paths'
+\echo '=================================================='
+
+DO $$
+DECLARE
+    result_count INT;
+    first_ts TIMESTAMP;
+    caught BOOLEAN;
+    subday_installed BOOLEAN;
+BEGIN
+    -- Test 23.1: internal MONTHLY path with max_count=NULL (output_limit NULL branch)
+    SELECT COUNT(*)
+    INTO result_count
+    FROM rrule.rrule_event_instances_range_tz(
+        '2025-01-15 10:00:00'::TIMESTAMP,
+        'FREQ=MONTHLY',
+        '2025-01-15 10:00:00'::TIMESTAMP,
+        '2025-03-20 10:00:00'::TIMESTAMP,
+        NULL
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Internal TZ Generator',
+        'Test 23.1: MONTHLY internal generator with NULL max_count',
+        result_count = 3,
+        result_count::TEXT,
+        '3'
+    );
+
+    -- Test 23.2: internal MONTHLY mindate filtering branch
+    SELECT MIN(ts)
+    INTO first_ts
+    FROM rrule.rrule_event_instances_range_tz(
+        '2025-01-15 10:00:00'::TIMESTAMP,
+        'FREQ=MONTHLY',
+        '2025-02-01 00:00:00'::TIMESTAMP,
+        '2025-04-20 10:00:00'::TIMESTAMP,
+        NULL
+    ) AS ts;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Internal TZ Generator',
+        'Test 23.2: MONTHLY internal mindate filter starts at Feb occurrence',
+        first_ts = '2025-02-15 10:00:00'::TIMESTAMP,
+        first_ts::TEXT,
+        '2025-02-15 10:00:00'
+    );
+
+    -- Test 23.3: internal HOURLY handling depends on installation mode
+    SELECT EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'rrule' AND p.proname = 'hourly_set'
+    ) INTO subday_installed;
+
+    caught := FALSE;
+    BEGIN
+        PERFORM rrule.rrule_event_instances_range_tz(
+            '2025-01-15 10:00:00'::TIMESTAMP,
+            'FREQ=HOURLY;COUNT=3',
+            '2025-01-15 10:00:00'::TIMESTAMP,
+            '2025-01-15 14:00:00'::TIMESTAMP,
+            NULL
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLERRM LIKE '%not supported%' OR SQLERRM LIKE '%HOURLY%' THEN
+                caught := TRUE;
+            ELSE
+                RAISE NOTICE 'Test 23.3 unexpected error: %', SQLERRM;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Internal TZ Generator',
+        'Test 23.3: Internal HOURLY handling matches install mode',
+        (subday_installed AND NOT caught) OR ((NOT subday_installed) AND caught),
+        CASE WHEN caught THEN 'Exception raised' ELSE 'Success' END,
+        CASE WHEN subday_installed THEN 'Success' ELSE 'Exception raised' END
+    );
+
+    -- Test 23.4: invalid FREQ is rejected by internal generator path
+    caught := FALSE;
+    BEGIN
+        PERFORM rrule.rrule_event_instances_range_tz(
+            '2025-01-15 10:00:00'::TIMESTAMP,
+            'FREQ=NOT_A_REAL_FREQ;COUNT=3',
+            '2025-01-15 10:00:00'::TIMESTAMP,
+            '2025-01-16 10:00:00'::TIMESTAMP,
+            NULL
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLERRM LIKE '%Invalid RRULE%' OR SQLERRM LIKE '%Unsupported frequency%' OR SQLERRM LIKE '%FREQ%' THEN
+                caught := TRUE;
+            END IF;
+    END;
+
+    INSERT INTO tz_api_test_results VALUES (
+        'Internal TZ Generator',
+        'Test 23.4: Internal invalid FREQ rejected',
+        caught,
+        CASE WHEN caught THEN 'Exception raised as expected' ELSE 'No exception raised' END,
+        'Exception raised as expected'
+    );
+END;
+$$;
+
 -- Fail transaction if any tests failed
 DO $$
 DECLARE
