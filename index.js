@@ -26,9 +26,11 @@ const path = require('path');
  * no such reset, so stripping SET search_path here prevents the leak.
  *
  * @param {string} sql - Raw SQL content
+ * @param {Object} options - Behavior controls
+ * @param {boolean} options.stripSearchPath - Remove SET/RESET search_path
  * @returns {string} SQL with session state commands removed
  */
-function stripSessionState(sql) {
+function stripSessionState(sql, { stripSearchPath = true } = {}) {
   return sql
     .split('\n')
     .map(line => {
@@ -39,10 +41,10 @@ function stripSessionState(sql) {
       if (/^RESET\s+timezone\s*/i.test(trimmed)) {
         return '';
       }
-      if (/^SET\s+search_path\s*/i.test(trimmed)) {
+      if (stripSearchPath && /^SET\s+search_path\s*/i.test(trimmed)) {
         return '';
       }
-      if (/^RESET\s+search_path\s*/i.test(trimmed)) {
+      if (stripSearchPath && /^RESET\s+search_path\s*/i.test(trimmed)) {
         return '';
       }
       return line;
@@ -70,11 +72,14 @@ function buildDriverSafeSQL(installFile, baseDir) {
     .split('\n')
     .map(line => {
       const trimmed = line.trim();
-      // Replace \ir with inlined file contents (also strip SET/RESET timezone from inlined files)
+      // Replace \ir with inlined file contents.
+      // Keep search_path for install exports because unqualified CREATE TYPE/FUNCTION
+      // statements in rrule.sql rely on it. install.sql/install_with_subday.sql already
+      // include RESET search_path at the end.
       if (trimmed.startsWith('\\ir ')) {
         const includeFile = trimmed.substring(4).trim();
         const inlined = fs.readFileSync(path.join(baseDir, includeFile), 'utf8');
-        return stripSessionState(inlined);
+        return stripSessionState(inlined, { stripSearchPath: false });
       }
       // Strip known psql meta-commands explicitly (not all backslash lines)
       // This preserves SQL containing escaped strings at line start (e.g., E'\\n...')
