@@ -26,7 +26,7 @@
 #   Both paths are tested to ensure full coverage. See ISSUES.md ISSUE-003.
 #
 # Requirements:
-#   - PostgreSQL 12+ with plpgsql_check extension available
+#   - PostgreSQL 17.x with plpgsql_check extension available
 #   - plpgsql_check should be in shared_preload_libraries (or LOAD may be needed)
 #   - psql command available in PATH
 #

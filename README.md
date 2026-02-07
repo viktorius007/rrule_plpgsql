@@ -4,7 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/rrule-plpgsql.svg)](https://www.npmjs.com/package/rrule-plpgsql)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Pure PL/pgSQL implementation of iCalendar RRULE (RFC 5545) for PostgreSQL. No C extensions, no compilation, works everywhere.
+Pure PL/pgSQL implementation of iCalendar RRULE (RFC 5545) for PostgreSQL 17. No C extensions, no compilation.
 
 ---
 
@@ -13,10 +13,10 @@ Pure PL/pgSQL implementation of iCalendar RRULE (RFC 5545) for PostgreSQL. No C 
 This library provides complete RRULE recurrence calculation functionality using pure PL/pgSQL. **Use this implementation for all environments** (local, development, staging, production) to ensure consistency.
 
 **Key Features:**
-- ✅ **No C extensions required** - Pure PL/pgSQL, works on any PostgreSQL
+- ✅ **No C extensions required** - Pure PL/pgSQL for PostgreSQL 17
 - ✅ **Full timezone support with DST handling** - Wall-clock time preserved ("10 AM stays 10 AM" across DST transitions)
 - ✅ **Consistent everywhere** - Same implementation across all environments
-- ✅ **Production-ready** - Comprehensive SQL test framework with 62 suites in CI mode (`./test.sh --both`)
+- ✅ **Production-ready** - Comprehensive SQL test framework with 66 suites in CI mode (`./test.sh --both`)
 - ✅ **RFC 5545 & RFC 7529 compliant** - Supports standard RRULE patterns plus SKIP/RSCALE
 - ✅ **50-75x faster than Node.js** - Excellent performance without compilation
 - ✅ **Works on managed services** - AlloyDB, RDS, Azure Database for PostgreSQL
@@ -43,7 +43,7 @@ Pure PL/pgSQL means:
 - ✅ Install with a single SQL file - no configuration
 - ✅ Consistent behavior across all environments (dev, staging, production)
 
-**Universal compatibility:**
+**Deployment compatibility:**
 - ✅ **Google AlloyDB** - High-performance PostgreSQL with AI integration
 - ✅ **Google Cloud SQL** - Fully managed PostgreSQL service
 - ✅ **Amazon Aurora PostgreSQL** - Serverless PostgreSQL with automatic scaling
@@ -75,6 +75,27 @@ curl -sL https://raw.githubusercontent.com/sirrodgepodge/rrule_plpgsql/main/src/
 ```
 
 **Next Steps:** See [Example Usage](docs/EXAMPLE_USAGE.md) for practical patterns.
+
+---
+
+## Testing
+
+```bash
+# Full SQL suite (standard + sub-day install paths)
+./test.sh --both
+
+# SQL export contract tests (npm package output)
+npm run test:package-contract
+
+# Install/migration contract suites
+npm run test:install-contract
+
+# Session isolation tests
+npm run test:isolation
+
+# Manual performance regression checks (PG17, not CI-gated)
+npm run test:perf
+```
 
 ---
 
@@ -276,7 +297,7 @@ Contributions welcome! Please:
 
 ## Requirements
 
-- PostgreSQL 12 or higher
+- PostgreSQL 17.x
 - No C extensions required
 - No external dependencies
 - Works on all PostgreSQL-compatible platforms

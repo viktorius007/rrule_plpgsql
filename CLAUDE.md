@@ -9,7 +9,7 @@ Pure PL/pgSQL implementation of RFC 5545 iCalendar RRULE for PostgreSQL. No C ex
 ## Commands
 
 ```bash
-# Run all tests (62 test suites total)
+# Run all tests (66 test suites total)
 npm test
 ./test.sh
 
@@ -30,12 +30,28 @@ npm run lint
 npm run lint:tests
 ./lint-tests.sh
 
+# Install/migration contract suites
+npm run test:install-contract
+./scripts/test-install-contract.sh
+
+# SQL export contract tests
+npm run test:package-contract
+./scripts/test-package-contract.sh
+
+# Session isolation tests
+npm run test:isolation
+python3 -m pytest tests/property/test_session_isolation.py -v
+
+# Manual performance regression checks (PG17, not CI-gated)
+npm run test:perf
+npm run test:perf -- --update-baseline
+
 # Fresh reinstall after changes
 psql -d your_db -c "DROP SCHEMA IF EXISTS rrule CASCADE"
 psql -d your_db -f src/install.sql
 ```
 
-**Test database:** Requires PostgreSQL 12+. Default connection `localhost:54322` with user/password `postgres/postgres`. Override with `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, or `DATABASE_URL`. The test runner creates and drops `rrule_test` automatically; running a single test file requires the database to already exist with rrule functions installed.
+**Test database:** Requires PostgreSQL 17.x. Default connection `localhost:54322` with user/password `postgres/postgres`. Override with `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, or `DATABASE_URL`. The test runner creates and drops `rrule_test` automatically; running a single test file requires the database to already exist with rrule functions installed.
 
 ## Architecture
 
@@ -67,7 +83,7 @@ psql -d your_db -f src/install.sql
 - `/src/rrule_subday.sql` - Sub-day frequency overrides (~774 lines)
 - `/src/install.sql` - Standard installation
 - `/src/install_with_subday.sql` - Installation with sub-day frequencies
-- `/tests/*.sql` and subdirectories - 33 test files covering validation, frequencies, timezone, RFC compliance, branch coverage, security, parity
+- `/tests/*.sql` and subdirectories - 35 SQL files (34 test suites + helpers) covering validation, frequencies, timezone, RFC compliance, branch coverage, security, parity, and install/migration contracts
 - `/tests/helpers.sql` - Shared test assertion functions (`assert_occurrences_equal`, `assert_equals`, `assert_true`)
 - `DECISIONS.md` - Prescriptive architectural decisions with verification links
 - `TESTING_STANDARDS.md` - Required test patterns (ROLLBACK, fixed timestamps, exact assertions)
@@ -105,10 +121,12 @@ Historical documents (completed research, plans) are in [docs/archived/](docs/ar
 
 GitHub Actions (`.github/workflows/test.yml`) runs on push/PR to main:
 1. `./test.sh --both` — full test suite (standard + sub-day)
-2. `./lint.sh` — plpgsql_check semantic linting (requires PostgreSQL + plpgsql_check extension)
-3. `./lint-tests.sh` — static SQL coding standards (bash-based, no database required)
+2. `npm run test:package-contract` — validates SQL export contract for npm package outputs
+3. `./lint.sh` — plpgsql_check semantic linting (requires PostgreSQL + plpgsql_check extension)
+4. `./lint-tests.sh` — static SQL coding standards (bash-based, no database required)
+5. `pytest tests/property/` — Hypothesis-based property and differential tests
 
-All three must pass. Uses PostgreSQL 14 and Node.js 20.
+All quality gates must pass. Uses PostgreSQL 17 and Node.js 20.
 
 ## Internal Architecture
 

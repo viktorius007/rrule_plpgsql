@@ -9,7 +9,7 @@
 --   psql -d rrule_test -f lint.sql
 --
 -- Requirements:
---   - PostgreSQL 12+
+--   - PostgreSQL 17.x
 --   - plpgsql_check extension available
 --   - rrule schema must be installed first
 --

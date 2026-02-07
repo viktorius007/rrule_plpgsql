@@ -2,6 +2,8 @@
 
 Complete installation instructions for all environments and PostgreSQL clients.
 
+**Runtime target:** PostgreSQL 17.x.
+
 ---
 
 ## Table of Contents

@@ -10,7 +10,7 @@
  * Or from within psql:
  *   \i install.sql
  *
- * Dependencies: PostgreSQL 12+ (tested with PostgreSQL 16)
+ * Dependencies: PostgreSQL 17.x
  *
  * Components installed:
  * 1. RRULE schema (namespace isolation)
@@ -103,7 +103,7 @@ BEGIN
                 '║ SOLUTION: Manual Migration Process                                          ║' || E'\n' ||
                 '║                                                                             ║' || E'\n' ||
                 '║ See the complete migration guide:                                           ║' || E'\n' ||
-                '║   github.com/sirrodgepodge/rrule_plpgsql/blob/main/MANUAL_MIGRATION.md     ║' || E'\n' ||
+                '║   github.com/sirrodgepodge/rrule_plpgsql/blob/main/docs/MIGRATION.md       ║' || E'\n' ||
                 '║                                                                             ║' || E'\n' ||
                 '║ You will need to:                                                           ║' || E'\n' ||
                 '║   1. Install new version to rrule_update schema (installManual.sh)          ║' || E'\n' ||

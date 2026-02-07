@@ -21,7 +21,7 @@
 #   DATABASE_URL=<name>    # Override database name (default: rrule_lint_{branch})
 #
 # Requirements:
-#   - PostgreSQL 12+ with plpgsql_check extension available
+#   - PostgreSQL 17.x with plpgsql_check extension available
 #   - psql command available in PATH
 #
 

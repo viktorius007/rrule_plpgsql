@@ -5,7 +5,7 @@
 # This script installs RRULE functions to the 'rrule_update' schema
 # to allow manual migration when you have dependencies on the 'rrule' schema.
 #
-# USE THIS ONLY FOR MANUAL MIGRATION - See MANUAL_MIGRATION.md for complete guide.
+# USE THIS ONLY FOR MANUAL MIGRATION - See docs/MIGRATION.md for complete guide.
 #
 # Usage:
 #   ./installManual.sh your_database
@@ -33,7 +33,7 @@ echo "Installing RRULE to rrule_update schema (Manual Migration)"
 echo "==================================================================="
 echo ""
 echo "WARNING: This installs to rrule_update schema for manual migration."
-echo "See MANUAL_MIGRATION.md for complete migration guide."
+echo "See docs/MIGRATION.md for complete migration guide."
 echo ""
 echo "Database: $DATABASE"
 echo ""
@@ -77,7 +77,7 @@ echo "  - rrule_update.\"next\"(rrule, dtstart) -> TIMESTAMP"
 echo "  - rrule_update.\"most_recent\"(rrule, dtstart) -> TIMESTAMP"
 echo "  - rrule_update.\"overlaps\"(dtstart, dtend, rrule, mindate, maxdate) -> BOOLEAN"
 echo ""
-echo "Next steps (see MANUAL_MIGRATION.md for details):"
+echo "Next steps (see docs/MIGRATION.md for details):"
 echo "  1. Update your dependent objects to use rrule_update schema"
 echo "  2. Test your application with rrule_update"
 echo "  3. Drop the old rrule schema: DROP SCHEMA rrule CASCADE;"

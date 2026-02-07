@@ -52,7 +52,6 @@
 - **Clean install**: Fresh database gets working functions
 - **Reinstall (DROP + CREATE)**: No orphaned objects
 - **Schema isolation**: Nothing leaks outside the `rrule` schema
-- **PostgreSQL version compatibility**: Works on 12, 14, 16+
 
 ## 10. Cross-Cutting Concerns
 - **SKIP + INTERVAL > 1**: Interactions between orthogonal features

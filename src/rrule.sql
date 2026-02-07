@@ -1631,9 +1631,9 @@ $$ LANGUAGE plpgsql STABLE;
 ------------------------------------------------------------------------------------------------------
 -- Given a cursor into a set, process the set returning the subset matching the BYSETPOS
 --
--- Requires: PostgreSQL 12+ for cursor handling syntax and other modern SQL features.
--- (Cursors with SCROLL support have been stable since PostgreSQL 8.3, but this implementation
--- uses additional features requiring PostgreSQL 12 or later.)
+-- Requires PostgreSQL cursor handling support (project target: PostgreSQL 17.x).
+-- (Cursors with SCROLL support have been stable since PostgreSQL 8.3. This project targets
+-- PostgreSQL 17.x for all testing and operational support.)
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION rrule_bysetpos_filter(
   curse REFCURSOR,

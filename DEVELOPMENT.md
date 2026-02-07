@@ -23,15 +23,27 @@ Run the same commands used by CI:
 # Static SQL test lint (assertion/style rules)
 ./lint-tests.sh
 
+# Install/migration contract suites only
+./scripts/test-install-contract.sh
+
+# SQL export contract tests (npm package output)
+./scripts/test-package-contract.sh
+
+# Session isolation tests
+python3 -m pytest tests/property/test_session_isolation.py -v
+
+# Manual performance regression check (PG17)
+./scripts/perf-regression.sh
+
 # Single suite run (requires DB + installed schema)
 PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
   psql -d rrule_test -f tests/test_validation.sql
 ```
 
 **Current CI test inventory:**
-- `./test.sh --both` runs 62 SQL suites total (30 standard + 32 sub-day)
+- `./test.sh --both` runs 66 SQL suites total (32 standard + 34 sub-day)
 - Standard and sub-day installations are both exercised
-- CI quality gates: `./test.sh --both`, `./lint.sh`, `./lint-tests.sh`
+- CI quality gates: `./test.sh --both`, `npm run test:package-contract`, `./lint.sh`, `./lint-tests.sh`, and Python property tests (`pytest tests/property/`)
 
 ---
 
@@ -39,6 +51,7 @@ PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
 
 Coverage is organized as SQL suites under:
 - `tests/test_*.sql` (core API, validation, timezone, RFC, integration)
+- `tests/install/*.sql` (install + migration contracts)
 - `tests/matrix/*.sql` (parameter and behavior matrix coverage)
 - `tests/branches/*.sql` (branch-focused coverage)
 - `tests/security/*.sql` (budget/DoS protections)
@@ -48,6 +61,22 @@ Coverage is organized as SQL suites under:
 `./lint-tests.sh` enforces test SQL quality rules across these suites (transaction wrappers, assertion hygiene, ordering in `array_agg`, etc.).
 
 See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for prescriptive testing rules (assertion quality, transaction handling, deterministic assertions).
+
+### Manual Performance Regression Workflow (PG17)
+
+Performance regression checks are intentionally manual (not CI-gated) to avoid
+host-variance flakiness in pull requests.
+
+```bash
+# Run benchmark comparison against baseline (fails on >20% regressions)
+npm run test:perf
+
+# Refresh baseline medians after intentional performance changes
+npm run test:perf -- --update-baseline
+```
+
+Baseline file:
+- `tests/performance/perf_baseline_pg17.json`
 
 ---
 
@@ -78,7 +107,7 @@ See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for prescriptive testing rules 
    - Displays security warnings during installation
    - See [SUBDAY_OPERATIONS.md](docs/SUBDAY_OPERATIONS.md)
 
-4. **tests/**/*.sql** (62 suites in CI dual-mode run)
+4. **tests/**/*.sql** (66 suites in CI dual-mode run)
    - Core API/validation/timezone/integration suites
    - Matrix, branch, security, parity, mutation, and fuzz suites
    - Executed via `./test.sh` and validated by `./lint-tests.sh`
@@ -243,7 +272,7 @@ All RRULEs are validated **before** processing:
 
 ### Prerequisites
 
-- PostgreSQL 12+ (tested on 12, 13, 14, 15, 16)
+- PostgreSQL 17.x
 - psql command-line client
 - Git (for version control)
 
@@ -299,7 +328,7 @@ SET client_min_messages TO DEBUG;
 
 **Tests failing?**
 - Ensure fresh install (`DROP SCHEMA rrule CASCADE`)
-- Check PostgreSQL version (12+ required)
+- Check PostgreSQL version (17.x required)
 - Verify timezone data is up to date
 
 **Performance issues?**
