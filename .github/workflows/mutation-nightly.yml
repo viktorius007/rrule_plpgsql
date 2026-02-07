@@ -7,7 +7,7 @@ on:
 
 jobs:
   mutation-test:
-    name: Mutation Test (Advisory)
+    name: Mutation Test (Nightly Gate, Non-PR-Blocking)
     runs-on: ubuntu-latest
 
     services:

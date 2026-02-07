@@ -96,10 +96,15 @@ jobs:
           PGDATABASE: rrule_test
         run: pytest tests/property/ -v -k "not stateful_model" --hypothesis-profile=ci --hypothesis-seed=${{ github.run_id }}
 
-      - name: Run stateful model property tests
+      - name: Run stateful model property tests (seed 424242)
         env:
           PGDATABASE: rrule_test
         run: pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424242
+
+      - name: Run stateful model property tests (seed 424243)
+        env:
+          PGDATABASE: rrule_test
+        run: pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424243
 
       - name: Generate branch coverage report
         run: node scripts/coverage-report.js --json > /dev/null

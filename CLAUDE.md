@@ -45,6 +45,7 @@ python3 -m pytest tests/property/test_session_isolation.py -v
 # Property tests (CI split)
 python3 -m pytest tests/property/ -v -k "not stateful_model" --hypothesis-profile=ci --hypothesis-seed=424242
 python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424242
+python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424243
 
 # Coverage gates (branch + statement policies)
 npm run test:coverage:gates
@@ -141,7 +142,7 @@ GitHub Actions (`.github/workflows/test.yml`) runs on push/PR to main:
    - Standard statement coverage: `>= 80.00%` (blocking)
    - Subday statement coverage: warn `< 80.00%`, fail `< 50.00%`
 
-Mutation testing runs separately in `.github/workflows/mutation-nightly.yml` (scheduled + manual dispatch, advisory to PR flow).
+Mutation testing runs separately in `.github/workflows/mutation-nightly.yml` (scheduled + manual dispatch; nightly-gated but non-blocking to PR CI).
 
 All quality gates must pass. Uses PostgreSQL 17 and Node.js 20.
 

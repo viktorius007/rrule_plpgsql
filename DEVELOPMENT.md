@@ -35,11 +35,12 @@ python3 -m pytest tests/property/test_session_isolation.py -v
 # Property tests (CI split)
 python3 -m pytest tests/property/ -v -k "not stateful_model" --hypothesis-profile=ci --hypothesis-seed=424242
 python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424242
+python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424243
 
 # Coverage gates (branch + profiler statement thresholds)
 npm run test:coverage:gates
 
-# Mutation suite (also used by nightly advisory workflow)
+# Mutation suite (also used by nightly non-PR-blocking workflow)
 npm run test:mutations
 
 # Manual performance regression check (PG17)
@@ -61,7 +62,7 @@ PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
   - Branch coverage: blocking at `100.0%` with `0` untested branches
   - Statement coverage (standard install): blocking at `>= 80.00%`
   - Statement coverage (subday install): warning if `< 80.00%`, hard fail if `< 50.00%`
-- Mutation testing runs in scheduled advisory workflow: `.github/workflows/mutation-nightly.yml`
+- Mutation testing runs in a scheduled nightly gate workflow that is non-blocking for PR CI: `.github/workflows/mutation-nightly.yml`
 
 ---
 
