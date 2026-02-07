@@ -1689,7 +1689,7 @@ SELECT 'Duplicate parameters', 'Duplicate WKST rejected',
 -- Test: Duplicate TZID raises exception
 INSERT INTO validation_test_results (test_category, test_name, status)
 SELECT 'Duplicate parameters', 'Duplicate TZID rejected',
-    assert_rrule_rejected('Duplicate TZID', 'FREQ=DAILY;TZID=US/Eastern;TZID=US/Pacific;COUNT=3', '%Duplicate TZID%');
+    assert_rrule_rejected('Duplicate TZID', 'FREQ=DAILY;TZID=America/New_York;TZID=America/Los_Angeles;COUNT=3', '%Duplicate TZID%');
 
 -- Test: Duplicate BYDAY raises exception
 INSERT INTO validation_test_results (test_category, test_name, status)
