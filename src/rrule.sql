@@ -3078,7 +3078,7 @@ $$ LANGUAGE plpgsql VOLATILE;
 ------------------------------------------------------------------------------------------------------
 -- CONVENIENCE: rrule.next()
 --
--- Get the next occurrence from NOW (current timestamp) or a given reference time
+-- Get the next occurrence from UTC-normalized NOW or a given reference time
 -- Common use case: "When does this event occur next?"
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION "next"(
@@ -3092,7 +3092,7 @@ BEGIN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
-    RETURN rrule."after"(rrule_string, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP));
+    RETURN rrule."after"(rrule_string, dtstart, COALESCE(reference_time, (NOW() AT TIME ZONE 'UTC')::TIMESTAMP));
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
@@ -3100,7 +3100,7 @@ $$ LANGUAGE plpgsql VOLATILE;
 ------------------------------------------------------------------------------------------------------
 -- CONVENIENCE: rrule.most_recent()
 --
--- Get the most recent occurrence before NOW (current timestamp) or a given reference time
+-- Get the most recent occurrence before UTC-normalized NOW or a given reference time
 -- Common use case: "When did this event last occur?"
 ------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION "most_recent"(
@@ -3114,7 +3114,7 @@ BEGIN
         RAISE EXCEPTION 'dtstart is required and cannot be NULL';
     END IF;
 
-    RETURN rrule."before"(rrule_string, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP));
+    RETURN rrule."before"(rrule_string, dtstart, COALESCE(reference_time, (NOW() AT TIME ZONE 'UTC')::TIMESTAMP));
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
