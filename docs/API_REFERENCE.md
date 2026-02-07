@@ -391,18 +391,20 @@ Returns the most recent occurrence before `reference_time` (or `NOW()` when NULL
 
 ## Convenience Methods
 
+**Compatibility note (February 7, 2026):** For TIMESTAMP convenience overloads only (`rrule."next"` and `rrule."most_recent"`), `reference_time IS NULL` now evaluates as `(NOW() AT TIME ZONE 'UTC')::TIMESTAMP` to avoid session-timezone variance.
+
 ### `rrule."next"(rrule, dtstart, reference_time DEFAULT NULL) -> TIMESTAMP`
 
-Get the next occurrence from NOW (current timestamp) or a provided reference timestamp.
+Get the next occurrence from UTC-normalized NOW (current timestamp) or a provided reference timestamp.
 
 **Common use case:** "When does this event occur next?"
 
 **Parameters:**
 - `rrule`: `VARCHAR` - RRULE string
 - `dtstart`: `TIMESTAMP` - Start date/time
-- `reference_time`: `TIMESTAMP` (optional) - Reference time. Defaults to `NOW()::TIMESTAMP` when NULL.
+- `reference_time`: `TIMESTAMP` (optional) - Reference time. Defaults to `(NOW() AT TIME ZONE 'UTC')::TIMESTAMP` when NULL.
 
-**Returns:** `TIMESTAMP` - Next occurrence from `reference_time` (or NOW when NULL)
+**Returns:** `TIMESTAMP` - Next occurrence from `reference_time` (or UTC-normalized NOW when NULL)
 
 **Example:**
 ```sql
@@ -412,22 +414,22 @@ SELECT rrule."next"(
 ) AS next_monday;
 ```
 
-**Note:** Equivalent to `rrule."after"(rrule, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP), inc DEFAULT false)`
+**Note:** Equivalent to `rrule."after"(rrule, dtstart, COALESCE(reference_time, (NOW() AT TIME ZONE 'UTC')::TIMESTAMP), inc DEFAULT false)`
 
 ---
 
 ### `rrule."most_recent"(rrule, dtstart, reference_time DEFAULT NULL) -> TIMESTAMP`
 
-Get the most recent occurrence before NOW or a provided reference timestamp.
+Get the most recent occurrence before UTC-normalized NOW or a provided reference timestamp.
 
 **Common use case:** "When did this event last occur?"
 
 **Parameters:**
 - `rrule`: `VARCHAR` - RRULE string
 - `dtstart`: `TIMESTAMP` - Start date/time
-- `reference_time`: `TIMESTAMP` (optional) - Reference time. Defaults to `NOW()::TIMESTAMP` when NULL.
+- `reference_time`: `TIMESTAMP` (optional) - Reference time. Defaults to `(NOW() AT TIME ZONE 'UTC')::TIMESTAMP` when NULL.
 
-**Returns:** `TIMESTAMP` - Most recent occurrence before `reference_time` (or NOW when NULL)
+**Returns:** `TIMESTAMP` - Most recent occurrence before `reference_time` (or UTC-normalized NOW when NULL)
 
 **Example:**
 ```sql
@@ -437,7 +439,7 @@ SELECT rrule."most_recent"(
 ) AS last_occurrence;
 ```
 
-**Note:** Equivalent to `rrule."before"(rrule, dtstart, COALESCE(reference_time, NOW()::TIMESTAMP), inc DEFAULT false)`
+**Note:** Equivalent to `rrule."before"(rrule, dtstart, COALESCE(reference_time, (NOW() AT TIME ZONE 'UTC')::TIMESTAMP), inc DEFAULT false)`
 
 ---
 

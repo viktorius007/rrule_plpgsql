@@ -153,7 +153,7 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 
 4. **Linting Required:** `plpgsql_check` must report 0 errors and 0 warnings. `lint-tests.sh` must also pass (static SQL coding standards).
 
-5. **Type Safety:** Use explicit parameter types, proper NULL handling with `IS DISTINCT FROM` (never `= NULL` / `<> NULL` / `!= NULL`). Mark functions VOLATILE (cursors, SET timezone, set_config), STABLE (internal computation calling other STABLE/VOLATILE functions), or IMMUTABLE (pure-computation helpers only: `weekday_to_number`, `byweekno_matches`, `calculate_safe_iteration_limit`, `version`, `_restore_monthly_base`, `_restore_yearly_base`).
+5. **Type Safety:** Use explicit parameter types, proper NULL handling with `IS DISTINCT FROM` (never `= NULL` / `<> NULL` / `!= NULL`). Mark functions VOLATILE (cursors, SET timezone, set_config), STABLE (internal computation calling other STABLE/VOLATILE functions, including timezone-sensitive restore helpers), or IMMUTABLE (pure-computation helpers only: `weekday_to_number`, `byweekno_matches`, `calculate_safe_iteration_limit`, `version`).
 
 6. **Security:** Sub-day frequencies are disabled by default to prevent DoS (31M+ occurrences/year for SECONDLY). Changes to this require explicit justification.
 
@@ -180,6 +180,10 @@ The TIMESTAMPTZ API wraps the TIMESTAMP API by converting to/from a target timez
 17. **Verify property test strategies generate expected values:** When extending Hypothesis strategies (e.g., adding negative BYWEEKNO), verify the strategy actually generates the new values by sampling with a quick script.
 
 18. **Profiler 0% coverage means the function was never called:** The `plpgsql_check` profiler accurately counts all PL/pgSQL executions. If a function shows 0%, it wasn't called during the profiler run — not a measurement limitation. The profiler script has its own test workload separate from the test suite; ensure it exercises all code paths. Example: `byweekno_matches()` showed 0% because the profiler workload only had pure BYWEEKNO rules (which use a generator path), not BYMONTH+BYWEEKNO rules (which use `byweekno_matches` as a filter).
+
+19. **Parser token-boundary hardening must preserve RRULE property-prefix compatibility:** When anchoring parser regex patterns to `(^|;)PARAM=`, keep support for iCalendar-style `RRULE:` prefixes (e.g., `RRULE:FREQ=DAILY;COUNT=3`) by normalizing/removing the prefix before parsing.
+
+20. **Timezone-variance tests must be deterministic:** Do not use `NOW()`/clock-relative values in SQL tests. Use fixed timestamps plus explicit `SET TimeZone` values to exercise variance/invariance paths.
 
 ## RRULE Parameters Supported
 
