@@ -50,6 +50,15 @@ jobs:
           echo "Installing plpgsql_check in postgres service container: $CONTAINER_ID"
           docker exec --user root "$CONTAINER_ID" bash -lc \
             "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-17-plpgsql-check"
+          docker exec "$CONTAINER_ID" psql -U postgres -d postgres -c \
+            "ALTER SYSTEM SET shared_preload_libraries = 'plpgsql_check';"
+          docker restart "$CONTAINER_ID" > /dev/null
+          for i in {1..30}; do
+            if psql -d postgres -c "SELECT 1" > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
           psql -d postgres -c "CREATE EXTENSION IF NOT EXISTS plpgsql_check;"
 
       - name: Run test suite (standard + sub-day)

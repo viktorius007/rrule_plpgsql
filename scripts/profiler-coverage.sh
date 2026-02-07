@@ -910,7 +910,7 @@ run_profiled_tests_and_report() {
   TEST_SQL=$(generate_test_workload)
 
   # Run everything in a single psql session to preserve profiler state
-  psql -d "$DB" -t -A << EOFMAIN > "$REPORT_FILE"
+psql -d "$DB" -t -A << EOFMAIN > "$REPORT_FILE"
 -- Enable the profiler for this session
 SET plpgsql_check.profiler TO on;
 
