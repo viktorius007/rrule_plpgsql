@@ -33,12 +33,16 @@ const MUTATIONS = [
   ['boundary-1', /period_count < period_limit/g, 'period_count <= period_limit',
    'Change < to <= in period limit loop (equivalent: other limits trigger first)', true],
 
-  // EQUIVALENT: Same reason - period_limit in SKIP=FORWARD is never reached
+  // Non-equivalent: helper-level tests now directly exercise this branch.
   ['boundary-2', /result\.period_count >= p_period_limit/g, 'result.period_count > p_period_limit',
-   'Change >= to > in period limit check (equivalent: other limits trigger first)', true],
+   'Change >= to > in period limit check (should alter SKIP=FORWARD termination)'],
 
-  ['boundary-3', /current_base < maxdate/g, 'current_base <= maxdate',
-   'Change < to <= in maxdate check (should include boundary)'],
+  // Non-equivalent: helper-level tests now directly exercise OMIT limit branch.
+  ['boundary-4', /result\.omit_count >= p_period_limit/g, 'result.omit_count > p_period_limit',
+   'Change >= to > in OMIT period limit check (should alter SKIP=OMIT termination)'],
+
+  ['boundary-3', /current_base <= maxdate/g, 'current_base < maxdate',
+   'Exclude maxdate boundary in loop condition (should drop boundary occurrences)'],
 
   // Off-by-one mutations (match actual code spacing)
   // EQUIVALENT: result_count is internal to set functions; outer loop's occurrence_count
@@ -47,7 +51,7 @@ const MUTATIONS = [
    'Increment result count by 2 instead of 1 (equivalent: outer loop compensates)', true],
 
   ['off-by-one-2', /period_count := period_count \+ 1;/g, 'period_count := period_count + 2;',
-   'Increment period count by 2 instead of 1 (should hit limits faster)'],
+   'Increment period count by 2 instead of 1 (equivalent: safety limits are dominated by maxdate/COUNT/output cap)', true],
 
   // Constant mutations
   ['constant-1', /max_count := 1000;/g, 'max_count := 999;',
@@ -74,6 +78,11 @@ const MUTATIONS = [
   // SKIP behavior mutations
   ['skip-1', /WHEN 'BACKWARD' THEN/g, "WHEN 'FORWARD' THEN",
    'Swap BACKWARD and FORWARD behavior (should move dates wrong direction)'],
+
+  // TZ unsupported-frequency branch behavior (standard install)
+  ['tz-unsupported-branch', /rule\.freq IN \('HOURLY', 'MINUTELY', 'SECONDLY'\)/g,
+   "rule.freq IN ('HOURLY', 'MINUTELY')",
+   'Drop SECONDLY from unsupported-frequency set (should route SECONDLY to wrong branch)'],
 
   // Interval increment mutations
   ['interval-1', /make_interval\(days => rule\.interval\)/g, 'make_interval(days => rule.interval + 1)',

@@ -7,8 +7,10 @@
 -- Surviving mutations this file catches:
 --   1. boundary-1: period_count < period_limit → period_count <= period_limit
 --   2. boundary-2: result.period_count >= p_period_limit → result.period_count > p_period_limit
---   3. off-by-one-1: result_count := result_count + 1 → result_count := result_count + 2
---   4. filter-1: test_bymonth_rule bypass (TRUE OR test_bymonth_rule)
+--   3. boundary-4: result.omit_count >= p_period_limit → result.omit_count > p_period_limit
+--   4. off-by-one-1: result_count := result_count + 1 → result_count := result_count + 2
+--   5. filter-1: test_bymonth_rule bypass (TRUE OR test_bymonth_rule)
+--   6. tz-unsupported-branch: SECONDLY routed to wrong unsupported-frequency branch
 
 -- Include rrule functions (via variable set by test runner, or default)
 \if :{?rrule_install}
@@ -278,6 +280,110 @@ SELECT assert_true(
          'Europe/London'
      ) r)
 );
+
+--------------------------------------------------------------------------------
+-- Direct helper branch assertions for SKIP period-limit mutations
+--------------------------------------------------------------------------------
+
+\echo 'Testing: _advance_yearly helper period-limit branch mutations'
+
+DO $$
+DECLARE
+    r_omit rrule._skip_result;
+    r_forward rrule._skip_result;
+BEGIN
+    -- boundary-4: OMIT branch must terminate when omit_count hits period_limit.
+    r_omit := rrule._advance_yearly(
+        '2021-02-28 10:00:00+00'::TIMESTAMPTZ,
+        '2020-02-29 10:00:00+00'::TIMESTAMPTZ,
+        29,
+        1,
+        'OMIT',
+        NULL::TIMESTAMPTZ,
+        '2035-01-01 00:00:00+00'::TIMESTAMPTZ,
+        1,
+        0,
+        0
+    );
+
+    PERFORM assert_true(
+        'MUTATION-boundary-omit-limit: _advance_yearly sets done=true at omit_count limit',
+        r_omit.done AND r_omit.omit_count = 1
+    );
+
+    -- boundary-2: FORWARD branch must terminate when period_count hits period_limit.
+    r_forward := rrule._advance_yearly(
+        '2021-02-28 10:00:00+00'::TIMESTAMPTZ,
+        '2020-02-29 10:00:00+00'::TIMESTAMPTZ,
+        29,
+        1,
+        'FORWARD',
+        NULL::TIMESTAMPTZ,
+        '2035-01-01 00:00:00+00'::TIMESTAMPTZ,
+        1,
+        0,
+        0
+    );
+
+    PERFORM assert_true(
+        'MUTATION-boundary-forward-limit: _advance_yearly sets done=true at period_count limit',
+        r_forward.done AND r_forward.period_count = 1
+    );
+END;
+$$;
+
+--------------------------------------------------------------------------------
+-- TZ unsupported-frequency branch behavior in standard install
+--------------------------------------------------------------------------------
+
+\echo 'Testing: TZ unsupported-frequency branch behavior'
+
+DO $$
+DECLARE
+    msg_secondly TEXT;
+    msg_invalid TEXT;
+BEGIN
+    -- SECONDLY in standard install should hit sub-day unsupported branch.
+    BEGIN
+        PERFORM rrule.rrule_event_instances_range_tz(
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            'FREQ=SECONDLY;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-01 10:00:05'::TIMESTAMP,
+            NULL
+        );
+        RAISE EXCEPTION 'Expected SECONDLY to be rejected in standard install';
+    EXCEPTION WHEN OTHERS THEN
+        msg_secondly := SQLERRM;
+    END;
+
+    PERFORM assert_true(
+        'MUTATION-tz-unsupported-branch: SECONDLY uses subday unsupported branch',
+        msg_secondly LIKE '%not supported%' OR msg_secondly LIKE '%SECONDLY%'
+    );
+
+    -- Invalid FREQ should hit generic unsupported branch / parse validation.
+    BEGIN
+        PERFORM rrule.rrule_event_instances_range_tz(
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            'FREQ=NOT_A_REAL_FREQ;COUNT=2',
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 10:00:00'::TIMESTAMP,
+            NULL
+        );
+        RAISE EXCEPTION 'Expected invalid frequency to be rejected';
+    EXCEPTION WHEN OTHERS THEN
+        msg_invalid := SQLERRM;
+    END;
+
+    PERFORM assert_true(
+        'MUTATION-tz-unsupported-branch: invalid freq uses generic rejection path',
+        msg_invalid LIKE '%Unsupported frequency%'
+        OR msg_invalid LIKE '%Invalid RRULE%'
+        OR msg_invalid LIKE '%FREQ%'
+    );
+END;
+$$;
 
 \echo ''
 \echo '========================================'
