@@ -46,9 +46,11 @@ jobs:
 
       - name: Install plpgsql_check extension
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-17-plpgsql-check || \
-          sudo apt-get install -y postgresql-plpgsql-check
+          CONTAINER_ID="${{ job.services.postgres.id }}"
+          echo "Installing plpgsql_check in postgres service container: $CONTAINER_ID"
+          docker exec --user root "$CONTAINER_ID" bash -lc \
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-17-plpgsql-check"
+          psql -d postgres -c "CREATE EXTENSION IF NOT EXISTS plpgsql_check;"
 
       - name: Run test suite (standard + sub-day)
         env:
