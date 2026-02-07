@@ -108,14 +108,21 @@ DECLARE
   until_str TEXT;
   original_tzid TEXT;
 BEGIN
+  -- Normalize surrounding whitespace so token-boundary parsing remains robust.
+  repeatrule := btrim(repeatrule);
+
+  -- Accept optional iCalendar property prefix (e.g., "RRULE:FREQ=DAILY;COUNT=5")
+  -- before parsing the RRULE payload.
+  repeatrule := regexp_replace(repeatrule, '^[[:space:]]*[Rr][Rr][Uu][Ll][Ee]:[[:space:]]*', '');
+
   -- Preserve TZID case before normalizing (timezone names are case-sensitive)
-  original_tzid := substring(repeatrule from '[Tt][Zz][Ii][Dd]=([^;]+)(;|$)');
+  original_tzid := substring(repeatrule from '(?:^|;)[Tt][Zz][Ii][Dd]=([^;]+)(?:;|$)');
   -- Normalize input to uppercase for case-insensitive matching
   -- RFC 5545 uses uppercase, but we accept lowercase for user convenience
   repeatrule := UPPER(repeatrule);
 
   result.base       := basedate;
-  until_str         := substring(repeatrule from 'UNTIL=([0-9TZ]+)(;|$)');
+  until_str         := substring(repeatrule from '(?:^|;)UNTIL=([0-9TZ]+)(?:;|$)');
 
   -- Validate and assign UNTIL with helpful error message
   -- Design decision: DECISIONS.md #4 — UNTIL must be UTC DATE-TIME with Z suffix.
@@ -140,10 +147,10 @@ BEGIN
     END;
   END IF;
 
-  result.freq       := substring(repeatrule from 'FREQ=([A-Z]+)(;|$)');
+  result.freq       := substring(repeatrule from '(?:^|;)FREQ=([A-Z]+)(?:;|$)');
 
   -- Reject duplicate FREQ parameters (e.g., "FREQ=DAILY;FREQ=WEEKLY")
-  IF repeatrule ~ 'FREQ=[A-Z]+.*;.*FREQ=' THEN
+  IF (SELECT COUNT(*) FROM regexp_matches(repeatrule, '(^|;)FREQ=', 'g')) > 1 THEN
     RAISE EXCEPTION 'Invalid RRULE: Duplicate FREQ parameter. Only one FREQ is allowed per RRULE.  RFC 5545 Section 3.3.10: Each rule part MUST only be specified once.';
   END IF;
 
@@ -163,12 +170,12 @@ BEGIN
   END;
 
   -- Check for negative COUNT value in raw RRULE string before parsing
-  IF repeatrule ~* 'COUNT=-' THEN
+  IF repeatrule ~* '(^|;)COUNT=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: COUNT must be a positive integer';
   END IF;
   -- Only the cast is inside the exception block
   BEGIN
-    result.count      := substring(repeatrule from 'COUNT=([0-9]+)(;|$)')::INT;
+    result.count      := substring(repeatrule from '(?:^|;)COUNT=([0-9]+)(?:;|$)')::INT;
   EXCEPTION
     WHEN OTHERS THEN
       RAISE EXCEPTION 'Invalid RRULE: COUNT value out of range: must be a valid integer. Error: %',
@@ -176,38 +183,38 @@ BEGIN
   END;
 
   -- Check for negative INTERVAL value in raw RRULE string before parsing
-  IF repeatrule ~* 'INTERVAL=-' THEN
+  IF repeatrule ~* '(^|;)INTERVAL=-' THEN
     RAISE EXCEPTION 'Invalid RRULE: INTERVAL must be a positive integer';
   END IF;
   -- Only the cast is inside the exception block
   BEGIN
-    result.interval   := COALESCE(substring(repeatrule from 'INTERVAL=([0-9]+)(;|$)')::INT, 1);
+    result.interval   := COALESCE(substring(repeatrule from '(?:^|;)INTERVAL=([0-9]+)(?:;|$)')::INT, 1);
   EXCEPTION
     WHEN OTHERS THEN
       RAISE EXCEPTION 'Invalid RRULE: INTERVAL value out of range: must be a valid integer. Error: %',
         SQLERRM;
   END;
 
-  result.wkst       := substring(repeatrule from 'WKST=(MO|TU|WE|TH|FR|SA|SU)(;|$)');
+  result.wkst       := substring(repeatrule from '(?:^|;)WKST=(MO|TU|WE|TH|FR|SA|SU)(?:;|$)');
   -- Validate WKST: if WKST= was specified but didn't match a valid day, reject it
-  IF result.wkst IS NULL AND repeatrule ~ 'WKST=' THEN
+  IF result.wkst IS NULL AND repeatrule ~ '(^|;)WKST=' THEN
     RAISE EXCEPTION 'Invalid WKST value. WKST must be one of: MO, TU, WE, TH, FR, SA, SU';
   END IF;
   result.tzid       := original_tzid;  -- Use preserved case from before uppercase normalization
 
   -- RFC 7529: RSCALE parameter (calendar system)
-  result.rscale     := UPPER(substring(repeatrule from 'RSCALE=([A-Za-z]+)(;|$)'));
+  result.rscale     := UPPER(substring(repeatrule from '(?:^|;)RSCALE=([A-Za-z]+)(?:;|$)'));
 
   -- RFC 7529: SKIP parameter
-  result.skip       := COALESCE(UPPER(substring(repeatrule from 'SKIP=([A-Za-z]+)(;|$)')), 'OMIT');
+  result.skip       := COALESCE(UPPER(substring(repeatrule from '(?:^|;)SKIP=([A-Za-z]+)(?:;|$)')), 'OMIT');
 
   -- Validate SKIP: if SKIP= was specified but didn't match a valid value, reject it
-  IF result.skip NOT IN ('OMIT', 'BACKWARD', 'FORWARD') AND repeatrule ~* 'SKIP=' THEN
+  IF result.skip NOT IN ('OMIT', 'BACKWARD', 'FORWARD') AND repeatrule ~* '(^|;)SKIP=' THEN
     RAISE EXCEPTION 'Invalid SKIP value. SKIP must be one of: OMIT, BACKWARD, FORWARD';
   END IF;
 
   -- Validate RSCALE: if RSCALE= was specified but didn't match a valid value, reject it
-  IF result.rscale IS NULL AND repeatrule ~ 'RSCALE=' THEN
+  IF result.rscale IS NULL AND repeatrule ~ '(^|;)RSCALE=' THEN
     RAISE EXCEPTION 'Invalid RRULE: RSCALE value could not be parsed. RSCALE requires an alphabetic calendar name (e.g., RSCALE=GREGORIAN).';
   END IF;
 
@@ -224,12 +231,12 @@ BEGIN
   END IF;
 
   result.byday      := array_remove(
-                         string_to_array( substring(repeatrule from 'BYDAY=(([+-]?[0-9]{0,2}(MO|TU|WE|TH|FR|SA|SU),?)+)(;|$)'), ','),
+                         string_to_array( substring(repeatrule from '(?:^|;)BYDAY=(([+-]?[0-9]{0,2}(?:MO|TU|WE|TH|FR|SA|SU),?)+)(?:;|$)'), ','),
                          '');
 
   BEGIN
     result.byyearday  := array_remove(
-                           string_to_array(substring(repeatrule from 'BYYEARDAY=([0-9,+-]+)(;|$)'), ','),
+                           string_to_array(substring(repeatrule from '(?:^|;)BYYEARDAY=([0-9,+-]+)(?:;|$)'), ','),
                            '');
   EXCEPTION
     WHEN OTHERS THEN
@@ -238,7 +245,7 @@ BEGIN
   END;
   BEGIN
     result.byweekno   := array_remove(
-                           string_to_array(substring(repeatrule from 'BYWEEKNO=([0-9,+-]+)(;|$)'), ','),
+                           string_to_array(substring(repeatrule from '(?:^|;)BYWEEKNO=([0-9,+-]+)(?:;|$)'), ','),
                            '');
   EXCEPTION
     WHEN OTHERS THEN
@@ -247,7 +254,7 @@ BEGIN
   END;
   BEGIN
     result.bymonthday := array_remove(
-                           string_to_array(substring(repeatrule from 'BYMONTHDAY=([0-9,+-]+)(;|$)'), ','),
+                           string_to_array(substring(repeatrule from '(?:^|;)BYMONTHDAY=([0-9,+-]+)(?:;|$)'), ','),
                            '');
   EXCEPTION
     WHEN OTHERS THEN
@@ -255,10 +262,10 @@ BEGIN
         SQLERRM;
   END;
   result.bymonth    := array_remove(
-                         string_to_array(substring(repeatrule from 'BYMONTH=(([+-]?[0-1]?[0-9],?)+)(;|$)'), ','),
+                         string_to_array(substring(repeatrule from '(?:^|;)BYMONTH=(([+-]?[0-1]?[0-9],?)+)(?:;|$)'), ','),
                          '');
   result.bysetpos   := array_remove(
-                         string_to_array(substring(repeatrule from 'BYSETPOS=(([+-]?[0-9]{1,3},?)+)(;|$)'), ','),
+                         string_to_array(substring(repeatrule from '(?:^|;)BYSETPOS=(([+-]?[0-9]{1,3},?)+)(?:;|$)'), ','),
                          '');
 
   -- Deduplicate BYYEARDAY and BYWEEKNO arrays to prevent duplicate occurrence generation
@@ -277,13 +284,13 @@ BEGIN
   END IF;
 
   result.bysecond   := array_remove(
-                         string_to_array(substring(repeatrule from 'BYSECOND=([0-9,+-]+)(;|$)'), ','),
+                         string_to_array(substring(repeatrule from '(?:^|;)BYSECOND=([0-9,+-]+)(?:;|$)'), ','),
                          '');
   result.byminute   := array_remove(
-                         string_to_array(substring(repeatrule from 'BYMINUTE=([0-9,+-]+)(;|$)'), ','),
+                         string_to_array(substring(repeatrule from '(?:^|;)BYMINUTE=([0-9,+-]+)(?:;|$)'), ','),
                          '');
   result.byhour     := array_remove(
-                         string_to_array(substring(repeatrule from 'BYHOUR=([0-9,+-]+)(;|$)'), ','),
+                         string_to_array(substring(repeatrule from '(?:^|;)BYHOUR=([0-9,+-]+)(?:;|$)'), ','),
                          '');
 
   -- Deduplicate BYHOUR, BYMINUTE, BYSECOND arrays to prevent duplicate timestamp generation
@@ -315,39 +322,39 @@ BEGIN
   -- checks, malformed values silently become NULL and skip all validation.
   -- Pattern matches WKST (line 109) and SKIP (line 121) validation style.
 
-  IF result.byday IS NULL AND repeatrule ~ 'BYDAY=' THEN
+  IF result.byday IS NULL AND repeatrule ~ '(^|;)BYDAY=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYDAY value could not be parsed. BYDAY requires comma-separated day codes (MO,TU,WE,TH,FR,SA,SU) with optional ordinals (e.g., BYDAY=MO,WE,FR or BYDAY=2MO,-1FR).';
   END IF;
 
-  IF result.byyearday IS NULL AND repeatrule ~ 'BYYEARDAY=' THEN
+  IF result.byyearday IS NULL AND repeatrule ~ '(^|;)BYYEARDAY=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYYEARDAY value could not be parsed. BYYEARDAY requires comma-separated integers ±1-366 (e.g., BYYEARDAY=1,100,-1).';
   END IF;
 
-  IF result.byweekno IS NULL AND repeatrule ~ 'BYWEEKNO=' THEN
+  IF result.byweekno IS NULL AND repeatrule ~ '(^|;)BYWEEKNO=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYWEEKNO value could not be parsed. BYWEEKNO requires comma-separated integers ±1-53 (e.g., BYWEEKNO=1,20).';
   END IF;
 
-  IF result.bymonthday IS NULL AND repeatrule ~ 'BYMONTHDAY=' THEN
+  IF result.bymonthday IS NULL AND repeatrule ~ '(^|;)BYMONTHDAY=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYMONTHDAY value could not be parsed. BYMONTHDAY requires comma-separated integers ±1-31 (e.g., BYMONTHDAY=1,15,-1).';
   END IF;
 
-  IF result.bymonth IS NULL AND repeatrule ~ 'BYMONTH=' THEN
+  IF result.bymonth IS NULL AND repeatrule ~ '(^|;)BYMONTH=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYMONTH value could not be parsed. BYMONTH requires comma-separated integers 1-12 (e.g., BYMONTH=1,6,12).';
   END IF;
 
-  IF result.bysetpos IS NULL AND repeatrule ~ 'BYSETPOS=' THEN
+  IF result.bysetpos IS NULL AND repeatrule ~ '(^|;)BYSETPOS=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYSETPOS value could not be parsed. BYSETPOS requires comma-separated integers ±1-366 (e.g., BYSETPOS=1,-1).';
   END IF;
 
-  IF result.bysecond IS NULL AND repeatrule ~ 'BYSECOND=' THEN
+  IF result.bysecond IS NULL AND repeatrule ~ '(^|;)BYSECOND=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYSECOND value could not be parsed. BYSECOND requires comma-separated integers 0-60 (e.g., BYSECOND=0,30).';
   END IF;
 
-  IF result.byminute IS NULL AND repeatrule ~ 'BYMINUTE=' THEN
+  IF result.byminute IS NULL AND repeatrule ~ '(^|;)BYMINUTE=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYMINUTE value could not be parsed. BYMINUTE requires comma-separated integers 0-59 (e.g., BYMINUTE=0,15,30,45).';
   END IF;
 
-  IF result.byhour IS NULL AND repeatrule ~ 'BYHOUR=' THEN
+  IF result.byhour IS NULL AND repeatrule ~ '(^|;)BYHOUR=' THEN
     RAISE EXCEPTION 'Invalid RRULE: BYHOUR value could not be parsed. BYHOUR requires comma-separated integers 0-23 (e.g., BYHOUR=9,17).';
   END IF;
 
