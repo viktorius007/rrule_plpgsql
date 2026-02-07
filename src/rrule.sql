@@ -1386,7 +1386,7 @@ BEGIN
         + make_interval(days => LEAST(p_dtstart_day, month_end_day) - 1)
         + p_base_time;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
@@ -1418,7 +1418,7 @@ BEGIN
         + make_interval(days => LEAST(p_dtstart_day, month_end_day) - 1)
         + p_base_time;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 
 ------------------------------------------------------------------------------------------------------
