@@ -40,7 +40,7 @@ export PGPORT="${PGPORT:-54322}"
 export PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-postgres}"
 
-_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/-.' '_' || echo "default")
+_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's#[/.-]#_#g' || echo "default")
 DB="${DATABASE_URL:-rrule_test_${_BRANCH}}"
 MODE="${1:---standard}"
 
