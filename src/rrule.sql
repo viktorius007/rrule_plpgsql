@@ -2775,6 +2775,7 @@ DECLARE
     dtstart_utc TIMESTAMPTZ;
     start_utc TIMESTAMPTZ;
     end_utc TIMESTAMPTZ;
+    boundary_extension INTERVAL;
     tzid TEXT;
 BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
@@ -2822,18 +2823,30 @@ BEGIN
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     start_utc := start_date AT TIME ZONE 'UTC';
     end_utc := end_date AT TIME ZONE 'UTC';
+    -- Extend maxdate to include the full period that can emit candidates <= end_utc.
+    -- Some BYxxx paths (e.g., YEARLY+BYWEEKNO, MONTHLY/WEEKLY BYDAY) can emit
+    -- occurrences earlier than current_base within the same period.
+    IF rrule_string ~* '(^|;|RRULE:)FREQ=YEARLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 year';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=MONTHLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 month';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=WEEKLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 week';
+    ELSE
+        boundary_extension := INTERVAL '1 day';
+    END IF;
     -- Clamp end_utc to dtstart + 10 years (matching all()'s behavior) to prevent DoS on sparse rules
     end_utc := LEAST(end_utc, dtstart_utc + INTERVAL '10 years');
 
     -- Generate occurrences in UTC space (naive timestamps treated as UTC)
-    -- When inc=true, extend maxdate by 1 day so the range function generates the boundary period
+    -- Maxdate is extended by one full frequency period so boundary-period candidates are generated.
     RETURN QUERY
         SELECT (d AT TIME ZONE 'UTC')::TIMESTAMP
         FROM rrule.rrule_event_instances_range(
             dtstart_utc,
             rrule_string,
             start_utc,
-            end_utc + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+            end_utc + boundary_extension,
             max_count
         ) d
         WHERE CASE
@@ -2946,6 +2959,7 @@ DECLARE
     dtstart_utc TIMESTAMPTZ;
     before_utc TIMESTAMPTZ;
     maxdate_utc TIMESTAMPTZ;
+    boundary_extension INTERVAL;
     tzid TEXT;
     scan_count BIGINT;
     has_bound BOOLEAN;
@@ -2991,8 +3005,17 @@ BEGIN
     -- This avoids scanning beyond the boundary (up to 10 years)
     dtstart_utc := dtstart AT TIME ZONE 'UTC';
     before_utc := before_date AT TIME ZONE 'UTC';
-    -- Add 1 day buffer when inc=true so the range function generates the boundary period
-    maxdate_utc := before_utc + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END;
+    -- Extend maxdate to include the full period that can emit candidates <= before_utc.
+    IF rrule_string ~* '(^|;|RRULE:)FREQ=YEARLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 year';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=MONTHLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 month';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=WEEKLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 week';
+    ELSE
+        boundary_extension := INTERVAL '1 day';
+    END IF;
+    maxdate_utc := before_utc + boundary_extension;
 
     -- before() must scan all occurrences up to before_date to find the last one,
     -- so we pass a large output_limit to avoid truncation by the generator.
@@ -3504,6 +3527,7 @@ DECLARE
     wall_clock_start TIMESTAMP;
     wall_clock_range_start TIMESTAMP;
     wall_clock_range_end TIMESTAMP;
+    boundary_extension INTERVAL;
     naive_occurrence TIMESTAMP;
 BEGIN
     -- Reject NULL RRULE early (STRICT on internal functions would silently return empty)
@@ -3540,19 +3564,27 @@ BEGIN
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_range_start := range_start AT TIME ZONE tz_name;
     wall_clock_range_end := range_end AT TIME ZONE tz_name;
+    -- Extend maxdate to include the full period that can emit candidates <= range_end.
+    IF rrule_string ~* '(^|;|RRULE:)FREQ=YEARLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 year';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=MONTHLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 month';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=WEEKLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 week';
+    ELSE
+        boundary_extension := INTERVAL '1 day';
+    END IF;
     -- Clamp range end to dtstart + 10 years (matching all()'s behavior) to prevent DoS on sparse rules
     wall_clock_range_end := LEAST(wall_clock_range_end, wall_clock_start + INTERVAL '10 years');
 
-    -- Generate occurrences
-    -- When inc=true, extend maxdate by 1 day to ensure occurrences exactly at range_end are generated.
-    -- The range function uses current_base <= maxdate, but period-based frequencies may not generate
-    -- an occurrence exactly at the boundary without this extension.
+    -- Generate occurrences.
+    -- Maxdate is extended by one full frequency period so boundary-period candidates are generated.
     FOR naive_occurrence IN
         SELECT * FROM rrule.rrule_event_instances_range_tz(
             wall_clock_start,
             rrule_string,
             wall_clock_range_start,
-            wall_clock_range_end + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+            wall_clock_range_end + boundary_extension,
             1000
         )
     LOOP
@@ -3676,6 +3708,7 @@ DECLARE
     tz_name TEXT;
     wall_clock_start TIMESTAMP;
     wall_clock_before TIMESTAMP;
+    boundary_extension INTERVAL;
     scan_count BIGINT := 0;
     has_bound BOOLEAN;
 BEGIN
@@ -3718,6 +3751,16 @@ BEGIN
     -- Convert to wall-clock time
     wall_clock_start := dtstart AT TIME ZONE tz_name;
     wall_clock_before := before_date AT TIME ZONE tz_name;
+    -- Extend maxdate to include the full period that can emit candidates <= wall_clock_before.
+    IF rrule_string ~* '(^|;|RRULE:)FREQ=YEARLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 year';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=MONTHLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 month';
+    ELSIF rrule_string ~* '(^|;|RRULE:)FREQ=WEEKLY(;|$)' THEN
+        boundary_extension := INTERVAL '1 week';
+    ELSE
+        boundary_extension := INTERVAL '1 day';
+    END IF;
 
     -- Generate all occurrences up to before_date, then select the last N using ORDER BY DESC LIMIT.
     -- This avoids materializing large arrays in PL/pgSQL memory.
@@ -3732,7 +3775,7 @@ BEGIN
         wall_clock_start,
         rrule_string,
         wall_clock_start,
-        wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+        wall_clock_before + boundary_extension,
         1000000
     ) AS d
     WHERE CASE
@@ -3755,7 +3798,7 @@ BEGIN
                 wall_clock_start,
                 rrule_string,
                 wall_clock_start,
-                wall_clock_before + CASE WHEN inc THEN INTERVAL '1 day' ELSE INTERVAL '0' END,
+                wall_clock_before + boundary_extension,
                 1000000
             ) AS d
             WHERE CASE
