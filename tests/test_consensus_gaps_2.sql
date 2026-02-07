@@ -623,8 +623,8 @@ VALUES ('count<=0 boundary', 'before() count=-1 returns empty set',
 
 -- ===================================================================
 -- GROUP 9: TIMESTAMP API next() and most_recent()
--- These functions use NOW()::TIMESTAMP as default and delegate to
--- after()/before(). No test calls the TIMESTAMP signature directly.
+-- These functions use a UTC-normalized current timestamp default and delegate to
+-- after()/before(). This group exercises the TIMESTAMP signature directly.
 -- ===================================================================
 \echo ''
 \echo '==================================================================='

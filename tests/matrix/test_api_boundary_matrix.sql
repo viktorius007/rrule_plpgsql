@@ -139,6 +139,16 @@ SELECT assert_equals('all-dtstart-epoch', '5',
 SELECT assert_equals('all-dtstart-future', '5',
     (SELECT COUNT(*)::TEXT FROM rrule."all"('FREQ=DAILY;COUNT=5', '2099-01-01 10:00:00'::TIMESTAMP)));
 
+-- Extension-token collision: XBYDAY must be ignored
+SELECT assert_occurrences_equal('all-extension-xbyday-ignored',
+    ARRAY[
+        '2025-01-01 00:00:00'::TIMESTAMP,
+        '2025-01-02 00:00:00'::TIMESTAMP,
+        '2025-01-03 00:00:00'::TIMESTAMP
+    ],
+    (SELECT array_agg(r ORDER BY r)
+     FROM rrule."all"('FREQ=DAILY;COUNT=3;XBYDAY=MO', '2025-01-01 00:00:00'::TIMESTAMP) r));
+
 
 --------------------------------------------------------------------------------
 -- SECTION 2: rrule."between"() BOUNDARY TESTS
@@ -454,6 +464,47 @@ SELECT assert_equals('next-first', '2025-01-02 15:00:00+00',
 SELECT assert_true('next-single-occurrence',
     rrule.next('FREQ=DAILY;COUNT=1', '2025-01-01 10:00:00-05'::TIMESTAMPTZ, 'America/New_York', '2025-01-01 10:00:00-05'::TIMESTAMPTZ) IS NULL);
 
+-- Default reference_time path should be timezone-invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    next_utc TIMESTAMP;
+    next_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    next_utc := rrule.next('FREQ=DAILY', probe_ts, NULL);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    next_ny := rrule.next('FREQ=DAILY', probe_ts, NULL);
+
+    PERFORM assert_equals('next-null-reference-timezone-invariant', next_utc::TEXT, next_ny::TEXT);
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
+-- Explicit reference_time control should remain timezone-invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    explicit_ref TIMESTAMP;
+    next_utc TIMESTAMP;
+    next_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+    explicit_ref := '2026-01-15 12:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    next_utc := rrule.next('FREQ=DAILY', probe_ts, explicit_ref);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    next_ny := rrule.next('FREQ=DAILY', probe_ts, explicit_ref);
+
+    PERFORM assert_equals('next-explicit-reference-timezone-control', next_utc::TEXT, next_ny::TEXT);
+    PERFORM assert_equals('next-explicit-reference-expected', '2026-01-16 04:00:00', next_utc::TEXT);
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
 
 --------------------------------------------------------------------------------
 -- SECTION 7: rrule.most_recent() BOUNDARY TESTS
@@ -501,6 +552,25 @@ END $$;
 -- We need to provide a reference_time after dtstart to get results
 SELECT assert_true('most_recent-at-dtstart',
     rrule.most_recent('FREQ=DAILY;COUNT=100', '2025-01-01 10:00:00-05'::TIMESTAMPTZ, 'America/New_York', '2025-01-05 10:00:00-05'::TIMESTAMPTZ) IS NOT NULL);
+
+-- Default reference_time path should be timezone-invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    recent_utc TIMESTAMP;
+    recent_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    recent_utc := rrule.most_recent('FREQ=DAILY', probe_ts, NULL);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    recent_ny := rrule.most_recent('FREQ=DAILY', probe_ts, NULL);
+
+    PERFORM assert_equals('most_recent-null-reference-timezone-invariant', recent_utc::TEXT, recent_ny::TEXT);
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
 
 
 --------------------------------------------------------------------------------

@@ -1926,6 +1926,191 @@ INSERT INTO validation_test_results (test_category, test_name, status)
 SELECT 'SKIP case', 'invalid SKIP=BACKWARDS still rejected',
     assert_rrule_rejected('SKIP=BACKWARDS', 'FREQ=MONTHLY;SKIP=BACKWARDS', '%Invalid SKIP value%');
 
+-- =====================================================================
+-- TEST GROUP: Extension parameter token collisions (Issues 14/17)
+-- =====================================================================
+\echo ''
+\echo 'TEST GROUP: Extension parameter token collisions'
+\echo '====================================================================='
+
+-- Helper: assert invalid RRULE is rejected via TIMESTAMPTZ API
+CREATE OR REPLACE FUNCTION assert_rrule_rejected_tz(
+    test_name TEXT,
+    invalid_rrule TEXT,
+    expected_error_pattern TEXT
+)
+RETURNS TEXT AS $$
+DECLARE
+    result TIMESTAMPTZ[];
+BEGIN
+    BEGIN
+        result := (
+            SELECT array_agg(occurrence ORDER BY occurrence)
+            FROM rrule."all"(
+                invalid_rrule,
+                '2025-01-01 00:00:00+00'::TIMESTAMPTZ,
+                'UTC'
+            ) AS occurrence
+        );
+        RAISE EXCEPTION 'FAIL [%]: RRULE was accepted when it should have been rejected: %',
+            test_name, invalid_rrule;
+    EXCEPTION
+        WHEN raise_exception THEN
+            IF SQLERRM LIKE expected_error_pattern THEN
+                RETURN 'PASS [' || test_name || ']';
+            ELSE
+                RAISE EXCEPTION 'FAIL [%]: Wrong error message. Expected pattern: %, Got: %',
+                    test_name, expected_error_pattern, SQLERRM;
+            END IF;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Case 14.1: XCOUNT must be ignored (unbounded DAILY should hit 1000 cap)
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'XCOUNT is ignored',
+    assert_equals(
+        'XCOUNT ignored',
+        '1000',
+        rrule."count"(
+            'FREQ=DAILY;XCOUNT=2',
+            '2025-01-01 00:00:00'::TIMESTAMP
+        )::TEXT
+    );
+
+-- Case 14.2: XFREQ must not satisfy required FREQ
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'XFREQ does not satisfy FREQ requirement',
+    assert_rrule_rejected(
+        'XFREQ missing FREQ',
+        'XFREQ=DAILY;COUNT=2',
+        '%FREQ parameter is required%'
+    );
+
+-- Case 14.3: XBYDAY must be ignored
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'XBYDAY is ignored',
+    assert_occurrences_equal(
+        'XBYDAY ignored',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg(occurrence ORDER BY occurrence)
+            FROM rrule."all"(
+                'FREQ=DAILY;COUNT=3;XBYDAY=MO',
+                '2025-01-01 00:00:00'::TIMESTAMP
+            ) AS occurrence
+        )
+    );
+
+-- Case 14.4: XBYMONTH must be ignored
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'XBYMONTH is ignored',
+    assert_occurrences_equal(
+        'XBYMONTH ignored',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg(occurrence ORDER BY occurrence)
+            FROM rrule."all"(
+                'FREQ=DAILY;COUNT=3;XBYMONTH=2',
+                '2025-01-01 00:00:00'::TIMESTAMP
+            ) AS occurrence
+        )
+    );
+
+-- Case 14.5: XBYSETPOS must be ignored
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'XBYSETPOS is ignored',
+    assert_occurrences_equal(
+        'XBYSETPOS ignored',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg(occurrence ORDER BY occurrence)
+            FROM rrule."all"(
+                'FREQ=DAILY;COUNT=3;XBYSETPOS=1',
+                '2025-01-01 00:00:00'::TIMESTAMP
+            ) AS occurrence
+        )
+    );
+
+-- Case 14.6: XXFREQ must not affect parsing
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'XXFREQ does not affect FREQ parsing',
+    assert_occurrences_equal(
+        'XXFREQ ignored',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg(occurrence ORDER BY occurrence)
+            FROM rrule."all"(
+                'FREQ=DAILY;COUNT=3;XXFREQ=WEEKLY',
+                '2025-01-01 00:00:00'::TIMESTAMP
+            ) AS occurrence
+        )
+    );
+
+-- Case 14.7: Leading/trailing whitespace should be tolerated without weakening X* hardening
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions', 'surrounding whitespace is normalized',
+    assert_occurrences_equal(
+        'whitespace normalized with XBYDAY ignored',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg(occurrence ORDER BY occurrence)
+            FROM rrule."all"(
+                '  FREQ=DAILY;COUNT=3;XBYDAY=MO  ',
+                '2025-01-01 00:00:00'::TIMESTAMP
+            ) AS occurrence
+        )
+    );
+
+-- TIMESTAMPTZ parity: XFREQ must not satisfy required FREQ
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions (TIMESTAMPTZ)', 'XFREQ rejected via TIMESTAMPTZ API',
+    assert_rrule_rejected_tz(
+        'XFREQ missing FREQ (TZ)',
+        'XFREQ=DAILY;COUNT=2',
+        '%FREQ parameter is required%'
+    );
+
+-- TIMESTAMPTZ parity: XBYDAY must be ignored
+INSERT INTO validation_test_results (test_category, test_name, status)
+SELECT 'Extension token collisions (TIMESTAMPTZ)', 'XBYDAY ignored via TIMESTAMPTZ API',
+    assert_occurrences_equal(
+        'XBYDAY ignored (TZ)',
+        ARRAY[
+            '2025-01-01 00:00:00'::TIMESTAMP,
+            '2025-01-02 00:00:00'::TIMESTAMP,
+            '2025-01-03 00:00:00'::TIMESTAMP
+        ],
+        (
+            SELECT array_agg((occurrence AT TIME ZONE 'UTC')::TIMESTAMP ORDER BY occurrence)
+            FROM rrule."all"(
+                'FREQ=DAILY;COUNT=3;XBYDAY=MO',
+                '2025-01-01 00:00:00+00'::TIMESTAMPTZ,
+                'UTC'
+            ) AS occurrence
+        )
+    );
+
 -- Issue 38: count() NULL rrule_string guard
 \echo ''
 \echo 'TEST GROUP: Issue 38 - count() NULL rrule guard'

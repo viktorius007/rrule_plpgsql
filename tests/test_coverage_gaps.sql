@@ -763,6 +763,124 @@ SELECT
         )::TEXT)
     );
 
+-- Test 4.5: next() NULL reference_time should be session-timezone invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    next_utc TIMESTAMP;
+    next_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    next_utc := rrule."next"('FREQ=DAILY', probe_ts, NULL);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    next_ny := rrule."next"('FREQ=DAILY', probe_ts, NULL);
+
+    INSERT INTO coverage_gap_results (test_category, test_name, status)
+    VALUES (
+        'Issue 15: NULL reference timezone',
+        'next() NULL reference_time is invariant across session timezone',
+        assert_true(
+            'next() NULL reference timezone invariance',
+            next_utc IS NOT DISTINCT FROM next_ny
+        )
+    );
+
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
+-- Test 4.6: most_recent() NULL reference_time should be session-timezone invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    recent_utc TIMESTAMP;
+    recent_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    recent_utc := rrule."most_recent"('FREQ=DAILY', probe_ts, NULL);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    recent_ny := rrule."most_recent"('FREQ=DAILY', probe_ts, NULL);
+
+    INSERT INTO coverage_gap_results (test_category, test_name, status)
+    VALUES (
+        'Issue 15: NULL reference timezone',
+        'most_recent() NULL reference_time is invariant across session timezone',
+        assert_true(
+            'most_recent() NULL reference timezone invariance',
+            recent_utc IS NOT DISTINCT FROM recent_ny
+        )
+    );
+
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
+-- Test 4.7: next() explicit reference_time control remains timezone-invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    explicit_ref TIMESTAMP;
+    next_utc TIMESTAMP;
+    next_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+    explicit_ref := '2026-01-15 12:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    next_utc := rrule."next"('FREQ=DAILY', probe_ts, explicit_ref);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    next_ny := rrule."next"('FREQ=DAILY', probe_ts, explicit_ref);
+
+    INSERT INTO coverage_gap_results (test_category, test_name, status)
+    VALUES (
+        'Issue 15: explicit reference control',
+        'next() explicit reference_time is invariant across session timezone',
+        assert_true(
+            'next() explicit reference timezone control + expected value',
+            next_utc IS NOT DISTINCT FROM next_ny
+            AND next_utc = '2026-01-16 04:00:00'::TIMESTAMP
+        )
+    );
+
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
+-- Test 4.8: most_recent() explicit reference_time control remains timezone-invariant
+DO $$
+DECLARE
+    probe_ts TIMESTAMP;
+    explicit_ref TIMESTAMP;
+    recent_utc TIMESTAMP;
+    recent_ny TIMESTAMP;
+BEGIN
+    probe_ts := '2025-01-01 04:00:00'::TIMESTAMP;
+    explicit_ref := '2026-01-15 12:00:00'::TIMESTAMP;
+
+    PERFORM set_config('TimeZone', 'Pacific/Kiritimati', true);
+    recent_utc := rrule."most_recent"('FREQ=DAILY', probe_ts, explicit_ref);
+
+    PERFORM set_config('TimeZone', 'Pacific/Pago_Pago', true);
+    recent_ny := rrule."most_recent"('FREQ=DAILY', probe_ts, explicit_ref);
+
+    INSERT INTO coverage_gap_results (test_category, test_name, status)
+    VALUES (
+        'Issue 15: explicit reference control',
+        'most_recent() explicit reference_time is invariant across session timezone',
+        assert_true(
+            'most_recent() explicit reference timezone control + expected value',
+            recent_utc IS NOT DISTINCT FROM recent_ny
+            AND recent_utc = '2026-01-15 04:00:00'::TIMESTAMP
+        )
+    );
+
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
 -- ============================================================================
 -- SECTION 5: count() Edge Cases
 -- ============================================================================
@@ -2272,9 +2390,8 @@ SELECT
 \echo '--- Section 20: Consensus Review Additions ---'
 
 -- Test 20.1: RRULE: prefix is accepted by parser
--- iCalendar files include the "RRULE:" property prefix. The parser uses
--- substring regex that finds FREQ= anywhere in the string, so the prefix
--- is silently accepted. Verify this produces correct results.
+-- iCalendar files include the "RRULE:" property prefix. The parser normalizes
+-- this prefix before applying token-boundary parsing; verify accepted behavior.
 INSERT INTO coverage_gap_results (test_category, test_name, status)
 SELECT
     'Consensus Review',
@@ -2288,6 +2405,24 @@ SELECT
         ],
         (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
             'RRULE:FREQ=DAILY;COUNT=3',
+            '2025-01-01 10:00:00'::TIMESTAMP
+        ) AS occurrence)
+    );
+
+-- Test 20.1b: RRULE: prefix with whitespace after colon is accepted
+INSERT INTO coverage_gap_results (test_category, test_name, status)
+SELECT
+    'Consensus Review',
+    'Test 20.1b: RRULE: prefix with whitespace after colon is accepted',
+    assert_occurrences_equal(
+        'RRULE: prefix with whitespace',
+        ARRAY[
+            '2025-01-01 10:00:00'::TIMESTAMP,
+            '2025-01-02 10:00:00'::TIMESTAMP,
+            '2025-01-03 10:00:00'::TIMESTAMP
+        ],
+        (SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
+            'RRULE: FREQ=DAILY;COUNT=3',
             '2025-01-01 10:00:00'::TIMESTAMP
         ) AS occurrence)
     );

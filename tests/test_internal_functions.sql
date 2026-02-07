@@ -1060,6 +1060,148 @@ SELECT 'rrule_yearly_byweekno_set()', 'Time component preserved from after_ts',
         ) d));
 
 -- ============================================================================
+-- SECTION 25: _restore_* volatility and timezone sensitivity
+-- ============================================================================
+\echo ''
+\echo '--- Section 25: _restore_* volatility and timezone sensitivity ---'
+
+-- Behavior proof: _restore_monthly_base() output depends on session timezone
+DO $$
+DECLARE
+    monthly_utc TIMESTAMP;
+    monthly_ny TIMESTAMP;
+BEGIN
+    PERFORM set_config('TimeZone', 'UTC', true);
+    monthly_utc := rrule._restore_monthly_base(
+        '2025-03-01 00:30:00+00'::TIMESTAMPTZ,
+        15,
+        INTERVAL '0'
+    ) AT TIME ZONE 'UTC';
+
+    PERFORM set_config('TimeZone', 'America/New_York', true);
+    monthly_ny := rrule._restore_monthly_base(
+        '2025-03-01 00:30:00+00'::TIMESTAMPTZ,
+        15,
+        INTERVAL '0'
+    ) AT TIME ZONE 'UTC';
+
+    INSERT INTO internal_test_results (test_category, test_name, status)
+    VALUES (
+        '_restore_* volatility',
+        '_restore_monthly_base() shows timezone-sensitive behavior',
+        assert_true('monthly helper timezone sensitivity', monthly_utc IS DISTINCT FROM monthly_ny)
+    );
+
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
+-- Behavior proof: _restore_yearly_base() output depends on session timezone
+DO $$
+DECLARE
+    yearly_utc TIMESTAMP;
+    yearly_ny TIMESTAMP;
+BEGIN
+    PERFORM set_config('TimeZone', 'UTC', true);
+    yearly_utc := rrule._restore_yearly_base(
+        '2025-01-01 00:30:00+00'::TIMESTAMPTZ,
+        '2025-06-15 00:00:00+00'::TIMESTAMPTZ,
+        15,
+        INTERVAL '0'
+    ) AT TIME ZONE 'UTC';
+
+    PERFORM set_config('TimeZone', 'America/New_York', true);
+    yearly_ny := rrule._restore_yearly_base(
+        '2025-01-01 00:30:00+00'::TIMESTAMPTZ,
+        '2025-06-15 00:00:00+00'::TIMESTAMPTZ,
+        15,
+        INTERVAL '0'
+    ) AT TIME ZONE 'UTC';
+
+    INSERT INTO internal_test_results (test_category, test_name, status)
+    VALUES (
+        '_restore_* volatility',
+        '_restore_yearly_base() shows timezone-sensitive behavior',
+        assert_true('yearly helper timezone sensitivity', yearly_utc IS DISTINCT FROM yearly_ny)
+    );
+
+    PERFORM set_config('TimeZone', 'UTC', true);
+END $$;
+
+-- Metadata expectation: timezone-sensitive helpers should not be IMMUTABLE
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT '_restore_* volatility', '_restore_monthly_base() volatility is STABLE',
+    assert_equals(
+        'monthly helper provolatile',
+        's',
+        (
+            SELECT p.provolatile::TEXT
+            FROM pg_proc p
+            JOIN pg_namespace n ON p.pronamespace = n.oid
+            WHERE n.nspname = 'rrule'
+              AND p.proname = '_restore_monthly_base'
+            ORDER BY p.oid
+            LIMIT 1
+        )
+    );
+
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT '_restore_* volatility', '_restore_yearly_base() volatility is STABLE',
+    assert_equals(
+        'yearly helper provolatile',
+        's',
+        (
+            SELECT p.provolatile::TEXT
+            FROM pg_proc p
+            JOIN pg_namespace n ON p.pronamespace = n.oid
+            WHERE n.nspname = 'rrule'
+              AND p.proname = '_restore_yearly_base'
+            ORDER BY p.oid
+            LIMIT 1
+        )
+    );
+
+-- Metadata expectation: TIMESTAMP convenience APIs must use UTC-normalized default reference_time
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'TIMESTAMP convenience defaults', 'next(TIMESTAMP) uses UTC-normalized NULL default',
+    assert_true(
+        'next(TIMESTAMP) default uses UTC-normalized current timestamp',
+        EXISTS (
+            SELECT 1
+            FROM pg_proc p
+            JOIN pg_namespace n ON p.pronamespace = n.oid
+            WHERE n.nspname = 'rrule'
+              AND p.proname = 'next'
+              AND pg_get_function_identity_arguments(p.oid) = 'rrule_string character varying, dtstart timestamp without time zone, reference_time timestamp without time zone'
+              AND regexp_replace(lower(pg_get_functiondef(p.oid)), '\s+', '', 'g')
+                  LIKE '%coalesce(reference_time,%'
+              AND regexp_replace(lower(pg_get_functiondef(p.oid)), '\s+', '', 'g')
+                  LIKE '%attimezone''utc''%'
+              AND regexp_replace(lower(pg_get_functiondef(p.oid)), '\s+', '', 'g')
+                  LIKE '%rrule."after"(%'
+        )
+    );
+
+INSERT INTO internal_test_results (test_category, test_name, status)
+SELECT 'TIMESTAMP convenience defaults', 'most_recent(TIMESTAMP) uses UTC-normalized NULL default',
+    assert_true(
+        'most_recent(TIMESTAMP) default uses UTC-normalized current timestamp',
+        EXISTS (
+            SELECT 1
+            FROM pg_proc p
+            JOIN pg_namespace n ON p.pronamespace = n.oid
+            WHERE n.nspname = 'rrule'
+              AND p.proname = 'most_recent'
+              AND pg_get_function_identity_arguments(p.oid) = 'rrule_string character varying, dtstart timestamp without time zone, reference_time timestamp without time zone'
+              AND regexp_replace(lower(pg_get_functiondef(p.oid)), '\s+', '', 'g')
+                  LIKE '%coalesce(reference_time,%'
+              AND regexp_replace(lower(pg_get_functiondef(p.oid)), '\s+', '', 'g')
+                  LIKE '%attimezone''utc''%'
+              AND regexp_replace(lower(pg_get_functiondef(p.oid)), '\s+', '', 'g')
+                  LIKE '%rrule."before"(%'
+        )
+    );
+
+-- ============================================================================
 -- TEST RESULTS SUMMARY
 -- ============================================================================
 \echo ''
