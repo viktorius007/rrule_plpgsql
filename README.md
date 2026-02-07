@@ -16,7 +16,7 @@ This library provides complete RRULE recurrence calculation functionality using 
 - ✅ **No C extensions required** - Pure PL/pgSQL, works on any PostgreSQL
 - ✅ **Full timezone support with DST handling** - Wall-clock time preserved ("10 AM stays 10 AM" across DST transitions)
 - ✅ **Consistent everywhere** - Same implementation across all environments
-- ✅ **Production-ready** - Comprehensive test suite with 400+ tests across 13 suites (including table operation integration tests)
+- ✅ **Production-ready** - Comprehensive SQL test framework with 62 suites in CI mode (`./test.sh --both`)
 - ✅ **RFC 5545 & RFC 7529 compliant** - Supports standard RRULE patterns plus SKIP/RSCALE
 - ✅ **50-75x faster than Node.js** - Excellent performance without compilation
 - ✅ **Works on managed services** - AlloyDB, RDS, Azure Database for PostgreSQL
@@ -247,11 +247,13 @@ SELECT * FROM rrule."all"(
 
 Contributions welcome! Please:
 
-1. Run all tests (all 13 test suites must pass)
-2. Add test coverage for new features
-3. Update documentation
-4. Follow RFC 5545/7529 specifications
-5. Submit pull request
+1. Run all tests (`./test.sh --both` must pass)
+2. Run SQL/function lint (`./lint.sh` must pass)
+3. Run test SQL lint (`./lint-tests.sh` must pass)
+4. Add test coverage for new features
+5. Update documentation
+6. Follow RFC 5545/7529 specifications
+7. Submit pull request
 
 **See [Development Guide](DEVELOPMENT.md) for contribution guidelines and test suite details.**
 

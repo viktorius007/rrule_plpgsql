@@ -8,107 +8,44 @@ Testing, architecture, and contribution guidelines for rrule_plpgsql.
 
 ### Running the Test Suite
 
-Run the comprehensive test suite with 400+ tests across 13 test suites:
+Run the same commands used by CI:
 
 ```bash
-# Unit Tests
-psql -d test_database -f tests/test_rrule_functions.sql    # Core RRULE functionality
-psql -d test_database -f tests/test_tzid_support.sql       # TZID/Timezone support
-psql -d test_database -f tests/test_wkst_support.sql       # WKST/Week Start support
-psql -d test_database -f tests/test_skip_support.sql       # SKIP/Month-end handling
-psql -d test_database -f tests/test_rfc_compliance.sql     # RFC 5545 & RFC 7529 compliance
-psql -d test_database -f tests/test_validation.sql         # RFC 5545 validation rules
-psql -d test_database -f tests/test_bysetpos.sql           # BYSETPOS functionality
-psql -d test_database -f tests/test_optimizations.sql      # Performance optimizations
-psql -d test_database -f tests/test_tz_api.sql             # TIMESTAMPTZ API (all timezone-aware functions)
-psql -d test_database -f tests/test_coverage_gaps.sql      # Coverage gap tests
-psql -d test_database -f tests/test_internal_functions.sql # Internal function tests
+# Full CI path: standard + sub-day installs
+./test.sh --both
 
-# Integration Tests
-psql -d test_database -f tests/test_table_operations.sql   # Real-world table operations
+# Standard install only
+./test.sh --standard
 
-# Sub-Day Tests (requires install_with_subday.sql)
-psql -d test_database -f tests/test_subday_correctness.sql # Sub-day frequency correctness
+# SQL semantic lint (plpgsql_check)
+./lint.sh
+
+# Static SQL test lint (assertion/style rules)
+./lint-tests.sh
+
+# Single suite run (requires DB + installed schema)
+PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
+  psql -d rrule_test -f tests/test_validation.sql
 ```
 
-**Total Test Coverage:** 400+ tests across 13 comprehensive test suites (unit, integration, coverage gaps, internal functions, and sub-day correctness)
+**Current CI test inventory:**
+- `./test.sh --both` runs 62 SQL suites total (30 standard + 32 sub-day)
+- Standard and sub-day installations are both exercised
+- CI quality gates: `./test.sh --both`, `./lint.sh`, `./lint-tests.sh`
 
 ---
 
 ## Test Coverage Details
 
-### Core Tests (test_rrule_functions.sql)
-- Basic frequency patterns (DAILY, WEEKLY, MONTHLY, YEARLY)
-- INTERVAL support (every N days/weeks/months)
-- COUNT and UNTIL limits
-- BYDAY rules (weekdays, positioned weekdays)
-- BYMONTHDAY rules (including negative indices)
-- BYMONTH rules
-- Complex combinations (2nd Monday, last Friday, etc.)
-- Edge cases (leap years, month boundaries, month-end)
+Coverage is organized as SQL suites under:
+- `tests/test_*.sql` (core API, validation, timezone, RFC, integration)
+- `tests/matrix/*.sql` (parameter and behavior matrix coverage)
+- `tests/branches/*.sql` (branch-focused coverage)
+- `tests/security/*.sql` (budget/DoS protections)
+- `tests/parity/*.sql` (standard vs sub-day / generator parity)
+- `tests/mutation/*.sql` and `tests/fuzz/*.sql` (mutation and invariant checks)
 
-### TZID/Timezone Tests (test_tzid_support.sql)
-- Basic TZID functionality (America/New_York, Europe/London, Asia/Tokyo)
-- DST transitions - Spring forward (lose an hour)
-- DST transitions - Fall back (gain an hour)
-- Multiple timezones (America, Europe, Asia, Australia)
-- Half-hour offset timezones (Asia/Kolkata)
-- Edge cases (invalid TZID, missing TZID)
-- TZID with all frequency types (DAILY, WEEKLY, MONTHLY, YEARLY)
-- TZID with complex RRULE patterns (BYDAY, BYMONTH, INTERVAL)
-
-### WKST/Week Start Tests (test_wkst_support.sql)
-- Basic WEEKLY frequency with all 7 WKST values (SU-SA)
-- WEEKLY with BYDAY and different WKST values
-- MONTHLY frequency with WKST
-- YEARLY+BYWEEKNO+BYDAY with WKST (week expansion algorithm)
-- Year boundary edge cases
-- WKST default behavior (defaults to MO)
-- Complex patterns across DST boundaries
-
-### SKIP/Month-End Tests (test_skip_support.sql)
-- SKIP=OMIT (default): Skip invalid dates entirely
-- SKIP=BACKWARD: Use last valid day of month
-- SKIP=FORWARD: Use first of next month
-- Multiple BYMONTHDAY values with deduplication
-- SKIP with BYDAY intersection
-- SKIP with negative BYMONTHDAY (always valid)
-- SKIP with YEARLY frequency
-- Time preservation with SKIP
-
-### RFC Compliance Tests (test_rfc_compliance.sql)
-- RFC 7529 SKIP without RSCALE (auto-addition verification)
-- Explicit RSCALE=GREGORIAN with SKIP parameters
-- RSCALE validation (unsupported calendars rejected)
-- RSCALE case-insensitivity (gregorian → GREGORIAN)
-- Backward compatibility (legacy RRULEs without SKIP/RSCALE)
-- RSCALE parsing edge cases (position independence)
-- RSCALE + SKIP + other parameter integration
-- RFC 7529 compliance verification (NOTICE messages)
-
-### Validation Tests (test_validation.sql)
-- **Group 1: Critical MUST/MUST NOT constraints (24 tests)**
-  - FREQ required validation
-  - COUNT+UNTIL mutual exclusion
-  - BYWEEKNO only with YEARLY
-  - BYYEARDAY not with DAILY/WEEKLY/MONTHLY
-  - BYMONTHDAY not with WEEKLY
-  - BYDAY ordinals only with MONTHLY/YEARLY
-  - BYDAY ordinals not with YEARLY+BYWEEKNO
-  - BYSETPOS requires other BYxxx parameters
-- **Group 2: Parameter range validations (16 tests)**
-  - BYSECOND, BYMINUTE, BYHOUR valid ranges
-  - BYMONTH valid range (1-12)
-- **Group 3: Zero values and extended ranges (16 tests)**
-  - BYMONTHDAY, BYYEARDAY, BYWEEKNO, BYSETPOS zero rejection
-  - Negative index support and validation
-  - Extended range validation (±366, ±53, etc.)
-- **Group 4: Complex validation scenarios (5 tests)**
-  - Multiple constraint violations
-  - Complex valid RRULEs
-  - Edge cases (BYMONTHDAY=31, BYYEARDAY=366)
-
-**Expected output:** All tests pass with ✓ markers.
+`./lint-tests.sh` enforces test SQL quality rules across these suites (transaction wrappers, assertion hygiene, ordering in `array_agg`, etc.).
 
 See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for prescriptive testing rules (assertion quality, transaction handling, deterministic assertions).
 
@@ -141,10 +78,10 @@ See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for prescriptive testing rules 
    - Displays security warnings during installation
    - See [SUBDAY_OPERATIONS.md](docs/SUBDAY_OPERATIONS.md)
 
-4. **test_*.sql** (13 test suites, 400+ tests)
-   - Comprehensive test coverage
-   - Unit tests (170): Core RRULE functionality, RFC compliance, TZID/timezone support, SKIP/WKST/BYSETPOS, validation rules, TIMESTAMPTZ API functions
-   - Integration tests (17): Real-world table operations (subscriptions, events, resources)
+4. **tests/**/*.sql** (62 suites in CI dual-mode run)
+   - Core API/validation/timezone/integration suites
+   - Matrix, branch, security, parity, mutation, and fuzz suites
+   - Executed via `./test.sh` and validated by `./lint-tests.sh`
 
 ---
 
@@ -216,7 +153,7 @@ SELECT * FROM rrule."all"(
 **Converting to Arrays:**
 ```sql
 -- Use array_agg() when you need materialized arrays
-SELECT array_agg(occurrence) FROM rrule."all"(
+SELECT array_agg(occurrence ORDER BY occurrence) FROM rrule."all"(
     'FREQ=DAILY;COUNT=5',
     '2025-01-01'::TIMESTAMP
 ) AS occurrence;
@@ -276,14 +213,16 @@ All RRULEs are validated **before** processing:
 
 ### Before Submitting
 
-1. **Run all tests** - Ensure all tests pass across all 13 suites (170 unit + 17 integration)
+1. **Run all quality gates** - `./test.sh --both`, `./lint.sh`, and `./lint-tests.sh` must pass
 2. **Add test coverage** - Include tests for new features
 3. **Document changes** - Update relevant .md files
 4. **Follow conventions** - Match existing code style
 
 ### Pull Request Checklist
 
-- [ ] All tests pass across all 13 suites
+- [ ] `./test.sh --both` passes
+- [ ] `./lint.sh` passes
+- [ ] `./lint-tests.sh` passes
 - [ ] New features have test coverage
 - [ ] Documentation updated (README.md, API_REFERENCE.md, etc.)
 - [ ] No breaking changes (or clearly documented if necessary)
@@ -315,16 +254,14 @@ All RRULEs are validated **before** processing:
 git clone https://github.com/sirrodgepodge/rrule_plpgsql.git
 cd rrule_plpgsql
 
-# Create test database
-createdb rrule_test
+# Run full CI-equivalent quality gates
+./test.sh --both
+./lint.sh
+./lint-tests.sh
 
-# Install
-psql -d rrule_test -f src/install.sql
-
-# Run tests
-psql -d rrule_test -f tests/test_rrule_functions.sql
-psql -d rrule_test -f tests/test_validation.sql
-# ... run all test files
+# Optional: run a single suite (requires DB + installed schema)
+PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
+  psql -d rrule_test -f tests/test_validation.sql
 ```
 
 ### Making Changes
@@ -336,10 +273,12 @@ psql -d rrule_test -f tests/test_validation.sql
 psql -d rrule_test -c "DROP SCHEMA IF EXISTS rrule CASCADE;"
 psql -d rrule_test -f src/install.sql
 
-# 3. Run tests
-psql -d rrule_test -f tests/test_rrule_functions.sql
+# 3. Run quality gates
+./test.sh --both
+./lint.sh
+./lint-tests.sh
 
-# 4. Iterate until tests pass
+# 4. Iterate until all three pass
 ```
 
 ---
@@ -378,7 +317,7 @@ SET client_min_messages TO DEBUG;
 ## Release Process
 
 1. **Version bump** - Update version in documentation
-2. **Run all tests** - Ensure all tests pass across all 13 suites
+2. **Run all quality gates** - Ensure `./test.sh --both`, `./lint.sh`, and `./lint-tests.sh` all pass
 3. **Update CHANGELOG** - Document changes
 4. **Tag release** - Git tag with version
 5. **Publish** - Push to GitHub
