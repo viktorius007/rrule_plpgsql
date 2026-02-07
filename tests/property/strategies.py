@@ -2,7 +2,7 @@
 
 import calendar
 from hypothesis import strategies as st
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Standard frequencies (sub-day disabled by default for security)
 FREQUENCIES = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY']
@@ -275,6 +275,74 @@ def rrule_with_tzid(draw):
 
 # Strategy for selecting a timezone from the common list
 timezone_strategy = st.sampled_from(COMMON_TIMEZONES)
+
+
+@st.composite
+def stateful_case(draw):
+    """Generate correlated (rrule, dtstart) pairs for stateful model tests.
+
+    The RRULE always includes UNTIL bounded to <= 9 years after dtstart.
+    BYxxx coverage is moderate and RFC-valid for stable CI runtime.
+    """
+    year = draw(st.integers(2021, 2026))
+    month = draw(st.integers(1, 12))
+    day = draw(st.integers(1, 28))  # Keep BYMONTHDAY anchors universally valid.
+    hour = draw(st.integers(0, 23))
+    minute = draw(st.integers(0, 59))
+    dtstart = datetime(year, month, day, hour, minute, 0)
+
+    freq = draw(st.sampled_from(FREQUENCIES))
+    interval = draw(st.integers(1, 3))
+
+    parts = [f'FREQ={freq}', f'INTERVAL={interval}']
+    dtstart_weekday = WEEKDAYS[dtstart.weekday()]
+
+    # Moderate BYxxx coverage: include dtstart month plus optional additional month.
+    if draw(st.booleans()):
+        months = {dtstart.month}
+        if draw(st.booleans()):
+            months.add(draw(st.integers(1, 12)))
+        parts.append(f'BYMONTH={",".join(str(m) for m in sorted(months))}')
+
+    with_byweekno = freq == 'YEARLY' and draw(st.booleans())
+
+    # BYDAY includes dtstart weekday for semantic anchoring, with optional second day.
+    if draw(st.booleans()):
+        days = {dtstart_weekday}
+        if draw(st.booleans()):
+            days.add(draw(st.sampled_from(WEEKDAYS)))
+        parts.append(f'BYDAY={",".join(sorted(days))}')
+
+    # BYMONTHDAY excluded for WEEKLY and BYWEEKNO paths; anchor to dtstart day.
+    if (not with_byweekno) and freq != 'WEEKLY' and draw(st.booleans()):
+        parts.append(f'BYMONTHDAY={dtstart.day}')
+
+    # YEARLY-only BYWEEKNO anchored to dtstart ISO week (+ optional extra week).
+    if with_byweekno:
+        weekno = dtstart.isocalendar()[1]
+        weeks = {weekno}
+        if draw(st.booleans()):
+            weeks.add(draw(st.one_of(st.integers(1, 8), st.integers(20, 22), st.integers(-8, -1))))
+        parts.append(f'BYWEEKNO={",".join(map(str, sorted(weeks)))}')
+
+        # Keep BYDAY non-ordinal and anchored to dtstart weekday.
+        if not any(p.startswith('BYDAY=') for p in parts):
+            parts.append(f'BYDAY={dtstart_weekday}')
+
+    # Bound horizon by frequency and keep all() results under the 1000 cap.
+    if freq == 'DAILY':
+        horizon_days = draw(st.integers(120, 720))  # <= ~2 years
+    elif freq == 'WEEKLY':
+        horizon_days = draw(st.integers(365, 9 * 365))
+    elif freq == 'MONTHLY':
+        horizon_days = draw(st.integers(365, 9 * 365))
+    else:
+        horizon_days = draw(st.integers(3 * 365, 9 * 365))
+
+    until_dt = dtstart + timedelta(days=horizon_days)
+    parts.append(f'UNTIL={until_dt.strftime("%Y%m%dT%H%M%SZ")}')
+
+    return ';'.join(parts), dtstart
 
 
 @st.composite

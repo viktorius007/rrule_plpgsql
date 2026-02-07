@@ -7,6 +7,7 @@ from hypothesis import settings, Verbosity
 settings.register_profile("ci", max_examples=1000)
 settings.register_profile("dev", max_examples=100)
 settings.register_profile("debug", max_examples=10, verbosity=Verbosity.verbose)
+settings.register_profile("stateful_ci", max_examples=60, stateful_step_count=8, deadline=None)
 
 @pytest.fixture(scope="session")
 def db():
