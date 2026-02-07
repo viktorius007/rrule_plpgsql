@@ -6,18 +6,21 @@
 # by running the full test suite and collecting execution statistics.
 #
 # Usage:
-#   ./scripts/profiler-coverage.sh                    # Run full coverage analysis
-#   ./scripts/profiler-coverage.sh <function_name>   # Profile specific function only
+#   ./scripts/profiler-coverage.sh
+#   ./scripts/profiler-coverage.sh --install-mode standard|subday
+#   ./scripts/profiler-coverage.sh --report coverage-report-standard.txt
+#   ./scripts/profiler-coverage.sh --install-mode standard rrule.weekly_set
 #
 # Environment variables (with defaults):
 #   PGHOST=localhost       # PostgreSQL host
 #   PGPORT=54322           # PostgreSQL port
 #   PGUSER=postgres        # PostgreSQL user
 #   PGPASSWORD=postgres    # PostgreSQL password
+#   PROFILER_INSTALL_MODE=subday  # default install mode if --install-mode omitted
 #
 # Output:
 #   - Console summary with coverage statistics
-#   - coverage-report.txt with detailed report including uncovered statements
+#   - Mode-specific report file (coverage-report-standard.txt / coverage-report-subday.txt)
 #
 # Coverage Notes:
 #   The test workload exercises both "generator" and "filter" code paths:
@@ -50,22 +53,96 @@ export PGPASSWORD="${PGPASSWORD:-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DB="rrule_profiler_coverage"
-REPORT_FILE="$PROJECT_DIR/coverage-report.txt"
-SINGLE_FUNCTION="${1:-}"
+INSTALL_MODE="${PROFILER_INSTALL_MODE:-subday}"
+REPORT_FILE_ARG=""
+REPORT_FILE=""
+SINGLE_FUNCTION=""
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}PLPGSQL_CHECK PROFILER COVERAGE REPORT${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo ""
-echo "Database: $DB"
-echo "Host: $PGHOST:$PGPORT"
-if [ -n "$SINGLE_FUNCTION" ]; then
-  echo "Mode: Single function ($SINGLE_FUNCTION)"
-else
-  echo "Mode: Full coverage (all rrule.* functions)"
-fi
-echo "Report: $REPORT_FILE"
-echo ""
+usage() {
+  cat << 'USAGE'
+Usage:
+  ./scripts/profiler-coverage.sh [--install-mode standard|subday] [--report <path>] [function_name]
+
+Options:
+  --install-mode MODE   Install mode for profiler database (standard or subday)
+  --report PATH         Output report path (absolute or project-relative)
+  -h, --help            Show this help message
+USAGE
+}
+
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --install-mode)
+        if [ $# -lt 2 ]; then
+          echo -e "${RED}ERROR: --install-mode requires a value (standard|subday)${NC}"
+          exit 1
+        fi
+        INSTALL_MODE="$2"
+        shift 2
+        ;;
+      --report)
+        if [ $# -lt 2 ]; then
+          echo -e "${RED}ERROR: --report requires a file path${NC}"
+          exit 1
+        fi
+        REPORT_FILE_ARG="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --*)
+        echo -e "${RED}ERROR: Unknown option '$1'${NC}"
+        usage
+        exit 1
+        ;;
+      *)
+        if [ -n "$SINGLE_FUNCTION" ]; then
+          echo -e "${RED}ERROR: Multiple function names provided: '$SINGLE_FUNCTION' and '$1'${NC}"
+          exit 1
+        fi
+        SINGLE_FUNCTION="$1"
+        shift
+        ;;
+    esac
+  done
+
+  case "$INSTALL_MODE" in
+    standard|subday) ;;
+    *)
+      echo -e "${RED}ERROR: Invalid install mode '$INSTALL_MODE' (expected standard|subday)${NC}"
+      exit 1
+      ;;
+  esac
+
+  if [ -n "$REPORT_FILE_ARG" ]; then
+    case "$REPORT_FILE_ARG" in
+      /*) REPORT_FILE="$REPORT_FILE_ARG" ;;
+      *) REPORT_FILE="$PROJECT_DIR/$REPORT_FILE_ARG" ;;
+    esac
+  else
+    REPORT_FILE="$PROJECT_DIR/coverage-report-${INSTALL_MODE}.txt"
+  fi
+}
+
+print_run_config() {
+  echo -e "${BLUE}========================================${NC}"
+  echo -e "${BLUE}PLPGSQL_CHECK PROFILER COVERAGE REPORT${NC}"
+  echo -e "${BLUE}========================================${NC}"
+  echo ""
+  echo "Database: $DB"
+  echo "Host: $PGHOST:$PGPORT"
+  echo "Install mode: $INSTALL_MODE"
+  if [ -n "$SINGLE_FUNCTION" ]; then
+    echo "Mode: Single function ($SINGLE_FUNCTION)"
+  else
+    echo "Mode: Full coverage (all rrule.* functions)"
+  fi
+  echo "Report: $REPORT_FILE"
+  echo ""
+}
 
 # Check PostgreSQL availability
 check_postgres() {
@@ -100,11 +177,15 @@ setup_database() {
   psql -d postgres -c "DROP DATABASE IF EXISTS $DB" > /dev/null 2>&1 || true
   psql -d postgres -c "CREATE DATABASE $DB" > /dev/null
 
-  # Install plpgsql_check extension and rrule schema (with subday for full coverage)
+  # Install plpgsql_check extension and rrule schema for selected mode
   psql -d "$DB" -q -c "CREATE EXTENSION IF NOT EXISTS plpgsql_check;" > /dev/null 2>&1
-  (cd "$PROJECT_DIR/src" && psql -d "$DB" -f "install_with_subday.sql" > /dev/null 2>&1)
-
-  echo -e "${GREEN}[OK] Database ready with rrule functions (including subday) and plpgsql_check${NC}"
+  if [ "$INSTALL_MODE" = "standard" ]; then
+    (cd "$PROJECT_DIR/src" && psql -d "$DB" -f "install.sql" > /dev/null 2>&1)
+    echo -e "${GREEN}[OK] Database ready with rrule functions (standard install) and plpgsql_check${NC}"
+  else
+    (cd "$PROJECT_DIR/src" && psql -d "$DB" -f "install_with_subday.sql" > /dev/null 2>&1)
+    echo -e "${GREEN}[OK] Database ready with rrule functions (subday install) and plpgsql_check${NC}"
+  fi
 }
 
 # Generate the test SQL that exercises all functions
@@ -127,7 +208,18 @@ DECLARE
     result_int INT;
     result_bool BOOLEAN;
     test_rrule TEXT;
+    invalid_rules TEXT[];
+    weekly_rule rrule.rrule_parts;
+    subday_installed BOOLEAN;
 BEGIN
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'rrule'
+          AND p.proname = 'hourly_set'
+    ) INTO subday_installed;
+
     -- =========================================================================
     -- SECTION 1: Basic API Functions
     -- =========================================================================
@@ -138,10 +230,18 @@ BEGIN
     PERFORM rrule."all"('FREQ=MONTHLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
     PERFORM rrule."all"('FREQ=YEARLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
 
-    -- Sub-day frequencies
-    PERFORM rrule."all"('FREQ=HOURLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
-    PERFORM rrule."all"('FREQ=MINUTELY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
-    PERFORM rrule."all"('FREQ=SECONDLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+    -- Sub-day frequencies (enabled only in subday install mode)
+    IF subday_installed THEN
+        PERFORM rrule."all"('FREQ=HOURLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+        PERFORM rrule."all"('FREQ=MINUTELY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+        PERFORM rrule."all"('FREQ=SECONDLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+    ELSE
+        BEGIN
+            PERFORM rrule."all"('FREQ=HOURLY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END IF;
 
     -- rrule."between"()
     PERFORM rrule."between"('FREQ=DAILY;COUNT=100', '2025-01-01 10:00:00'::TIMESTAMP,
@@ -267,7 +367,15 @@ BEGIN
     PERFORM rrule."all"('FREQ=WEEKLY;INTERVAL=2;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP);
     PERFORM rrule."all"('FREQ=MONTHLY;INTERVAL=3;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP);
     PERFORM rrule."all"('FREQ=YEARLY;INTERVAL=2;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP);
-    PERFORM rrule."all"('FREQ=HOURLY;INTERVAL=6;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP);
+    IF subday_installed THEN
+        PERFORM rrule."all"('FREQ=HOURLY;INTERVAL=6;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP);
+    ELSE
+        BEGIN
+            PERFORM rrule."all"('FREQ=HOURLY;INTERVAL=6;COUNT=10', '2025-01-01 10:00:00'::TIMESTAMP);
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END IF;
 
     -- =========================================================================
     -- SECTION 11: UNTIL
@@ -444,6 +552,162 @@ BEGIN
     -- =========================================================================
 
     PERFORM rrule.version();
+
+    -- =========================================================================
+    -- SECTION 20A: Direct helper coverage for low-coverage functions
+    -- =========================================================================
+
+    -- get_week_number()/get_week_info(): exercise all week-year branches
+    PERFORM rrule.get_week_number('2016-01-01 10:00:00+00'::TIMESTAMPTZ, 'MO'); -- previous-year week
+    PERFORM rrule.get_week_number('2024-12-30 10:00:00+00'::TIMESTAMPTZ, 'MO'); -- next-year week
+    PERFORM rrule.get_week_number('2025-07-01 10:00:00+00'::TIMESTAMPTZ, 'MO'); -- normal in-year week
+    PERFORM rrule.get_week_info('2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'SU');
+    PERFORM rrule.get_week_info('2025-12-31 10:00:00+00'::TIMESTAMPTZ, 'MO');
+
+    -- test_byyearday_rule(): match/mismatch/negative/null branches
+    PERFORM rrule.test_byyearday_rule('2025-01-08 10:00:00+00'::TIMESTAMPTZ, ARRAY[8]);
+    PERFORM rrule.test_byyearday_rule('2025-12-31 10:00:00+00'::TIMESTAMPTZ, ARRAY[-1]);
+    PERFORM rrule.test_byyearday_rule('2025-01-08 10:00:00+00'::TIMESTAMPTZ, ARRAY[200]);
+    PERFORM rrule.test_byyearday_rule('2025-01-08 10:00:00+00'::TIMESTAMPTZ, NULL);
+
+    -- weekly_set(): direct calls for byweekno and time-expansion paths
+    PERFORM rrule.weekly_set(
+        '2025-01-06 10:00:00+00'::TIMESTAMPTZ,
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=6'),
+        NULL
+    );
+    -- Inject BYWEEKNO/BYYEARDAY manually to exercise weekly_set filter branches
+    weekly_rule := rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO;COUNT=6');
+    weekly_rule.byweekno := ARRAY[10];
+    PERFORM rrule.weekly_set('2025-01-06 10:00:00+00'::TIMESTAMPTZ, weekly_rule, NULL);
+    weekly_rule.byweekno := NULL;
+    weekly_rule.byyearday := ARRAY[200];
+    PERFORM rrule.weekly_set('2025-01-06 10:00:00+00'::TIMESTAMPTZ, weekly_rule, NULL);
+    PERFORM rrule.weekly_set(
+        '2025-01-06 10:00:00+00'::TIMESTAMPTZ,
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=WEEKLY;BYDAY=MO;BYHOUR=9,17;COUNT=6'),
+        4
+    );
+
+    -- rrule_expand_dates_with_times(): no-time, bysetpos, time, and time+bysetpos paths
+    PERFORM rrule.rrule_expand_dates_with_times(
+        ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ, '2025-01-08 10:00:00+00'::TIMESTAMPTZ],
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;COUNT=5'),
+        2
+    );
+    PERFORM rrule.rrule_expand_dates_with_times(
+        ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ, '2025-01-08 10:00:00+00'::TIMESTAMPTZ],
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYHOUR=9,17;BYSETPOS=1;COUNT=5'),
+        NULL
+    );
+    PERFORM rrule.rrule_expand_dates_with_times(
+        ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ],
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYHOUR=9,17;COUNT=5'),
+        NULL
+    );
+    PERFORM rrule.rrule_expand_dates_with_times(
+        ARRAY['2025-01-06 10:00:00+00'::TIMESTAMPTZ],
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;BYHOUR=9,17;BYSETPOS=1;COUNT=5'),
+        NULL
+    );
+    PERFORM rrule.rrule_expand_dates_with_times(
+        ARRAY[]::TIMESTAMPTZ[],
+        rrule.parse_rrule_parts('2025-01-06 10:00:00+00'::TIMESTAMPTZ, 'FREQ=DAILY;COUNT=5'),
+        NULL
+    );
+
+    -- rrule_event_instances_range_tz(): exercise monthly/yearly internals directly
+    PERFORM rrule.rrule_event_instances_range_tz(
+        '2025-01-15 10:00:00'::TIMESTAMP,
+        'FREQ=MONTHLY',
+        '2025-01-15 10:00:00'::TIMESTAMP,
+        '2025-04-20 10:00:00'::TIMESTAMP,
+        NULL
+    );
+    PERFORM rrule.rrule_event_instances_range_tz(
+        '2025-01-15 10:00:00'::TIMESTAMP,
+        'FREQ=MONTHLY;BYMONTHDAY=31;SKIP=FORWARD;COUNT=10',
+        '2025-02-01 00:00:00'::TIMESTAMP,
+        '2026-01-01 00:00:00'::TIMESTAMP,
+        NULL
+    );
+    PERFORM rrule.rrule_event_instances_range_tz(
+        '2020-02-29 10:00:00'::TIMESTAMP,
+        'FREQ=YEARLY;SKIP=FORWARD;COUNT=8',
+        '2020-02-29 10:00:00'::TIMESTAMP,
+        '2030-01-01 00:00:00'::TIMESTAMP,
+        NULL
+    );
+
+    -- =========================================================================
+    -- SECTION 20B: Guard-clause and validation coverage
+    -- =========================================================================
+
+    -- Timestamp API guard clauses
+    BEGIN
+        PERFORM rrule."after"('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP, false);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        PERFORM rrule."before"('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP, false);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        PERFORM rrule."between"('FREQ=DAILY;COUNT=5', '2025-01-01 10:00:00'::TIMESTAMP, NULL::TIMESTAMP, '2025-01-03 00:00:00'::TIMESTAMP, false);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        PERFORM rrule."count"(NULL::VARCHAR, '2025-01-01 10:00:00'::TIMESTAMP);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+
+    -- TIMESTAMPTZ API guard clauses
+    BEGIN
+        PERFORM rrule."after"('FREQ=DAILY;COUNT=5'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, '2025-01-02 00:00:00+00'::TIMESTAMPTZ, NULL::INT, 'UTC', false);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        PERFORM rrule."before"('FREQ=DAILY;COUNT=5'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, '2025-01-02 00:00:00+00'::TIMESTAMPTZ, NULL::INT, 'UTC', false);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        PERFORM rrule."between"('FREQ=DAILY;COUNT=5'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, NULL::TIMESTAMPTZ, '2025-01-03 00:00:00+00'::TIMESTAMPTZ, 'UTC', false);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    BEGIN
+        PERFORM rrule.count(NULL::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ, 'UTC');
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+
+    -- Parse/validation error branches: run diverse invalid rules
+    invalid_rules := ARRAY[
+        'COUNT=5',
+        'FREQ=DAILY;COUNT=0',
+        'FREQ=DAILY;INTERVAL=0',
+        'FREQ=DAILY;COUNT=-1',
+        'FREQ=DAILY;INTERVAL=-1',
+        'FREQ=WEEKLY;BYMONTHDAY=15;COUNT=5',
+        'FREQ=YEARLY;BYWEEKNO=0;COUNT=5',
+        'FREQ=MONTHLY;BYSETPOS=0;BYDAY=MO;COUNT=5',
+        'FREQ=DAILY;BYMONTH=13;COUNT=5',
+        'FREQ=DAILY;BYHOUR=25;COUNT=5',
+        'FREQ=DAILY;BYMINUTE=60;COUNT=5',
+        'FREQ=DAILY;BYSECOND=61;COUNT=5',
+        'FREQ=YEARLY;BYWEEKNO=1;BYDAY=2MO;COUNT=5',
+        'FREQ=DAILY;COUNT=3;COUNT=5',
+        'FREQ=DAILY;COUNT=5;UNTIL=20250110T000000Z',
+        'FREQ=MONTHLY;SKIP=BACKWARDS;COUNT=5',
+        'FREQ=YEARLY;RSCALE=HEBREW;COUNT=5',
+        'FREQ=DAILY;COUNT=abc'
+    ];
+
+    FOREACH test_rrule IN ARRAY invalid_rules LOOP
+        BEGIN
+            PERFORM rrule."all"(test_rrule, '2025-01-01 10:00:00'::TIMESTAMP);
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END LOOP;
 
     -- =========================================================================
     -- SECTION 21: DoS protection branch coverage for _advance_yearly()
@@ -847,6 +1111,8 @@ cleanup() {
 
 # Main
 main() {
+  parse_args "$@"
+  print_run_config
   check_postgres
   check_extension
   setup_database
@@ -859,4 +1125,4 @@ main() {
   echo -e "${GREEN}========================================${NC}"
 }
 
-main
+main "$@"

@@ -20,6 +20,8 @@ tests/*.log
 CONSENSUS_TEST_GAPS.md
 coverage-report.json
 coverage-report.txt
+coverage-report-standard.txt
+coverage-report-subday.txt
 .hypothesis/
 __pycache__/
 *.pyc

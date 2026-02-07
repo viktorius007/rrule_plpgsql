@@ -80,18 +80,34 @@ jobs:
           psql -d postgres -c "CREATE DATABASE rrule_test"
           psql -d rrule_test -f src/install.sql
 
-      - name: Run property tests
+      - name: Run property tests (non-stateful)
         env:
           PGDATABASE: rrule_test
-        run: pytest tests/property/ -v --hypothesis-profile=ci --hypothesis-seed=${{ github.run_id }}
+        run: pytest tests/property/ -v -k "not stateful_model" --hypothesis-profile=ci --hypothesis-seed=${{ github.run_id }}
 
-      - name: Generate coverage report
-        run: ./scripts/profiler-coverage.sh || true
-        continue-on-error: true
+      - name: Run stateful model property tests
+        env:
+          PGDATABASE: rrule_test
+        run: pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424242
+
+      - name: Generate branch coverage report
+        run: node scripts/coverage-report.js --json > /dev/null
+
+      - name: Generate statement coverage report (standard)
+        run: ./scripts/profiler-coverage.sh --install-mode standard --report coverage-report-standard.txt
+
+      - name: Generate statement coverage report (subday)
+        run: ./scripts/profiler-coverage.sh --install-mode subday --report coverage-report-subday.txt
+
+      - name: Enforce coverage gates
+        run: node scripts/check-coverage-gates.js
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: coverage-report.txt
+          path: |
+            coverage-report.json
+            coverage-report-standard.txt
+            coverage-report-subday.txt
           if-no-files-found: ignore

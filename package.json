@@ -22,7 +22,8 @@
     "test:install-contract": "./scripts/test-install-contract.sh",
     "test:package-contract": "./scripts/test-package-contract.sh",
     "test:isolation": "python3 -m pytest tests/property/test_session_isolation.py -v",
-    "test:perf": "./scripts/perf-regression.sh"
+    "test:perf": "./scripts/perf-regression.sh",
+    "test:coverage:gates": "node scripts/coverage-report.js --json > /dev/null && ./scripts/profiler-coverage.sh --install-mode standard --report coverage-report-standard.txt && ./scripts/profiler-coverage.sh --install-mode subday --report coverage-report-subday.txt && node scripts/check-coverage-gates.js"
   },
   "repository": {
     "type": "git",
