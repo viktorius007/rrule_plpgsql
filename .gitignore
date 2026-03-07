@@ -26,3 +26,6 @@ coverage-report-subday.txt
 __pycache__/
 *.pyc
 .claude/settings.local.json
+
+# npm auth
+.npmrc
