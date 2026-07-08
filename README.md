@@ -90,22 +90,22 @@ pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci
 pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424243
 
 # Coverage gates (branch + statement thresholds)
-npm run test:coverage:gates
+pnpm test:coverage:gates
 
 # Mutation suite
-npm run test:mutations
+pnpm test:mutations
 
 # SQL export contract tests (npm package output)
-npm run test:package-contract
+pnpm test:package-contract
 
 # Install/migration contract suites
-npm run test:install-contract
+pnpm test:install-contract
 
 # Session isolation tests
-npm run test:isolation
+pnpm test:isolation
 
 # Manual performance regression checks (PG17, not CI-gated)
-npm run test:perf
+pnpm test:perf
 ```
 
 ---

@@ -380,7 +380,7 @@ The following have low coverage because sub-day code paths aren't exercised in s
 node scripts/verify-branch-coverage.js
 
 # Mutation testing
-npm run test:mutations
+pnpm test:mutations
 ```
 
 ### Adding New Issues

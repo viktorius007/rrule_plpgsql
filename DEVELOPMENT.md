@@ -38,10 +38,10 @@ python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=
 python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424243
 
 # Coverage gates (branch + profiler statement thresholds)
-npm run test:coverage:gates
+pnpm test:coverage:gates
 
 # Mutation suite (also used by nightly non-PR-blocking workflow)
-npm run test:mutations
+pnpm test:mutations
 
 # Manual performance regression check (PG17)
 ./scripts/perf-regression.sh
@@ -57,7 +57,7 @@ PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
 - Property tests are split by profile:
   - Non-stateful: `pytest tests/property/ -k "not stateful_model" --hypothesis-profile=ci`
   - Stateful model: `pytest tests/property/test_stateful_model.py --hypothesis-profile=stateful_ci`
-- CI quality gates: `./test.sh --both`, `npm run test:package-contract`, `./lint.sh`, `./lint-tests.sh`, property tests, and `npm run test:coverage:gates`
+- CI quality gates: `./test.sh --both`, `pnpm test:package-contract`, `./lint.sh`, `./lint-tests.sh`, property tests, and `pnpm test:coverage:gates`
 - Coverage gate policy:
   - Branch coverage: blocking at `100.0%` with `0` untested branches
   - Statement coverage (standard install): blocking at `>= 80.00%`
@@ -88,10 +88,10 @@ host-variance flakiness in pull requests.
 
 ```bash
 # Run benchmark comparison against baseline (fails on >20% regressions)
-npm run test:perf
+pnpm test:perf
 
 # Refresh baseline medians after intentional performance changes
-npm run test:perf -- --update-baseline
+pnpm test:perf -- --update-baseline
 ```
 
 Baseline file:

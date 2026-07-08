@@ -11,7 +11,7 @@
 #
 # Usage:
 #   ./lint.sh              # Run linter
-#   npm run lint           # Run via npm
+#   pnpm lint              # Run via pnpm
 #
 # Environment variables (with defaults):
 #   PGHOST=localhost       # PostgreSQL host

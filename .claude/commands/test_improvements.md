@@ -62,7 +62,7 @@ Task(
 >
 > **Analyze** `src/rrule.sql` and `src/rrule_subday.sql` for issues in the **{{$category}}** category. Report all severities. Focus on genuine bugs — wrong output, missing validation, unsafe behavior, or untested code paths that could plausibly be wrong. Not style issues.
 >
-> **Do NOT write to any files. Do NOT run any commands** (no `npm test`, `psql`, `bash`, etc.). Analysis is READ-ONLY. Running commands from the main checkout interferes with concurrent processes (Stop hooks, other agents) that share the same database namespace.
+> **Do NOT write to any files. Do NOT run any commands** (no `pnpm test`, `psql`, `bash`, etc.). Analysis is READ-ONLY. Running commands from the main checkout interferes with concurrent processes (Stop hooks, other agents) that share the same database namespace.
 >
 > ---
 >
@@ -228,7 +228,7 @@ Task(
 > 1. `cd /tmp/fix-stream-{N}`
 > 2. Research and apply the fix
 > 3. Create/update tests per TESTING_STANDARDS.md
-> 4. Run `npm test`, `npm run lint`, `npm run lint:tests` — fix until all pass
+> 4. Run `pnpm test`, `pnpm lint`, `pnpm lint:tests` — fix until all pass
 > 5. **MANDATORY: Commit before finishing.** Use `git add <specific files> && git commit -m "fix(rrule): {description}"`. If you cannot get tests to pass, commit partial work with `git commit -m "WIP: {description} — tests failing"` so progress is preserved. **An agent that exits without committing is a FAILED agent regardless of fix progress.**
 >
 > **Report format — your response must use this structure:**
@@ -252,7 +252,7 @@ After all streams complete (all agents in all streams have delivered `<task-noti
 1. Return to primary checkout: `cd /Users/viktor/Documents/Projects/github/rrule_plpgsql && git checkout main`
 2. Merge each **stream branch** sequentially (one branch per stream, containing all commits from that stream's agents): `git merge --no-ff fix/stream-{N}`
 3. Resolve any merge conflicts (unlikely between streams since they have non-overlapping source files by construction)
-4. Run full verification: `npm test` + `npm run lint` + `npm run lint:tests` — fix until clean
+4. Run full verification: `pnpm test` + `pnpm lint` + `pnpm lint:tests` — fix until clean
 5. **Move** fixed issues from "Open Issues" to "Closed Issues" section with resolution details:
    ```
    ## [RESOLVED] Issue N: Title

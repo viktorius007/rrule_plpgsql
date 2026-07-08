@@ -27,5 +27,8 @@ __pycache__/
 *.pyc
 .claude/settings.local.json
 
+# Node dependencies
+node_modules/
+
 # npm auth
 .npmrc

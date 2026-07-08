@@ -7,8 +7,8 @@
  *
  * Usage:
  *   node scripts/generate-matrix-tests.js > tests/matrix/test_generated_matrix.sql
- *   # Or with npm:
- *   npm run generate:matrix-tests
+ *   # Or with pnpm:
+ *   pnpm generate:matrix-tests
  *
  * Output:
  *   - SQL test file with assertions for every ✅ cell in the matrix

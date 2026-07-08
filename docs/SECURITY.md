@@ -60,7 +60,7 @@ This package exports raw SQL strings for PostgreSQL. While this approach is tran
    ```
 
 2. **Use Lock Files**
-   - Commit `package-lock.json` or `yarn.lock`
+   - Commit `pnpm-lock.yaml`, `package-lock.json`, or `yarn.lock`
    - Ensures reproducible builds
 
 3. **Review Before Installing**

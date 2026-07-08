@@ -7,8 +7,8 @@
  *
  * Usage:
  *   node scripts/mutation-test.js
- *   # Or with npm:
- *   npm run test:mutations
+ *   # Or with pnpm:
+ *   pnpm test:mutations
  *
  * Mutations tested:
  * - Boundary changes (> to >=, < to <=)

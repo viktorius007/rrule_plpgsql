@@ -10,7 +10,7 @@ Pure PL/pgSQL implementation of RFC 5545 iCalendar RRULE for PostgreSQL. No C ex
 
 ```bash
 # Run all tests (66 test suites total)
-npm test
+pnpm test
 ./test.sh
 
 # Run specific test modes
@@ -23,23 +23,23 @@ PGHOST=localhost PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres \
   psql -d rrule_test -f tests/test_validation.sql
 
 # Lint PL/pgSQL code (must pass with 0 errors, 0 warnings)
-npm run lint
+pnpm lint
 ./lint.sh
 
 # Lint SQL files for coding standards (no database required)
-npm run lint:tests
+pnpm lint:tests
 ./lint-tests.sh
 
 # Install/migration contract suites
-npm run test:install-contract
+pnpm test:install-contract
 ./scripts/test-install-contract.sh
 
 # SQL export contract tests
-npm run test:package-contract
+pnpm test:package-contract
 ./scripts/test-package-contract.sh
 
 # Session isolation tests
-npm run test:isolation
+pnpm test:isolation
 python3 -m pytest tests/property/test_session_isolation.py -v
 
 # Property tests (CI split)
@@ -48,14 +48,14 @@ python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=
 python3 -m pytest tests/property/test_stateful_model.py -v --hypothesis-profile=stateful_ci --hypothesis-seed=424243
 
 # Coverage gates (branch + statement policies)
-npm run test:coverage:gates
+pnpm test:coverage:gates
 
 # Mutation tests
-npm run test:mutations
+pnpm test:mutations
 
 # Manual performance regression checks (PG17, not CI-gated)
-npm run test:perf
-npm run test:perf -- --update-baseline
+pnpm test:perf
+pnpm test:perf -- --update-baseline
 
 # Fresh reinstall after changes
 psql -d your_db -c "DROP SCHEMA IF EXISTS rrule CASCADE"
@@ -132,12 +132,12 @@ Historical documents (completed research, plans) are in [docs/archived/](docs/ar
 
 GitHub Actions (`.github/workflows/test.yml`) runs on push/PR to main:
 1. `./test.sh --both` — full test suite (standard + sub-day)
-2. `npm run test:package-contract` — validates SQL export contract for npm package outputs
+2. `pnpm test:package-contract` — validates SQL export contract for npm package outputs
 3. `./lint.sh` — plpgsql_check semantic linting (requires PostgreSQL + plpgsql_check extension)
 4. `./lint-tests.sh` — static SQL coding standards (bash-based, no database required)
 5. `pytest tests/property/ -k "not stateful_model" --hypothesis-profile=ci` — non-stateful property tests
 6. `pytest tests/property/test_stateful_model.py --hypothesis-profile=stateful_ci` — stateful model tests
-7. `npm run test:coverage:gates` — blocking coverage checks:
+7. `pnpm test:coverage:gates` — blocking coverage checks:
    - Branch coverage: `100.0%` and `0` untested branches
    - Standard statement coverage: `>= 80.00%` (blocking)
    - Subday statement coverage: warn `< 80.00%`, fail `< 50.00%`
